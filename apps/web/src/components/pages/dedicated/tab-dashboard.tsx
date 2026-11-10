@@ -84,6 +84,27 @@ function formatItemBadge(item: PageQueueItemSummary): string {
   return fmt === 'image' ? 'PHOTO' : fmt.toUpperCase();
 }
 
+/**
+ * Spec 162: "last updated" for the stored follower total, in the
+ * PAGE timezone (R8 — never the browser timezone's bare output).
+ * Null when the timestamp is absent or unparseable, so the card
+ * shows a dash instead of a faked time.
+ */
+function formatFollowersUpdatedAt(iso: string | null | undefined, timezone: string): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: timezone,
+    }).format(date);
+  } catch {
+    return null;
+  }
+}
+
 const cardClass = 'rounded-md border border-line bg-panel p-6 shadow-card';
 const metricLabelClass = 'text-body text-ink-sub';
 const metricValueClass = 'text-xxl font-bold text-ink';
@@ -164,17 +185,24 @@ export function PageTabDashboard({
             )}
           </div>
           {/*
-            K4: this figure is the STORED follower count, not a
-            live one — the stored row is written only at import
-            (pages/import writes current_followers from Graph at
-            import time; no refresh job, sync, or insights fetch
-            ever updates it). Insights' "Followers" is the live
-            total, so the two can legitimately differ. The note
-            says so instead of inventing a live call or faking
-            agreement; there is no stored timestamp to show, so
-            no "last updated" date is claimed.
+            K4 (spec 162): this figure is the STORED follower count,
+            not a live one — the stored row is written at import and
+            refreshed by the daily insights worker (03:00 PKT), which
+            stamps metadata.followers_updated_at on every successful
+            check. Insights' "Followers" is the live total, so the
+            two can legitimately differ. The note shows when the
+            stored figure was last updated — a dash when no check
+            has ever stamped it, never a faked time.
           */}
-          <span className="mt-1 block text-body text-ink-dim">At last import</span>
+          <span className="mt-1 block text-body text-ink-dim">
+            {(() => {
+              const updated = formatFollowersUpdatedAt(
+                page.followersUpdatedAt,
+                pageTimezone
+              );
+              return updated ? `Updated ${updated}` : '—';
+            })()}
+          </span>
         </div>
 
         <div data-testid="metric-queued-count" className={cardClass}>

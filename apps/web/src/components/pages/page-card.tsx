@@ -80,6 +80,13 @@ export interface FacebookPageItem {
    * slice (R6): the card shows dashes, not zeros, for the counts.
    */
   queueCountsError?: boolean | undefined;
+  /**
+   * Spec 162: last successful follower check (ISO string), from
+   * destinations.metadata.followers_updated_at. Absent when no
+   * check has ever stamped it — the dashboard shows a dash then,
+   * never a faked time.
+   */
+  followersUpdatedAt?: string | null | undefined;
   createdAt: string;
   updatedAt?: string | undefined;
 }

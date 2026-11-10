@@ -514,6 +514,10 @@ export async function ensureAduDestination(
     tasks: page.tasks,
     starting_followers: startingFollowers,
     current_followers: page.followers,
+    // Spec 162: the import writes the current total, so it stamps
+    // the last-updated time too — the Pages "last updated" display
+    // reads this key.
+    followers_updated_at: new Date().toISOString(),
   };
   if (!paused) {
     delete nextMetadata.fb_status;
@@ -746,8 +750,8 @@ export async function buildAduConfigView(
         : dest?.platform === 'threads'
           ? threadsAduStatusAlert(config.status, config.sync_status)
           : aduStatusAlert(config.status, config.sync_status),
-    followersCount: config.followers_count,
-    followersGained: config.followers_gained,
+    followersCount: config.starting_followers,
+    followersGained: config.current_followers,
     displayName: config.display_name,
     createdAt: config.created_at,
     updatedAt: config.updated_at,

@@ -110,6 +110,15 @@ export interface MirrorRow {
    *  3-day auto-resume anchor (mirrors.fb_rate_limited_at). */
   fb_status: string | null;
   fb_rate_limited_at: string | null;
+  /**
+   * Spec 162: the mirror's OWN follower columns, filled by the daily
+   * insights worker (null until the first run). The card/detail
+   * prefer these over the destination's stored values; see
+   * toMirrorView / toMirrorListView.
+   */
+  starting_followers: number | null;
+  current_followers: number | null;
+  followers_updated_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -220,6 +229,16 @@ export function asMirrorRow(row: unknown): MirrorRow | null {
     fb_status: typeof row.fb_status === 'string' ? row.fb_status : null,
     fb_rate_limited_at:
       typeof row.fb_rate_limited_at === 'string' ? row.fb_rate_limited_at : null,
+    // Spec 162: the mirror's own follower columns (null until the
+    // first daily worker run). A row read through a path that does
+    // not select them still defaults to null here; no value is ever
+    // invented — the view falls back to the destination values.
+    starting_followers:
+      typeof row.starting_followers === 'number' ? row.starting_followers : null,
+    current_followers:
+      typeof row.current_followers === 'number' ? row.current_followers : null,
+    followers_updated_at:
+      typeof row.followers_updated_at === 'string' ? row.followers_updated_at : null,
     created_at: typeof row.created_at === 'string' ? row.created_at : '',
     updated_at: typeof row.updated_at === 'string' ? row.updated_at : '',
   };
@@ -289,11 +308,18 @@ export function toMirrorView(
     targetAvatarUrl: destination?.avatar_url ?? mirror.target_avatar_url,
     targetDestinationId: destination?.id ?? null,
     targetAddedAt: details?.addedAt ?? null,
-    targetFollowers: details?.followers ?? null,
+    // Spec 162: the mirror's OWN follower columns win once the daily
+    // worker has populated them; before the first run (null) the
+    // borrowed destination values are the fallback.
+    targetFollowers: mirror.current_followers ?? details?.followers ?? null,
     targetCategory: details?.category ?? null,
     targetAccountDisplayName: details?.accountDisplayName ?? null,
     targetAccountAvatarUrl: details?.accountAvatarUrl ?? null,
-    targetStartingFollowers: details?.startingFollowers ?? null,
+    targetStartingFollowers:
+      mirror.starting_followers ?? details?.startingFollowers ?? null,
+    startingFollowers: mirror.starting_followers,
+    currentFollowers: mirror.current_followers,
+    followersUpdatedAt: mirror.followers_updated_at,
     status: mirror.status as MirrorView['status'],
     lastPostedSourceId: mirror.last_posted_source_id,
     lastCheckedAt: mirror.last_checked_at,
@@ -606,9 +632,14 @@ export function toMirrorListView(
     targetFbStatus: targetFbStatusFor(mirror, destination),
     createdAt: mirror.created_at,
     targetAddedAt: details?.addedAt ?? null,
-    targetFollowers: details?.followers ?? null,
+    // Spec 162: same preference as the detail view — the mirror's own
+    // current followers win once populated, destination values before.
+    targetFollowers: mirror.current_followers ?? details?.followers ?? null,
     targetCategory: details?.category ?? null,
     targetAccountDisplayName: details?.accountDisplayName ?? null,
+    startingFollowers: mirror.starting_followers,
+    currentFollowers: mirror.current_followers,
+    followersUpdatedAt: mirror.followers_updated_at,
     postCounts,
     postCountsError,
   };
@@ -808,7 +839,7 @@ export async function handleListMirrors(
         `SELECT id, workspace_id, source_platform, source_username, source_display_name,
                 source_avatar_url, target_platform, target_external_id, target_display_name,
                 target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
-                last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at
+                last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, starting_followers, current_followers, followers_updated_at, created_at, updated_at
          FROM mirrors WHERE ${whereSql} ORDER BY created_at DESC LIMIT $${whereParams.length + 1} OFFSET $${whereParams.length + 2}`,
         [...whereParams, limit, offset]
       )) as unknown[];
@@ -838,7 +869,7 @@ export async function handleListMirrors(
       const listQuery = supabase
         .from('mirrors')
         .select(
-          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at'
+          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, starting_followers, current_followers, followers_updated_at, created_at, updated_at'
         )
         .eq('workspace_id', workspaceId);
       if (targetPlatformFilter) listQuery.eq('target_platform', targetPlatformFilter);
@@ -1666,7 +1697,7 @@ export async function handleCreateMirror(
          RETURNING id, workspace_id, source_platform, source_username, source_display_name,
            source_avatar_url, target_platform, target_external_id, target_display_name,
            target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
-           last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at`,
+           last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, starting_followers, current_followers, followers_updated_at, created_at, updated_at`,
         [
           workspaceId,
           username,
@@ -1704,7 +1735,7 @@ export async function handleCreateMirror(
           next_check_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         })
         .select(
-          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at'
+          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, starting_followers, current_followers, followers_updated_at, created_at, updated_at'
         )
         .single();
       if (error) {
@@ -2127,7 +2158,7 @@ export async function reloadMirror(db: Db, mirrorId: string): Promise<MirrorRow 
       `SELECT id, workspace_id, source_platform, source_username, source_display_name,
               source_avatar_url, target_platform, target_external_id, target_display_name,
               target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
-              last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at
+              last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, starting_followers, current_followers, followers_updated_at, created_at, updated_at
        FROM mirrors WHERE id = $1 LIMIT 1`,
       [mirrorId]
     )) as unknown[];
@@ -2137,7 +2168,7 @@ export async function reloadMirror(db: Db, mirrorId: string): Promise<MirrorRow 
   const { data, error } = await supabase
     .from('mirrors')
     .select(
-      'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at'
+      'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, starting_followers, current_followers, followers_updated_at, created_at, updated_at'
     )
     .eq('id', mirrorId)
     .maybeSingle();

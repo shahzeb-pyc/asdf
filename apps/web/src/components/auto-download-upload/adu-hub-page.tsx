@@ -312,8 +312,8 @@ function AduPageCard({ config, subdomain }: { config: AduConfigView; subdomain: 
   const targetHref = `/tenant/${subdomain}/auto-download-upload/${config.id}`;
 
   // Followers semantics, verified from code: `adu_hub_stats` sums
-  // `followers_gained` as the total and `followers_gained minus
-  // followers_count` (floored at 0) as the net growth — so
+  // `current_followers` as the total and `current_followers minus
+  // starting_followers` (floored at 0) as the net growth — so
   // followersGained is the CURRENT count and followersCount the
   // starting baseline. Net gained is current minus starting,
   // floored at 0, so it can never be negative.

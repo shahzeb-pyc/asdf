@@ -589,7 +589,8 @@ export async function handleImportPages(
             'category', $7::text,
             'tasks', $8::jsonb,
             'starting_followers', $9::int,
-            'current_followers', $9::int
+            'current_followers', $9::int,
+            'followers_updated_at', now()::text
           ),
           now())
         ON CONFLICT (account_id, external_destination_id) DO UPDATE SET
@@ -615,6 +616,7 @@ export async function handleImportPages(
               'category', $7::text,
               'tasks', $8::jsonb,
               'current_followers', $9::int,
+              'followers_updated_at', now()::text,
               'starting_followers', CASE
                 WHEN destinations.status = 'disconnected' AND destinations.metadata->>'fb_status' IS DISTINCT FROM 'paused'
                   THEN $9::int
@@ -677,6 +679,10 @@ export async function handleImportPages(
         tasks: Array.isArray(pageItem.tasks) ? pageItem.tasks : [],
         starting_followers: startingFollowersToSave,
         current_followers: followers,
+        // Spec 162: the import writes the current total, so it stamps
+        // the last-updated time too — the Pages "last updated"
+        // display reads this key.
+        followers_updated_at: new Date().toISOString(),
       };
       // Only a non-paused re-import clears the marker; a paused
       // page keeps fb_status='paused' (spread from existing

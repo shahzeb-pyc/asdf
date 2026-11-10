@@ -29,6 +29,10 @@ import {
   type RetentionDbClient,
 } from './retention.js';
 import {
+  INSIGHTS_FOLLOWERS_CRON,
+  runInsightsFollowersCycle,
+} from './insights-followers-tick.js';
+import {
   runRefreshCycle,
   TOKEN_REFRESH_CRON,
   type RefreshDbClient,
@@ -75,6 +79,10 @@ export {
   REFRESH_BACKLOG_EVENT,
 } from './refresh.js';
 export { runRetentionCleanup, RETENTION_CRON } from './retention.js';
+export {
+  runInsightsFollowersCycle,
+  INSIGHTS_FOLLOWERS_CRON,
+} from './insights-followers-tick.js';
 export type { RetentionRunResult, RetentionDbClient } from './retention.js';
 export type { RefreshCycleResult, RefreshDbClient } from './refresh.js';
 
@@ -238,6 +246,34 @@ export async function handleScheduled(
         env,
         err,
         { site: 'handleScheduled', kind: 'retention_cleanup_failed' },
+        waitUntil
+      );
+      throw err;
+    }
+    return;
+  }
+
+  // Insights-followers cron (spec 162): the daily follower refresh
+  // (03:00 PKT) runs ONLY this cycle — it fetches the live follower
+  // total per Facebook page from Graph and writes current followers
+  // + a last-updated timestamp (destinations metadata, Facebook ADU
+  // configs, Facebook mirrors). Like retention it writes no
+  // heartbeat row of its own and reports through its structured
+  // counter log line; a scan-level failure is captured and rethrown
+  // like the refresh cycle, per-row failures stay per-row.
+  if (controller.cron === INSIGHTS_FOLLOWERS_CRON) {
+    try {
+      await runInsightsFollowersCycle({
+        db: db as unknown as Parameters<typeof runInsightsFollowersCycle>[0]['db'],
+        masterKey,
+        now: options?.now ?? new Date(controller.scheduledTime),
+      });
+    } catch (err) {
+      console.error('[Scheduled] insights followers cycle failed:', err);
+      captureWorkerError(
+        env,
+        err,
+        { site: 'handleScheduled', kind: 'insights_followers_cycle_failed' },
         waitUntil
       );
       throw err;

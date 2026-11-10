@@ -49,6 +49,7 @@ interface PageDetailRow {
   timezone?: string | null;
   starting_followers?: number | string | null;
   current_followers?: number | string | null;
+  followers_updated_at?: string | null;
   status: FacebookPageStatus;
   tasks?: unknown;
   unmatched_post_types?: unknown;
@@ -91,6 +92,10 @@ function formatPageRow(row: PageDetailRow) {
     startingFollowers,
     currentFollowers,
     followersGained,
+    followersUpdatedAt:
+      typeof row.followers_updated_at === 'string' && row.followers_updated_at
+        ? row.followers_updated_at
+        : null,
     status: row.status,
     tasks: parsedTasks,
     unmatchedPostTypes,
@@ -215,6 +220,7 @@ async function fetchActivePageById(
         d.timezone,
         (d.metadata->>'starting_followers')::int AS starting_followers,
         (d.metadata->>'current_followers')::int AS current_followers,
+        d.metadata->>'followers_updated_at' AS followers_updated_at,
         ${DESTINATION_STATUS_TO_WIRE_SQL} AS status,
         d.metadata->'tasks' AS tasks,
         d.metadata->'unmatched_post_types' AS unmatched_post_types,
@@ -290,6 +296,10 @@ async function fetchActivePageById(
       current_followers:
         typeof row.metadata?.current_followers === 'number'
           ? row.metadata.current_followers
+          : null,
+      followers_updated_at:
+        typeof row.metadata?.followers_updated_at === 'string'
+          ? row.metadata.followers_updated_at
           : null,
       status: unifiedDestinationStatusToWire(row.status, row.metadata),
       tasks: row.metadata?.tasks ?? [],

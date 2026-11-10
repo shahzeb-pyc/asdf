@@ -40,8 +40,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  *   accounts, bounded by the account count), then lists configs for
  *   those destinations only, 9 per page like Facebook.
  * - Stats follow Facebook's definitions: totalFollowers is the sum
- *   of followers_gained, followersGained is the sum of net growth
- *   (followers_gained minus followers_count, floored at 0).
+ *   of current_followers, followersGained is the sum of net growth
+ *   (current_followers minus starting_followers, floored at 0).
  * - No new tables, no migration: adu_configs / adu_reels /
  *   adu_posting_jobs are reused verbatim.
  */
@@ -76,14 +76,14 @@ function sortConfigs(
   if (sort === 'Most Followers') {
     return [...rows].sort(
       (a, b) =>
-        Number(b.followers_gained ?? 0) - Number(a.followers_gained ?? 0) ||
+        Number(b.current_followers ?? 0) - Number(a.current_followers ?? 0) ||
         byCreated(a, b)
     );
   }
   if (sort === 'Least Followers') {
     return [...rows].sort(
       (a, b) =>
-        Number(a.followers_gained ?? 0) - Number(b.followers_gained ?? 0) ||
+        Number(a.current_followers ?? 0) - Number(b.current_followers ?? 0) ||
         byCreated(a, b)
     );
   }
@@ -140,8 +140,8 @@ export async function GET(
       .eq('workspace_id', workspaceId)
       .in('destination_id', destinationIds);
     if (statusValue) query = query.eq('status', statusValue);
-    if (sort === 'Most Followers') query = query.order('followers_gained', { ascending: false });
-    else if (sort === 'Least Followers') query = query.order('followers_gained', { ascending: true });
+    if (sort === 'Most Followers') query = query.order('current_followers', { ascending: false });
+    else if (sort === 'Least Followers') query = query.order('current_followers', { ascending: true });
     query = query.order('created_at', { ascending: false });
     const { data, error } = await query.range((page - 1) * pageSize, page * pageSize - 1);
     if (error) {
@@ -154,7 +154,7 @@ export async function GET(
     // Total + stats over the filtered set (bounded by destination count).
     let countQuery = supabase
       .from('adu_configs')
-      .select('followers_count, followers_gained', { count: 'exact' })
+      .select('starting_followers, current_followers', { count: 'exact' })
       .eq('workspace_id', workspaceId)
       .in('destination_id', destinationIds);
     if (statusValue) countQuery = countQuery.eq('status', statusValue);
@@ -167,11 +167,11 @@ export async function GET(
     }
     const followersGained = (statRows ?? []).reduce(
       (sum, r) =>
-        sum + Math.max(Number((r as { followers_gained?: number }).followers_gained ?? 0) - Number((r as { followers_count?: number }).followers_count ?? 0), 0),
+        sum + Math.max(Number((r as { current_followers?: number }).current_followers ?? 0) - Number((r as { starting_followers?: number }).starting_followers ?? 0), 0),
       0
     );
     const totalFollowers = (statRows ?? []).reduce(
-      (sum, r) => sum + Number((r as { followers_gained?: number }).followers_gained ?? 0),
+      (sum, r) => sum + Number((r as { current_followers?: number }).current_followers ?? 0),
       0
     );
     return NextResponse.json({
@@ -224,10 +224,10 @@ export async function GET(
     views.push(await buildAduConfigView(supabase, row as never));
   }
   const followersGained = sorted.reduce(
-    (sum, r) => sum + Math.max(Number(r.followers_gained ?? 0) - Number(r.followers_count ?? 0), 0),
+    (sum, r) => sum + Math.max(Number(r.current_followers ?? 0) - Number(r.starting_followers ?? 0), 0),
     0
   );
-  const totalFollowers = sorted.reduce((sum, r) => sum + Number(r.followers_gained ?? 0), 0);
+  const totalFollowers = sorted.reduce((sum, r) => sum + Number(r.current_followers ?? 0), 0);
   return NextResponse.json({
     configs: views,
     total,
@@ -287,8 +287,8 @@ async function createOne(
       posting_times: postingTimes,
       status: 'active',
       sync_status: 'pending',
-      followers_count: startingFollowers,
-      followers_gained: startingFollowers,
+      starting_followers: startingFollowers,
+      current_followers: startingFollowers,
     })
     .select('id')
     .single();
