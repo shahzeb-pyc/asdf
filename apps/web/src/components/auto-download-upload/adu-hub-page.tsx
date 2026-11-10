@@ -990,21 +990,18 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
     const parsed = parseAduBulkPaste(pasteText, 'tiktok');
     if (parsed.errors.length > 0) { setPasteFeedback(parsed.errors.join(' ')); return; }
     const empty = selectedRows.filter((row) => !(sources[row.key]?.username ?? '').trim());
-    const already = new Set(configured.map((c) => `${c.source_platform}|${c.source_username.toLowerCase()}`));
     const next = { ...sources };
     let assigned = 0;
     const shuffled = [...parsed.sources].sort(() => Math.random() - 0.5);
     for (const source of shuffled) {
       if (assigned >= empty.length) break;
-      const key = `${source.platform}|${source.username.toLowerCase()}`;
-      if (already.has(key)) continue;
       const row = empty[assigned];
       if (!row) break;
       next[row.key] = { platform: source.platform, username: source.username };
       assigned += 1;
     }
     setSources(next);
-    setPasteFeedback(`${assigned} new sources assigned to ${empty.length} empty page slots. ${parsed.warnings.join(' ')}`);
+    setPasteFeedback(`${assigned} sources assigned to ${empty.length} empty page slots. ${parsed.warnings.join(' ')}`);
     setPasteOpen(false);
   };
 
@@ -1387,14 +1384,14 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
           <div className="flex flex-col gap-4">
             <div>
               <h3 className="font-medium">Sources</h3>
-              <p className="text-body text-ink-sub">One source per page. Sources are assigned to the pages you picked.</p>
+              <p className="text-body text-ink-sub">Sources are assigned to the pages you picked.</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button type="button" variant="outline" onClick={() => setPasteOpen(true)}>Paste sources (random assign)</Button>
               </div>
               {pasteFeedback ? <p className="text-body text-ink-sub">{pasteFeedback}</p> : null}
               {pasteOpen ? (
                 <div className="mt-2 flex flex-col gap-2 rounded-md border p-3">
-                  <p className="text-body">One source per line, platform|username — for example instagram|ronaldo, facebook|messi. Sources are assigned randomly to empty page slots only.</p>
+                  <p className="text-body">One source per line, platform|username — for example instagram|ronaldo, facebook|messi. Sources are assigned randomly to empty page slots.</p>
                   <Textarea rows={6} value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder={'instagram|ronaldo\nfacebook|messi'} />
                   <div className="flex gap-2">
                     <Button type="button" onClick={applyPaste}>Apply assignment</Button>

@@ -309,21 +309,18 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
     const parsed = parseAduBulkPaste(pasteText, 'instagram');
     if (parsed.errors.length > 0) { setPasteFeedback(parsed.errors.join(' ')); return; }
     const empty = selectedPages.filter((p) => !(sources[p.id]?.username ?? '').trim());
-    const already = new Set(configured.map((c) => `${c.source_platform}|${c.source_username.toLowerCase()}`));
     const next = { ...sources };
     let assigned = 0;
     const shuffled = [...parsed.sources].sort(() => Math.random() - 0.5);
     for (const source of shuffled) {
       if (assigned >= empty.length) break;
-      const key = `${source.platform}|${source.username.toLowerCase()}`;
-      if (already.has(key)) continue;
       const page = empty[assigned];
       if (!page) break;
       next[page.id] = { platform: source.platform, username: source.username };
       assigned += 1;
     }
     setSources(next);
-    setPasteFeedback(`${assigned} new sources assigned to ${empty.length} empty account slots. ${parsed.warnings.join(' ')}`);
+    setPasteFeedback(`${assigned} sources assigned to ${empty.length} empty account slots. ${parsed.warnings.join(' ')}`);
     setPasteOpen(false);
   };
 
@@ -538,7 +535,7 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
             {csvFeedback ? <p className="text-body text-ink-sub">{csvFeedback}</p> : null}
             {pasteOpen ? (
               <div className="flex flex-col gap-2 rounded-md border p-3">
-                <p className="text-body">One source per line, platform|username — for example instagram|ronaldo, facebook|messi. Sources are assigned randomly to empty account slots only.</p>
+                <p className="text-body">One source per line, platform|username — for example instagram|ronaldo, facebook|messi. Sources are assigned randomly to empty account slots.</p>
                 <Textarea rows={6} value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder={'instagram|ronaldo\nfacebook|messi'} />
                 <div className="flex gap-2">
                   <Button type="button" onClick={applyPaste}>Apply assignment</Button>

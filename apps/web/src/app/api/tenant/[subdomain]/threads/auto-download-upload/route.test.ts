@@ -156,6 +156,15 @@ class FakeQuery {
           );
           if (clash) return { data: null, error: { code: '23505' } };
         }
+        // Mirrors idx_adu_configs_destination_unique (one config per
+        // destination page). Spec 161 dropped the source-uniqueness
+        // index, so the same source on two destinations must NOT clash.
+        if (this.tableName === 'adu_configs') {
+          const clash = this.table.some(
+            (existing) => existing['destination_id'] === row['destination_id']
+          );
+          if (clash) return { data: null, error: { code: '23505' } };
+        }
       }
       const inserted = rows.map((row) => {
         const fresh: Row = { id: this.idSeq(), ...row };
@@ -436,7 +445,7 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
     expect(tables['subscription_usage']).toHaveLength(1);
   });
 
-  it('a bulk add registers one unit per config', async () => {
+  it('the same source on two pages succeeds (spec 161)', async () => {
     const { client, tables } = makeClient();
     ctxHolder.client = client;
     seedActivePeriod(tables, 2);
@@ -446,8 +455,8 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
     const res = await POST(
       postRequest({
         items: [
-          { destinationId: DEST_1, sourcePlatform: 'instagram', sourceUsername: 'first' },
-          { destinationId: DEST_2, sourcePlatform: 'instagram', sourceUsername: 'second' },
+          { destinationId: DEST_1, sourcePlatform: 'instagram', sourceUsername: 'someone' },
+          { destinationId: DEST_2, sourcePlatform: 'instagram', sourceUsername: 'someone' },
         ],
         timezone: 'UTC',
         postsPerDay: 1,
@@ -466,5 +475,30 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
         .map((row) => row['destination_key'])
         .sort()
     ).toEqual(['threads-acct-1', 'threads-acct-2']);
+  });
+
+  it('the same destination twice is rejected with the destination-only message (spec 161)', async () => {
+    const { client, tables } = makeClient();
+    ctxHolder.client = client;
+    seedActivePeriod(tables, 2);
+    seedDestination(tables, DEST_1, 'threads-acct-1');
+
+    const body = {
+      destinationId: DEST_1,
+      sourcePlatform: 'instagram',
+      sourceUsername: 'someone',
+      timezone: 'UTC',
+      postsPerDay: 1,
+      scheduleType: 'dailyrandom',
+    };
+    const first = await POST(postRequest(body), params());
+    expect(first.status).toBe(201);
+    const second = await POST(postRequest(body), params());
+    expect(second.status).toBe(400);
+    expect((await second.json()) as { error?: string }).toEqual({
+      error: 'This account is already configured.',
+    });
+    expect(tables['adu_configs']).toHaveLength(1);
+    expect(tables['subscription_usage']).toHaveLength(1);
   });
 });
