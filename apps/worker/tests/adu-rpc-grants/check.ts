@@ -20,7 +20,7 @@
  *       total_count window), status filter, search across source
  *       username / destination name / external id, Most/Least
  *       Followers sort, and stats sums (total followers = sum of
- *       followers_gained; net gained = sum of max(0, gained-count)).
+ *       current_followers; net gained = sum of max(0, current-starting)).
  *   (d) The hardening migration is idempotent: re-applying
  *       20261030140000 exits clean and the grants above still hold.
  *
@@ -192,7 +192,7 @@ async function seed(pool: Pool): Promise<void> {
   // off is Pause now), so the third config is seeded 'paused'.
   await pool.query(
     `INSERT INTO public.adu_configs (id, workspace_id, destination_id, source_platform, source_username,
-       timezone, posts_per_day, schedule_type, posting_times, status, sync_status, followers_count, followers_gained)
+       timezone, posts_per_day, schedule_type, posting_times, status, sync_status, starting_followers, current_followers)
      VALUES
        ('a0000000-0000-4000-8000-000000000001', $1, $2, 'instagram', 'alpha_source', 'UTC', 1, 'dailyrandom', '{}', 'active', 'synced', 100, 150),
        ('a0000000-0000-4000-8000-000000000002', $1, $3, 'tiktok', 'beta_source', 'UTC', 2, 'dailyrandom', '{}', 'active', 'synced', 300, 300),
@@ -297,9 +297,9 @@ async function main(): Promise<void> {
     const listMost = await attempt(pool, 'service_role',
       'SELECT * FROM public.adu_hub_list($1, NULL, NULL, $2, 9, 0)', [WS_ID, 'Most Followers']);
     check(
-      Number(listMost.rows[0]?.followers_gained) === 300,
-      'hub list Most Followers sorts by followers_gained desc',
-      String(listMost.rows[0]?.followers_gained),
+      Number(listMost.rows[0]?.current_followers) === 300,
+      'hub list Most Followers sorts by current_followers desc',
+      String(listMost.rows[0]?.current_followers),
     );
     const stats = await attempt(pool, 'service_role',
       'SELECT * FROM public.adu_hub_stats($1, NULL, NULL)', [WS_ID]);
@@ -307,7 +307,7 @@ async function main(): Promise<void> {
     check(Number(stats.rows[0]?.total_count) === 3, 'hub stats total is 3', String(stats.rows[0]?.total_count));
     check(
       Number(stats.rows[0]?.total_followers_sum) === 500,
-      'hub stats total followers = sum(followers_gained) = 500',
+      'hub stats total followers = sum(current_followers) = 500',
       String(stats.rows[0]?.total_followers_sum),
     );
     check(

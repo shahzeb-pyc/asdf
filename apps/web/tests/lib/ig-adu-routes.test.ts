@@ -212,8 +212,8 @@ function makeDb() {
         posting_times: [],
         status: 'active',
         sync_status: 'synced',
-        followers_count: 1000,
-        followers_gained: 1250,
+        starting_followers: 1000,
+        current_followers: 1250,
         created_at: '2026-10-20T00:00:00.000Z',
         display_name: null,
       },
@@ -229,8 +229,8 @@ function makeDb() {
         posting_times: [],
         status: 'active',
         sync_status: 'synced',
-        followers_count: 2000,
-        followers_gained: 2600,
+        starting_followers: 2000,
+        current_followers: 2600,
         created_at: '2026-10-21T00:00:00.000Z',
         display_name: null,
       },
@@ -325,7 +325,8 @@ describe('Instagram ADU hub route', () => {
     expect(body.id).toBeTruthy();
     const inserted = db.adu_configs.find((c) => c.id === body.id);
     expect(inserted?.destination_id).toBe('11111111-1111-4111-8111-111111111111');
-    expect(inserted?.followers_count).toBe(500);
+    expect(inserted?.starting_followers).toBe(500);
+    expect(inserted?.current_followers).toBe(500);
   });
 
   it('single create rejects a Facebook destination with the Instagram-account error', async () => {

@@ -117,3 +117,21 @@ describe('PageTabDashboard Publish now removal', () => {
     expect(screen.queryByText('Publish Now')).not.toBeInTheDocument();
   });
 });
+
+describe('PageTabDashboard follower last-updated (spec 162)', () => {
+  it('shows the last successful check under Total Followers, in the page timezone', () => {
+    renderDashboard({
+      page: { ...PAGE, timezone: 'Asia/Karachi', followersUpdatedAt: '2026-11-10T22:00:00.000Z' },
+    });
+    // 22:00 UTC = 03:00 PKT on 11 Nov. A bare browser-timezone
+    // format in a UTC test env would say 10 Nov, 22:00.
+    expect(screen.getByTestId('metric-followers')).toHaveTextContent(/Updated 11 Nov 2026, 03:00/);
+    expect(screen.queryByText('At last import')).not.toBeInTheDocument();
+  });
+
+  it('shows a dash, never a faked time, when no check has ever stamped the page', () => {
+    renderDashboard({ page: { ...PAGE, followersUpdatedAt: null } });
+    expect(screen.getByTestId('metric-followers')).toHaveTextContent('—');
+    expect(screen.queryByText('At last import')).not.toBeInTheDocument();
+  });
+});

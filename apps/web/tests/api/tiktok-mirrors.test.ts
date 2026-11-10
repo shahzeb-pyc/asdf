@@ -1022,6 +1022,41 @@ describe('spec 155: mirror Facebook detail (fb_status)', () => {
     expect(view.targetFbStatus).toBe('invalid_token');
   });
 
+  it('toMirrorView prefers the mirror own follower columns once populated, destination values before (spec 162)', () => {
+    const details = {
+      addedAt: '2026-10-01T00:00:00.000Z',
+      followers: 1200,
+      category: 'Community',
+      accountDisplayName: 'Owner',
+      accountAvatarUrl: null,
+      startingFollowers: 1000,
+    };
+    // Before the first worker run the mirror columns are NULL:
+    // the borrowed destination values are the fallback.
+    const unpopulated = asMirrorRow(mirrorRow())!;
+    const fallbackView = toMirrorView(unpopulated, null, null, details);
+    expect(fallbackView.targetFollowers).toBe(1200);
+    expect(fallbackView.targetStartingFollowers).toBe(1000);
+    expect(fallbackView.startingFollowers).toBeNull();
+    expect(fallbackView.currentFollowers).toBeNull();
+    expect(fallbackView.followersUpdatedAt).toBeNull();
+    // After the first worker run the mirror's own values win, even
+    // when the destination has since moved on.
+    const populated = asMirrorRow(
+      mirrorRow({
+        starting_followers: 1100,
+        current_followers: 1300,
+        followers_updated_at: '2026-11-10T22:00:00.000Z',
+      }),
+    )!;
+    const ownView = toMirrorView(populated, null, null, details);
+    expect(ownView.targetFollowers).toBe(1300);
+    expect(ownView.targetStartingFollowers).toBe(1100);
+    expect(ownView.startingFollowers).toBe(1100);
+    expect(ownView.currentFollowers).toBe(1300);
+    expect(ownView.followersUpdatedAt).toBe('2026-11-10T22:00:00.000Z');
+  });
+
   it('list ?fbStatus= sends the detail condition to SQL (legacy path)', async () => {
     const { db, calls } = fakeDb();
     const req = new NextRequest(
