@@ -12,6 +12,7 @@ import {
   createPeriodForPurchase,
   getActivePeriod,
   hasPendingPayment,
+  invalidateEntitlementCache,
   PENDING_PAYMENT_EXISTS_MESSAGE,
   pricePurchase,
   SubscriptionGateError,
@@ -264,6 +265,12 @@ export async function POST(
             .update({ superseded_at: new Date().toISOString() })
             .eq('id', period.id)
             .is('superseded_at', null);
+          // Plan-check S1 (W4): W1 invalidated at creation, but a
+          // concurrent read on the same instance between creation
+          // and this guard supersede could have re-cached the
+          // now-superseded period. Best-effort per instance; the
+          // 30 s TTL is the guarantee.
+          invalidateEntitlementCache(client, session.userId);
         } catch (supersedeError) {
           logServerError('[billing] zero-due orphan period supersede failed', supersedeError, {
             source: 'billing',
