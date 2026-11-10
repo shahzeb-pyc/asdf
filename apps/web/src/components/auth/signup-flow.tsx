@@ -25,12 +25,24 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 
 import { AuthSplitLayout } from '@/components/auth/auth-split-layout';
 import { SignupDetailsForm } from '@/components/auth/signup-details-form';
-import { SignupOtpStep } from '@/components/auth/signup-otp-step';
 import { SignupPausedCard } from '@/components/auth/signup-paused-card';
 import { getSignupLayoutMeta } from '@/app/signup/signup-layout-meta';
+
+/**
+ * Spec 159 O3 — the OTP step loads on demand, not in first load.
+ * It only renders after the details submit succeeds (or on direct
+ * `?step=otp` entry), so its chunk is fetched at that transition
+ * instead of upfront. The transition fetch is small (~2–3 KB) and
+ * follows the details submit round-trip.
+ */
+const SignupOtpStep = dynamic(
+  () => import('@/components/auth/signup-otp-step').then((m) => m.SignupOtpStep),
+  { loading: () => null }
+);
 
 export interface SignupFlowProps {
   initialStep?: 'details' | 'otp';

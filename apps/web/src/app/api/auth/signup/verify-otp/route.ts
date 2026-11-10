@@ -7,7 +7,7 @@ import {
 import {
   verifySignupOtpViaSupabase,
 } from '@/lib/auth/signup';
-import { formatAuthErrorResponse } from '@/lib/auth-errors';
+import { formatAuthErrorResponse } from '@/lib/auth-errors-server';
 import { checkRateLimit, extractClientIp, RATE_LIMIT_WINDOW_MS } from '@/lib/rate-limiter';
 import { bodyTooLargeResponse, readJsonBody } from '@/lib/request-body';
 
