@@ -9,7 +9,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { enforceIpRateLimit } from '@/lib/request-body';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import {
   getCredentials,
   platformLabel,
@@ -78,7 +78,7 @@ export async function POST(
   }
 
   try {
-    const workspaceId = await resolveTenantWorkspaceId(supabase, subdomain, session.userId);
+    const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, supabase);
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
     }

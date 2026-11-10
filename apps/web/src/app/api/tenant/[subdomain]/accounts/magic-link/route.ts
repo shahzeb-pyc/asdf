@@ -105,7 +105,7 @@ export async function handleGenerateMagicLink(
 
   // 3. Pre-check that Facebook BYOC is configured for this workspace
   const client = dbClient || getSupabaseAdminClient();
-  const byoc = await resolveWorkspaceFacebookCredentials(client, subdomain, session.userId);
+  const byoc = await resolveWorkspaceFacebookCredentials(client, subdomain, session.userId, undefined, session);
   if (!byoc.ok) {
     return NextResponse.json(
       {

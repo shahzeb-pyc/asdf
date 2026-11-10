@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  asWorkspaceIdClaim,
   SessionPayloadSchema,
   signSessionToken,
   verifySessionToken,
@@ -154,6 +155,85 @@ describe('Session Authentication Contracts (SessionPayload & Web Crypto Tokens)'
       await expect(verifySessionToken(token, TEST_SESSION_SECRET)).rejects.toThrow(
         'Session token issued in the future'
       );
+    });
+  });
+
+  describe('workspaceId claim (S3)', () => {
+    const WORKSPACE_ID = '55555555-5555-4555-8555-555555555555';
+
+    it('A1: accepts a payload with and without workspaceId', () => {
+      expect(
+        SessionPayloadSchema.safeParse({ ...mockUserSession, workspaceId: WORKSPACE_ID })
+          .success
+      ).toBe(true);
+      expect(SessionPayloadSchema.safeParse(mockUserSession).success).toBe(true);
+    });
+
+    it('A1: rejects a non-UUID workspaceId', () => {
+      const result = SessionPayloadSchema.safeParse({
+        ...mockUserSession,
+        workspaceId: 'not-a-uuid',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('A2: a pre-S3 token (no claim) verifies cleanly with workspaceId undefined', async () => {
+      const token = await signSessionToken(mockUserSession, TEST_SESSION_SECRET);
+      const decoded = await verifySessionToken(token, TEST_SESSION_SECRET);
+      expect(decoded.workspaceId).toBeUndefined();
+    });
+
+    it('A3: signSessionToken round-trips the workspaceId claim', async () => {
+      const token = await signSessionToken(
+        { ...mockUserSession, workspaceId: WORKSPACE_ID },
+        TEST_SESSION_SECRET
+      );
+      const decoded = await verifySessionToken(token, TEST_SESSION_SECRET);
+      expect(decoded.workspaceId).toBe(WORKSPACE_ID);
+    });
+
+    it('A4: a token whose workspaceId is tampered with fails verification', async () => {
+      const token = await signSessionToken(
+        { ...mockUserSession, workspaceId: WORKSPACE_ID },
+        TEST_SESSION_SECRET
+      );
+      const [header, payload, sig] = token.split('.');
+      const payloadJson = JSON.parse(
+        Buffer.from(payload as string, 'base64url').toString('utf8')
+      ) as Record<string, unknown>;
+      payloadJson.workspaceId = '66666666-6666-4666-8666-666666666666';
+      const tamperedPayload = Buffer.from(JSON.stringify(payloadJson)).toString('base64url');
+      const tamperedToken = `${header}.${tamperedPayload}.${sig}`;
+      await expect(verifySessionToken(tamperedToken, TEST_SESSION_SECRET)).rejects.toThrow(
+        DomainError
+      );
+    });
+
+    it('A5: a new token parses under the old schema (unknown key stripped), so rollback cannot lock users out', () => {
+      // The pre-S3 schema had no workspaceId field. Zod strips unknown
+      // keys, so a new token verifies as a claimless token under old
+      // code and every route falls back to the DB lookup.
+      const oldSchema = SessionPayloadSchema.omit({ workspaceId: true });
+      const parsed = oldSchema.safeParse({
+        ...mockUserSession,
+        workspaceId: WORKSPACE_ID,
+      });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect('workspaceId' in parsed.data).toBe(false);
+      }
+    });
+
+    it('A5b: asWorkspaceIdClaim passes a valid UUID through and drops anything else, so a non-UUID id can never make signSessionToken throw', () => {
+      // Regression: the full web suite 500'd the workspaces
+      // create/switch routes because fake ids like 'ws-1' hit the
+      // schema's UUID validation. Mint sites guard through this
+      // helper, so those ids mint claimless instead of failing auth.
+      expect(asWorkspaceIdClaim(WORKSPACE_ID)).toBe(WORKSPACE_ID);
+      expect(asWorkspaceIdClaim('ws-1')).toBeUndefined();
+      expect(asWorkspaceIdClaim('not-a-uuid')).toBeUndefined();
+      expect(asWorkspaceIdClaim(null)).toBeUndefined();
+      expect(asWorkspaceIdClaim(undefined)).toBeUndefined();
     });
   });
 

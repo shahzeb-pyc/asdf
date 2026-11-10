@@ -11,7 +11,7 @@ import {
   type SessionPayload,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import type { ConnectDbClient } from './persist';
 
 export async function extractConnectSession(
@@ -109,10 +109,10 @@ export async function resolveSocialRouteContext(
   // same as the accounts list and BYOC routes already behaved).
   // Other tenant routes that still pass a role are outside this
   // audit's account/social scope and keep their own behaviour.
-  const workspaceId = await resolveTenantWorkspaceId(
-    client,
+  const workspaceId = await resolveWorkspaceIdFromSession(
+    session,
     subdomain,
-    session.userId
+    client
   );
   if (!workspaceId) {
     return {

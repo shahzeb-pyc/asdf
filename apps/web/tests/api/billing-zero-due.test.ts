@@ -42,7 +42,7 @@ const workspaceMock = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/server/workspace-resolver', () => ({
-  resolveTenantWorkspaceId: vi.fn(async () => {
+  resolveWorkspaceIdFromSession: vi.fn(async () => {
     if (workspaceMock.rejectOnce) {
       workspaceMock.rejectOnce = false;
       throw new Error('workspace lookup down');

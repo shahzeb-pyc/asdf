@@ -21,7 +21,7 @@ import {
   getRouteSupabase,
   isLegacyClient,
 } from '@/lib/route-auth';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import {
   assertFeatureAddWithinCap,
   getEntitlement,
@@ -743,7 +743,7 @@ export async function handleListMirrors(
   if (!db) {
     return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
   }
-  const workspaceId = await resolveTenantWorkspaceId(db, subdomain, session.userId, session.role);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, db, session.role);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
@@ -1507,7 +1507,7 @@ export async function handleCreateMirror(
   if (!db) {
     return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
   }
-  const workspaceId = await resolveTenantWorkspaceId(db, subdomain, session.userId, session.role);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, db, session.role);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }

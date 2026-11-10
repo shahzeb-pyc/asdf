@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
-  resolveTenantWorkspaceId: vi.fn(),
+  resolveWorkspaceIdFromSession: vi.fn(),
 }));
 
 vi.mock('@fbuploadpro/contracts', async (importOriginal) => {
@@ -38,7 +38,7 @@ vi.mock('@/lib/server-analytics', () => ({
   logServerError: vi.fn(),
 }));
 vi.mock('@/lib/server/workspace-resolver', () => ({
-  resolveTenantWorkspaceId: mocks.resolveTenantWorkspaceId,
+  resolveWorkspaceIdFromSession: mocks.resolveWorkspaceIdFromSession,
 }));
 
 import { handleListPages } from './route';
@@ -181,7 +181,7 @@ function fakeSupabaseDb() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.resolveTenantWorkspaceId.mockResolvedValue(WORKSPACE_ID);
+  mocks.resolveWorkspaceIdFromSession.mockResolvedValue(WORKSPACE_ID);
 });
 
 describe('handleListPages statusDetail (spec 155)', () => {

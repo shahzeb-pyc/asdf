@@ -19,7 +19,7 @@ import {
   parsePaginationParams,
   type PaginationMeta,
 } from '@/lib/server/pagination';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import {
   DESTINATION_STATUS_TO_WIRE_SQL,
   unifiedDestinationStatusToWire,
@@ -944,7 +944,7 @@ export async function handleListPages(
   }
 
   // 3. Resolve workspace ID scoped to user
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient, session.role);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }

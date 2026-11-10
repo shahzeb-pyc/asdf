@@ -53,7 +53,7 @@ vi.mock('@/lib/server/threads-schedule-auth', () => ({
 }));
 vi.mock('@/lib/auth/clients', () => ({ getSupabaseAdminClient: mockAdmin }));
 vi.mock('@/lib/server/workspace-resolver', () => ({
-  resolveTenantWorkspaceId: mockWorkspace,
+  resolveWorkspaceIdFromSession: mockWorkspace,
 }));
 vi.mock('@/lib/server/unmatched-flag', () => ({
   refreshDestinationUnmatchedFlag: mockRefresh,

@@ -17,7 +17,7 @@ import {
 } from '@/lib/connect/account-probe';
 import { logServerError } from '@/lib/server-analytics';
 import { enforceIpRateLimit } from '@/lib/request-body';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export async function handleDiscoverPages(
@@ -57,7 +57,7 @@ export async function handleDiscoverPages(
   }
 
   // 3. Resolve workspace ID scoped to user (supports admin inspection)
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }

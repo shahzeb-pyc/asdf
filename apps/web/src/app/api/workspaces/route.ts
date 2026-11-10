@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
+  asWorkspaceIdClaim,
   getSessionSecret,
   CreateWorkspaceRequestSchema,
   UpdateWorkspaceRequestSchema,
@@ -195,6 +196,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
 
     // Generate new session token pointing to the newly created workspace
+    // S3: the claim is the NEWLY INSERTED workspace's id — never the
+    // old token's claim — and only for role === 'user'; admin/seller
+    // tokens carry no claim. asWorkspaceIdClaim guards the mint: a
+    // non-UUID id mints claimless instead of throwing (rule 5).
+    const claimedWorkspaceId =
+      session.role === 'user' ? asWorkspaceIdClaim(newWorkspace.id) : undefined;
     const secret = getSessionSecret();
     const newToken = await signSessionToken(
       {
@@ -205,6 +212,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         allowedSubdomains,
         role: session.role,
         status: session.status,
+        ...(claimedWorkspaceId ? { workspaceId: claimedWorkspaceId } : {}),
       },
       secret
     );

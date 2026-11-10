@@ -19,7 +19,7 @@ import {
   isTokenDeadGraphStatus,
   markAccountConnectionError,
 } from '@/lib/connect/account-probe';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import { logServerError } from '@/lib/server-analytics';
 import {
   registerUsage,
@@ -59,10 +59,10 @@ export async function aduContext(
       ),
     };
   }
-  const workspaceId = await resolveTenantWorkspaceId(
-    supabase as SupabaseClient,
+  const workspaceId = await resolveWorkspaceIdFromSession(
+    auth.session,
     subdomain,
-    auth.session.userId,
+    supabase as SupabaseClient,
     auth.session.role
   );
   if (!workspaceId) {

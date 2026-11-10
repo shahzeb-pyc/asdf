@@ -4,7 +4,7 @@ import {
   buildTenantUrl,
   getSessionSecret,
 } from '@fbuploadpro/contracts';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import { enforceIpRateLimit } from '@/lib/request-body';
 // Side effect: registers the X connect config (spec 127).
 import '@/lib/connect/platforms/x';
@@ -172,10 +172,10 @@ export async function handleConnectInitiate(
     );
   }
 
-  const workspaceId = await resolveTenantWorkspaceId(
-    client,
+  const workspaceId = await resolveWorkspaceIdFromSession(
+    session,
     subdomain,
-    session.userId,
+    client,
     session.role
   );
   if (!workspaceId) {

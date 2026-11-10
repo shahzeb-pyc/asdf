@@ -1,4 +1,4 @@
-import type { DatabaseClient, UserRole } from '@fbuploadpro/contracts';
+import type { DatabaseClient, SessionPayload, UserRole } from '@fbuploadpro/contracts';
 import { isLegacyClient, getRouteSupabase } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -66,4 +66,56 @@ export async function resolveTenantWorkspaceId(
     });
     return null;
   }
+}
+
+export type WorkspaceIdFallbackReason = 'no-claim' | 'role-not-user' | 'subdomain-mismatch';
+
+/**
+ * S3: resolves the workspace id from the verified session token's
+ * `workspaceId` claim when it is usable, and falls back to
+ * `resolveTenantWorkspaceId` (the same DB lookup as today) otherwise.
+ *
+ * The claim is usable only when all of these hold: the session carries
+ * a `workspaceId`, the session role is 'user' (admin/seller tokens
+ * carry no claim), and the requested subdomain is the token's active
+ * subdomain (case-insensitive, the same normalisation
+ * `canAccessTenant` uses). Anything else — old claimless tokens,
+ * requests for a non-active allowed subdomain, admin callers — takes
+ * the DB fallback, which re-proves ownership exactly as today. The
+ * `role` argument is passed through untouched, so call sites that do
+ * not pass a role keep resolving as a non-owner on the fallback path.
+ *
+ * `session` must come from `verifySessionToken` (directly or via
+ * `authenticateTenantRoute` / `getServerSessionContext` /
+ * `extractConnectSession`) — never from a raw cookie, header, body,
+ * or URL value. Call sites that cannot supply a verified session keep
+ * calling `resolveTenantWorkspaceId` directly.
+ */
+export async function resolveWorkspaceIdFromSession(
+  session: SessionPayload,
+  subdomain: string,
+  client: DatabaseClient | SupabaseClient | null | undefined,
+  role?: UserRole | string
+): Promise<string | null> {
+  const claimUsable =
+    Boolean(session.workspaceId) &&
+    session.role === 'user' &&
+    session.subdomain.toLowerCase() === subdomain.toLowerCase();
+  if (claimUsable) {
+    return session.workspaceId as string;
+  }
+
+  // S3 fallback-use monitoring (coordinator Q3: a log line only, no new
+  // metrics path). Expected shape over the 30-day rollout tail: decay
+  // to zero as users re-login and get claim-carrying tokens.
+  const reason: WorkspaceIdFallbackReason = !session.workspaceId
+    ? 'no-claim'
+    : session.role !== 'user'
+      ? 'role-not-user'
+      : 'subdomain-mismatch';
+  console.info('[workspace-resolver] workspace-id fallback used', {
+    subdomain,
+    reason,
+  });
+  return resolveTenantWorkspaceId(client, subdomain, session.userId, role);
 }

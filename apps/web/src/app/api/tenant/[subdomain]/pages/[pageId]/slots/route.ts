@@ -12,7 +12,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -84,7 +84,7 @@ export async function handleListQueueSlots(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient, session.role);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
@@ -222,7 +222,7 @@ export async function handleCreateQueueSlot(
     );
   }
 
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient, session.role);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
@@ -472,7 +472,7 @@ export async function handleUpdateQueueScheduleTimezone(
     );
   }
 
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient, session.role);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }

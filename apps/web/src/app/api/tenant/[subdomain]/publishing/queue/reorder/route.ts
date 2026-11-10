@@ -8,7 +8,7 @@ import {
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { isLegacyClient, getRouteSupabase } from '@/lib/route-auth';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -124,7 +124,7 @@ export async function handleReorderQueueItems(
 
   const { pageId, itemIds } = parsed.data;
 
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient, session.role);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }

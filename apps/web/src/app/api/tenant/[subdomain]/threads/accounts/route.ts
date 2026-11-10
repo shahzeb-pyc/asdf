@@ -11,7 +11,7 @@ import {
   paginateMeta,
   parsePaginationParams,
 } from '@/lib/server/pagination';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -164,10 +164,10 @@ export async function handleListThreadsAccounts(
     );
   }
 
-  const workspaceId = await resolveTenantWorkspaceId(
-    supabase,
+  const workspaceId = await resolveWorkspaceIdFromSession(
+    session,
     subdomain,
-    session.userId
+    supabase
   );
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });

@@ -9,7 +9,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -109,7 +109,7 @@ export async function handleUpdateQueueSlot(
     );
   }
 
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient, session.role);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
@@ -290,7 +290,7 @@ export async function handleDeleteQueueSlot(
   if (auth.errorResponse) return auth.errorResponse;
   const session = auth.session!;
 
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient, session.role);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }

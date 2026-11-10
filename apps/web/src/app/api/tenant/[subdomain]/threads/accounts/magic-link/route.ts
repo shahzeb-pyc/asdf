@@ -9,7 +9,7 @@ import {
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolvePlatformClientCredentials } from '@/lib/connect/persist';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import { z } from 'zod';
 import { bodyTooLargeResponse, enforceIpRateLimit, readJsonBody } from '@/lib/request-body';
 
@@ -97,10 +97,10 @@ export async function handleGenerateThreadsMagicLink(
 
   // 3. Pre-check that Threads BYOC is configured for this workspace
   const client = dbClient || getSupabaseAdminClient();
-  const workspaceId = await resolveTenantWorkspaceId(
-    client,
+  const workspaceId = await resolveWorkspaceIdFromSession(
+    session,
     subdomain,
-    session.userId,
+    client,
     session.role
   );
   if (!workspaceId) {

@@ -28,6 +28,5 @@ empty-catch apps/web/src/app/api/tenant/[subdomain]/media/[mediaId]/route.ts 3
 empty-catch apps/web/src/components/media/media-library-explorer.tsx 1
 empty-catch apps/web/src/components/settings/general-settings-view.tsx 1
 empty-catch apps/web/src/lib/auth-redirect.ts 1
-empty-catch apps/web/src/lib/auth/login.ts 1
 empty-catch apps/web/src/lib/server-analytics.ts 1
 empty-catch apps/web/src/lib/timezones.ts 1

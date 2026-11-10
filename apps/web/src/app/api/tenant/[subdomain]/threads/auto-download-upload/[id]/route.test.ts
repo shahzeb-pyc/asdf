@@ -34,7 +34,7 @@ vi.mock('@/lib/route-auth', () => ({
   getRouteSupabase: vi.fn(() => null),
 }));
 vi.mock('@/lib/server/workspace-resolver', () => ({
-  resolveTenantWorkspaceId: vi.fn(),
+  resolveWorkspaceIdFromSession: vi.fn(),
 }));
 vi.mock('@/lib/connect/account-probe', () => ({
   isTokenDeadGraphStatus: vi.fn(() => false),

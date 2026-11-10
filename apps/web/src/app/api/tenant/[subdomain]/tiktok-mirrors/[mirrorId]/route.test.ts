@@ -23,7 +23,7 @@ vi.mock('@/lib/route-auth', () => ({
   isLegacyClient: mocks.isLegacyClient,
 }));
 vi.mock('@/lib/server/workspace-resolver', () => ({
-  resolveTenantWorkspaceId: vi.fn(),
+  resolveWorkspaceIdFromSession: vi.fn(),
 }));
 vi.mock('@/lib/billing/route-helpers', () => ({
   getBillingAdminClient: vi.fn(),

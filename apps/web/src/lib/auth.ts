@@ -13,6 +13,10 @@ export interface AuthenticatedUserContext {
   role: UserRole;
   subdomain: string;
   allowedSubdomains?: string[] | undefined;
+  // S3: id of the token's active-subdomain workspace, when the token
+  // carries the claim (user role, minted post-S3). Absent for old
+  // tokens and for admin/seller sessions.
+  workspaceId?: string | undefined;
 }
 
 export async function getServerSessionContext(req?: NextRequest): Promise<AuthenticatedUserContext | null> {
@@ -38,6 +42,7 @@ export async function getServerSessionContext(req?: NextRequest): Promise<Authen
       role: session.role,
       subdomain: session.subdomain,
       ...(session.allowedSubdomains ? { allowedSubdomains: session.allowedSubdomains } : {}),
+      ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
     };
   } catch {
     return null;

@@ -64,7 +64,9 @@ export async function handleInitiateFacebookOAuth(
     const byocResult = await resolveWorkspaceFacebookCredentials(
       client,
       session.subdomain,
-      session.userId
+      session.userId,
+      undefined,
+      session
     );
 
     if (!byocResult.ok) {

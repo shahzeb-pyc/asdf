@@ -16,7 +16,7 @@ import {
   type GraphFetchFn,
 } from '@/lib/insights/page-insights';
 import { logServerError } from '@/lib/server-analytics';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 
 /**
  * Fresh Page Insights proxy — written 2026-10-27 for the Insights rebuild.
@@ -58,11 +58,11 @@ export async function handleGetPageInsights(
   if (!access.allowed) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
-  const workspaceId = await resolveTenantWorkspaceId(
-    dbClient,
+  const workspaceId = await resolveWorkspaceIdFromSession(
+    session,
     subdomain,
-    session.userId,
-    session.role,
+    dbClient,
+    session.role
   );
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });

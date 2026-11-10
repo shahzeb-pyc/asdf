@@ -12,7 +12,7 @@ import type { NextRequest } from 'next/server';
 const mocks = vi.hoisted(() => ({
   authenticateTenantRoute: vi.fn(),
   isLegacyClient: vi.fn(),
-  resolveTenantWorkspaceId: vi.fn(),
+  resolveWorkspaceIdFromSession: vi.fn(),
   getBillingAdminClient: vi.fn(),
   assertPaidPlan: vi.fn(),
   refreshDestinationUnmatchedFlag: vi.fn(),
@@ -25,7 +25,7 @@ vi.mock('@/lib/route-auth', () => ({
   isLegacyClient: mocks.isLegacyClient,
 }));
 vi.mock('@/lib/server/workspace-resolver', () => ({
-  resolveTenantWorkspaceId: mocks.resolveTenantWorkspaceId,
+  resolveWorkspaceIdFromSession: mocks.resolveWorkspaceIdFromSession,
 }));
 vi.mock('@/lib/billing/route-helpers', () => ({
   getBillingAdminClient: mocks.getBillingAdminClient,
@@ -91,7 +91,7 @@ beforeEach(() => {
     session: { userId: 'user-1', role: 'user' },
   });
   mocks.isLegacyClient.mockReturnValue(true);
-  mocks.resolveTenantWorkspaceId.mockResolvedValue('ws-1');
+  mocks.resolveWorkspaceIdFromSession.mockResolvedValue('ws-1');
   mocks.getBillingAdminClient.mockReturnValue({});
   mocks.assertPaidPlan.mockResolvedValue(undefined);
   mocks.refreshDestinationUnmatchedFlag.mockResolvedValue(undefined);
