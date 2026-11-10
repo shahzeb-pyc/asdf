@@ -92,7 +92,7 @@ export interface InsightsFollowersOptions {
 
 /** A Graph read failure, carrying the HTTP status for the 429 retry rule. */
 export class InsightsGraphError extends Error {
-  readonly status?: number;
+  readonly status: number | undefined;
 
   constructor(message: string, status?: number) {
     super(message);
