@@ -281,6 +281,17 @@ export const MirrorViewSchema = z.object({
   targetAccountDisplayName: z.string().nullable().optional(),
   targetAccountAvatarUrl: z.string().nullable().optional(),
   targetStartingFollowers: z.number().int().nonnegative().nullable().optional(),
+  /**
+   * Spec 162: the mirror's OWN follower columns (mirrors table),
+   * filled by the daily insights worker. Before the first worker
+   * run they are null and the card/detail fall back to the borrowed
+   * destination values above (targetFollowers /
+   * targetStartingFollowers); once populated the mirror's own values
+   * win. followersUpdatedAt is the last successful worker check.
+   */
+  startingFollowers: z.number().int().nonnegative().nullable().optional(),
+  currentFollowers: z.number().int().nonnegative().nullable().optional(),
+  followersUpdatedAt: z.string().nullable().optional(),
   status: MirrorStatusSchema,
   lastPostedSourceId: z.string().nullable(),
   lastCheckedAt: z.string().nullable(),
