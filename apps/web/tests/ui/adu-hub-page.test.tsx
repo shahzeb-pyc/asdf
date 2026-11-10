@@ -334,7 +334,7 @@ describe('AduHubPage Add Page dialog 4-step flow', () => {
     expect(screen.getByRole('button', { name: 'Start Automation' })).toBeEnabled();
   });
 
-  it('step 3: paste assigns sources to empty slots only and reports the count', async () => {
+  it('step 3: paste assigns sources to empty slots and reports the count', async () => {
     const user = userEvent.setup();
     await openDialog(user);
     await pickCheckboxFor(user, 'My FB Account');
@@ -348,13 +348,40 @@ describe('AduHubPage Add Page dialog 4-step flow', () => {
     expect(textarea).toBeTruthy();
     await user.type(textarea!, 'tiktok|creator_one\ntiktok|creator_two');
     await user.click(screen.getByRole('button', { name: 'Apply assignment' }));
-    expect(await screen.findByText(/2 new sources assigned to 2 empty page slots/)).toBeTruthy();
+    expect(await screen.findByText(/2 sources assigned to 2 empty page slots/)).toBeTruthy();
     const inputs = within(dialog).getAllByPlaceholderText('@username');
     expect(inputs.map((i) => (i as HTMLInputElement).value).sort()).toEqual(['creator_one', 'creator_two']);
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(await screen.findByText('Step 4 of 4: Posting Time')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Start Automation' })).toBeEnabled();
+  });
+
+  it('step 3: paste assigns a source that is already used on another page (reuse allowed)', async () => {
+    const user = userEvent.setup();
+    // creator_one is already configured on Third Page (Second Account),
+    // which is not among the pages picked here — the paste must still
+    // assign it instead of skipping it as "already used".
+    installFetch({
+      ...OPTIONS_BODY,
+      configured: [{ destination_id: 'page-3', source_platform: 'tiktok', source_username: 'creator_one' }],
+    });
+    await openDialog(user);
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await pickCheckboxFor(user, 'My Page');
+    await pickCheckboxFor(user, 'Second Page');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    const dialog = screen.getByRole('dialog');
+    await user.click(screen.getByRole('button', { name: 'Paste sources (random assign)' }));
+    const textarea = dialog.querySelector('textarea');
+    expect(textarea).toBeTruthy();
+    await user.type(textarea!, 'tiktok|creator_one\ntiktok|creator_two');
+    await user.click(screen.getByRole('button', { name: 'Apply assignment' }));
+    expect(await screen.findByText(/2 sources assigned to 2 empty page slots/)).toBeTruthy();
+    const inputs = within(dialog).getAllByPlaceholderText('@username');
+    expect(inputs.map((i) => (i as HTMLInputElement).value).sort()).toEqual(['creator_one', 'creator_two']);
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
   });
 
   it('step 4: shared schedule submits the bulk shape with TikTok sources', async () => {
