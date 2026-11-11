@@ -72,6 +72,7 @@ jobs:
           POST_FOR_ME_API_KEY: ${{ secrets.POST_FOR_ME_API_KEY }}
           TIKWMAPI_KEYS: ${{ secrets.TIKWMAPI_KEYS }}
           DATAIMPULSE_PROXY: ${{ secrets.DATAIMPULSE_PROXY }}
+          INSIGHTS_MANUAL_RUN_TOKEN: ${{ secrets.INSIGHTS_MANUAL_RUN_TOKEN }}
         run: |
           {
             echo "list<<EOF"
@@ -103,6 +104,11 @@ jobs:
             else
               echo "DataImpulse proxy is not set yet; deploying without it (mirror resolve fails loudly instead of resolving direct)." >&2
             fi
+            if [ -n "$INSIGHTS_MANUAL_RUN_TOKEN" ]; then
+              echo "INSIGHTS_MANUAL_RUN_TOKEN"
+            else
+              echo "Insights manual-run token is not set yet; deploying without it (the manual insights run endpoint 401s until it lands)." >&2
+            fi
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
@@ -124,6 +130,7 @@ jobs:
           POST_FOR_ME_API_KEY: ${{ secrets.POST_FOR_ME_API_KEY }}
           TIKWMAPI_KEYS: ${{ secrets.TIKWMAPI_KEYS }}
           DATAIMPULSE_PROXY: ${{ secrets.DATAIMPULSE_PROXY }}
+          INSIGHTS_MANUAL_RUN_TOKEN: ${{ secrets.INSIGHTS_MANUAL_RUN_TOKEN }}
           X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
 
