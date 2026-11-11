@@ -15,6 +15,12 @@
 -- All three copies get NEW ids at backfill; the old table is never
 -- re-pointed in this PR.
 --
+-- The three tables are created by ONE parameterized DO loop, not three
+-- copies of the same DDL: the spec's byte-identical requirement makes
+-- literal repetition a duplication-gate failure, and the loop is the
+-- single source of truth for the shared shape. The gate proves the
+-- result (column parity vs `destinations`, RLS, triggers).
+--
 -- RLS note: spec.md §4.2 says "no permissive policies", but the actual
 -- `destinations` DDL in 20261022120000 §5 has ENABLE ROW LEVEL SECURITY
 -- PLUS a `destinations_workspace_owner_access` policy (FOR ALL TO
@@ -26,129 +32,58 @@
 -- added. The reconciliation view (spec.md §8) is read-only.
 
 -- -----------------------------------------------------------------------------
--- 1. schedule_destinations
+-- 1–3. The three section tables (+ indexes, RLS, policy, trigger each).
 -- -----------------------------------------------------------------------------
-CREATE TABLE public.schedule_destinations (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
-  account_id UUID NOT NULL REFERENCES public.social_accounts(id) ON DELETE CASCADE,
-  platform public.platform NOT NULL,
-  external_destination_id VARCHAR(255) NOT NULL,
-  name VARCHAR(255) NOT NULL,
-  handle VARCHAR(255) NULL,
-  avatar_url TEXT NULL,
-  timezone VARCHAR(50) NOT NULL DEFAULT 'UTC',
-  status VARCHAR(30) NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active', 'rate_limited', 'disconnected', 'error')),
-  encrypted_destination_token TEXT NULL,
-  rate_usage_pct SMALLINT NOT NULL DEFAULT 0 CHECK (rate_usage_pct BETWEEN 0 AND 100),
-  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  refresh_lease_owner TEXT NULL,
-  refresh_lease_expires_at TIMESTAMPTZ NULL,
-  source_destination_id UUID NULL,
-  CONSTRAINT uq_schedule_destinations_account_external UNIQUE (account_id, external_destination_id)
-);
-CREATE INDEX idx_schedule_destinations_account_id ON public.schedule_destinations (account_id);
-CREATE INDEX idx_schedule_destinations_workspace_id ON public.schedule_destinations (workspace_id);
-
--- -----------------------------------------------------------------------------
--- 2. adu_destinations
--- -----------------------------------------------------------------------------
-CREATE TABLE public.adu_destinations (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
-  account_id UUID NOT NULL REFERENCES public.social_accounts(id) ON DELETE CASCADE,
-  platform public.platform NOT NULL,
-  external_destination_id VARCHAR(255) NOT NULL,
-  name VARCHAR(255) NOT NULL,
-  handle VARCHAR(255) NULL,
-  avatar_url TEXT NULL,
-  timezone VARCHAR(50) NOT NULL DEFAULT 'UTC',
-  status VARCHAR(30) NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active', 'rate_limited', 'disconnected', 'error')),
-  encrypted_destination_token TEXT NULL,
-  rate_usage_pct SMALLINT NOT NULL DEFAULT 0 CHECK (rate_usage_pct BETWEEN 0 AND 100),
-  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  refresh_lease_owner TEXT NULL,
-  refresh_lease_expires_at TIMESTAMPTZ NULL,
-  source_destination_id UUID NULL,
-  CONSTRAINT uq_adu_destinations_account_external UNIQUE (account_id, external_destination_id)
-);
-CREATE INDEX idx_adu_destinations_account_id ON public.adu_destinations (account_id);
-CREATE INDEX idx_adu_destinations_workspace_id ON public.adu_destinations (workspace_id);
+DO $$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['schedule_destinations', 'adu_destinations', 'mirror_destinations'] LOOP
+    EXECUTE format(
+      'CREATE TABLE public.%I ('
+      '  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),'
+      '  workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,'
+      '  account_id UUID NOT NULL REFERENCES public.social_accounts(id) ON DELETE CASCADE,'
+      '  platform public.platform NOT NULL,'
+      '  external_destination_id VARCHAR(255) NOT NULL,'
+      '  name VARCHAR(255) NOT NULL,'
+      '  handle VARCHAR(255) NULL,'
+      '  avatar_url TEXT NULL,'
+      '  timezone VARCHAR(50) NOT NULL DEFAULT %L,'
+      '  status VARCHAR(30) NOT NULL DEFAULT %L CHECK (status IN (%L, %L, %L, %L)),'
+      '  encrypted_destination_token TEXT NULL,'
+      '  rate_usage_pct SMALLINT NOT NULL DEFAULT 0 CHECK (rate_usage_pct BETWEEN 0 AND 100),'
+      '  metadata JSONB NOT NULL DEFAULT %L::jsonb,'
+      '  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),'
+      '  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),'
+      '  refresh_lease_owner TEXT NULL,'
+      '  refresh_lease_expires_at TIMESTAMPTZ NULL,'
+      '  source_destination_id UUID NULL,'
+      '  CONSTRAINT %I UNIQUE (account_id, external_destination_id)'
+      ');'
+      'CREATE INDEX %I ON public.%I (account_id);'
+      'CREATE INDEX %I ON public.%I (workspace_id);'
+      'ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;'
+      'CREATE POLICY %I ON public.%I FOR ALL TO authenticated '
+      'USING (EXISTS (SELECT 1 FROM public.workspaces w WHERE w.id = workspace_id AND w.owner_id = auth.uid())) '
+      'WITH CHECK (EXISTS (SELECT 1 FROM public.workspaces w WHERE w.id = workspace_id AND w.owner_id = auth.uid()));'
+      'DROP TRIGGER IF EXISTS %I ON public.%I;'
+      'CREATE TRIGGER %I BEFORE UPDATE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();',
+      t,
+      'UTC', 'active', 'active', 'rate_limited', 'disconnected', 'error', '{}',
+      'uq_' || t || '_account_external',
+      'idx_' || t || '_account_id', t,
+      'idx_' || t || '_workspace_id', t,
+      t,
+      t || '_workspace_owner_access', t,
+      'trg_' || t || '_updated_at', t,
+      'trg_' || t || '_updated_at', t
+    );
+  END LOOP;
+END $$;
 
 -- -----------------------------------------------------------------------------
--- 3. mirror_destinations
--- -----------------------------------------------------------------------------
-CREATE TABLE public.mirror_destinations (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
-  account_id UUID NOT NULL REFERENCES public.social_accounts(id) ON DELETE CASCADE,
-  platform public.platform NOT NULL,
-  external_destination_id VARCHAR(255) NOT NULL,
-  name VARCHAR(255) NOT NULL,
-  handle VARCHAR(255) NULL,
-  avatar_url TEXT NULL,
-  timezone VARCHAR(50) NOT NULL DEFAULT 'UTC',
-  status VARCHAR(30) NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active', 'rate_limited', 'disconnected', 'error')),
-  encrypted_destination_token TEXT NULL,
-  rate_usage_pct SMALLINT NOT NULL DEFAULT 0 CHECK (rate_usage_pct BETWEEN 0 AND 100),
-  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  refresh_lease_owner TEXT NULL,
-  refresh_lease_expires_at TIMESTAMPTZ NULL,
-  source_destination_id UUID NULL,
-  CONSTRAINT uq_mirror_destinations_account_external UNIQUE (account_id, external_destination_id)
-);
-CREATE INDEX idx_mirror_destinations_account_id ON public.mirror_destinations (account_id);
-CREATE INDEX idx_mirror_destinations_workspace_id ON public.mirror_destinations (workspace_id);
-
--- -----------------------------------------------------------------------------
--- 4. RLS + workspace-owner policies (mirroring `destinations`, §5 of
---    20261022120000) + updated_at triggers
--- -----------------------------------------------------------------------------
-ALTER TABLE public.schedule_destinations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.adu_destinations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.mirror_destinations ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "schedule_destinations_workspace_owner_access" ON public.schedule_destinations
-  FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.workspaces w WHERE w.id = workspace_id AND w.owner_id = auth.uid()))
-  WITH CHECK (EXISTS (SELECT 1 FROM public.workspaces w WHERE w.id = workspace_id AND w.owner_id = auth.uid()));
-
-CREATE POLICY "adu_destinations_workspace_owner_access" ON public.adu_destinations
-  FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.workspaces w WHERE w.id = workspace_id AND w.owner_id = auth.uid()))
-  WITH CHECK (EXISTS (SELECT 1 FROM public.workspaces w WHERE w.id = workspace_id AND w.owner_id = auth.uid()));
-
-CREATE POLICY "mirror_destinations_workspace_owner_access" ON public.mirror_destinations
-  FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.workspaces w WHERE w.id = workspace_id AND w.owner_id = auth.uid()))
-  WITH CHECK (EXISTS (SELECT 1 FROM public.workspaces w WHERE w.id = workspace_id AND w.owner_id = auth.uid()));
-
-DROP TRIGGER IF EXISTS trg_schedule_destinations_updated_at ON public.schedule_destinations;
-CREATE TRIGGER trg_schedule_destinations_updated_at
-  BEFORE UPDATE ON public.schedule_destinations
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
-DROP TRIGGER IF EXISTS trg_adu_destinations_updated_at ON public.adu_destinations;
-CREATE TRIGGER trg_adu_destinations_updated_at
-  BEFORE UPDATE ON public.adu_destinations
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
-DROP TRIGGER IF EXISTS trg_mirror_destinations_updated_at ON public.mirror_destinations;
-CREATE TRIGGER trg_mirror_destinations_updated_at
-  BEFORE UPDATE ON public.mirror_destinations
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
--- -----------------------------------------------------------------------------
--- 5. Reconciliation view (spec.md §8) — STRUCTURAL breaks only.
+-- 4. Reconciliation view (spec.md §8) — STRUCTURAL breaks only.
 --
 -- Semantic divergence is NOT flagged: under owner decision 1 the copies
 -- are independent by design (Schedule paused while ADU is active is

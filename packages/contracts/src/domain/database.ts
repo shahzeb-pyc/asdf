@@ -425,6 +425,25 @@ export interface RecoverStuckPublishingItemsUnifiedArgs {
 /**
  * Generic Supabase Database type mapping for type-safe SupabaseClient<Database>
  */
+
+/**
+ * Shared Table shape for the three section-destination tables (spec 166
+ * §4.5). One helper instead of three repeated entries — the tables are
+ * byte-identical copies of one model, so their Database entries are too.
+ * `destinations` keeps its explicit entry above.
+ */
+interface SectionDestinationTable<Row> {
+  Row: Row;
+  Insert: Partial<Row> & {
+    workspace_id: string;
+    account_id: string;
+    platform: Platform;
+    external_destination_id: string;
+    name: string;
+  };
+  Update: Partial<Row>;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -492,39 +511,9 @@ export interface Database {
       // Spec 166 §4.5: the three section tables. `DatabaseDestinationRowSchema`
       // and the `destinations` entry stay until PR I removes the old table's
       // readers; they are deleted only with the old table (PR J).
-      schedule_destinations: {
-        Row: DatabaseScheduleDestinationRow;
-        Insert: Partial<DatabaseScheduleDestinationRow> & {
-          workspace_id: string;
-          account_id: string;
-          platform: Platform;
-          external_destination_id: string;
-          name: string;
-        };
-        Update: Partial<DatabaseScheduleDestinationRow>;
-      };
-      adu_destinations: {
-        Row: DatabaseAduDestinationRow;
-        Insert: Partial<DatabaseAduDestinationRow> & {
-          workspace_id: string;
-          account_id: string;
-          platform: Platform;
-          external_destination_id: string;
-          name: string;
-        };
-        Update: Partial<DatabaseAduDestinationRow>;
-      };
-      mirror_destinations: {
-        Row: DatabaseMirrorDestinationRow;
-        Insert: Partial<DatabaseMirrorDestinationRow> & {
-          workspace_id: string;
-          account_id: string;
-          platform: Platform;
-          external_destination_id: string;
-          name: string;
-        };
-        Update: Partial<DatabaseMirrorDestinationRow>;
-      };
+      schedule_destinations: SectionDestinationTable<DatabaseScheduleDestinationRow>;
+      adu_destinations: SectionDestinationTable<DatabaseAduDestinationRow>;
+      mirror_destinations: SectionDestinationTable<DatabaseMirrorDestinationRow>;
       posting_slots: {
         Row: DatabasePostingSlotRow;
         Insert: Partial<DatabasePostingSlotRow> & {

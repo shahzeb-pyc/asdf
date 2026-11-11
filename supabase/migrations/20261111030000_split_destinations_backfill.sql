@@ -29,9 +29,15 @@
 -- is a no-op (a second run inserts 0 rows and the assertions below
 -- still hold).
 --
+-- One DO block, not three copies of the same INSERT and the same
+-- assertions: the three section predicates share one column list and
+-- one SELECT, and the per-section assertions loop over the table
+-- names. The predicates are variables so the backfill and its own
+-- count reconciliation can never drift apart.
+--
 -- Fail loud: the §7.2 invariants are asserted IN this migration
--- (DO blocks raising an exception — the whole migration rolls back,
--- never silently continues):
+-- (RAISE EXCEPTION — the whole migration rolls back, never silently
+-- continues):
 --   A. every old row has >= 1 copy;
 --   B. every old row with children has a copy in that child's section
 --      (Schedule / ADU / mirror-target);
@@ -42,93 +48,49 @@
 --   E. token ciphertext is identical between each copy and its source
 --      row (checked by value, never decrypted).
 
--- -----------------------------------------------------------------------------
--- 1. Schedule copies
--- -----------------------------------------------------------------------------
-INSERT INTO public.schedule_destinations (
-  id, workspace_id, account_id, platform, external_destination_id,
-  name, handle, avatar_url, timezone, status,
-  encrypted_destination_token, rate_usage_pct,
-  metadata, created_at, updated_at, refresh_lease_owner, refresh_lease_expires_at, source_destination_id
-)
-SELECT
-  gen_random_uuid(),
-  d.workspace_id, d.account_id, d.platform, d.external_destination_id,
-  d.name, d.handle, d.avatar_url, d.timezone, d.status,
-  d.encrypted_destination_token, d.rate_usage_pct,
-  d.metadata, d.created_at, d.updated_at, d.refresh_lease_owner, d.refresh_lease_expires_at, d.id
-FROM public.destinations d
-WHERE EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id)
-   OR EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id)
-   OR EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id)
-   OR EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id)
-   OR (
-     NOT EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id)
-     AND NOT EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id)
-     AND NOT EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id)
-     AND NOT EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id)
-     AND NOT EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id)
-     AND NOT EXISTS (
-       SELECT 1 FROM public.mirrors m
-       WHERE m.workspace_id = d.workspace_id
-         AND m.target_platform = d.platform::text
-         AND m.target_external_id = d.external_destination_id
-     )
-   )
-ON CONFLICT (account_id, external_destination_id) DO NOTHING;
-
--- -----------------------------------------------------------------------------
--- 2. ADU copies
--- -----------------------------------------------------------------------------
-INSERT INTO public.adu_destinations (
-  id, workspace_id, account_id, platform, external_destination_id,
-  name, handle, avatar_url, timezone, status,
-  encrypted_destination_token, rate_usage_pct,
-  metadata, created_at, updated_at, refresh_lease_owner, refresh_lease_expires_at, source_destination_id
-)
-SELECT
-  gen_random_uuid(),
-  d.workspace_id, d.account_id, d.platform, d.external_destination_id,
-  d.name, d.handle, d.avatar_url, d.timezone, d.status,
-  d.encrypted_destination_token, d.rate_usage_pct,
-  d.metadata, d.created_at, d.updated_at, d.refresh_lease_owner, d.refresh_lease_expires_at, d.id
-FROM public.destinations d
-WHERE EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id)
-ON CONFLICT (account_id, external_destination_id) DO NOTHING;
-
--- -----------------------------------------------------------------------------
--- 3. Mirror copies
--- -----------------------------------------------------------------------------
-INSERT INTO public.mirror_destinations (
-  id, workspace_id, account_id, platform, external_destination_id,
-  name, handle, avatar_url, timezone, status,
-  encrypted_destination_token, rate_usage_pct,
-  metadata, created_at, updated_at, refresh_lease_owner, refresh_lease_expires_at, source_destination_id
-)
-SELECT
-  gen_random_uuid(),
-  d.workspace_id, d.account_id, d.platform, d.external_destination_id,
-  d.name, d.handle, d.avatar_url, d.timezone, d.status,
-  d.encrypted_destination_token, d.rate_usage_pct,
-  d.metadata, d.created_at, d.updated_at, d.refresh_lease_owner, d.refresh_lease_expires_at, d.id
-FROM public.destinations d
-WHERE EXISTS (
-  SELECT 1 FROM public.mirrors m
-  WHERE m.workspace_id = d.workspace_id
-    AND m.target_platform = d.platform::text
-    AND m.target_external_id = d.external_destination_id
-)
-ON CONFLICT (account_id, external_destination_id) DO NOTHING;
-
--- -----------------------------------------------------------------------------
--- 4. §7.2 invariants — fail the migration, never silently continue.
--- -----------------------------------------------------------------------------
-
--- A. Every old row has >= 1 copy (provenance join).
 DO $$
 DECLARE
+  -- Shared INSERT shape: one column list, one SELECT, three predicates.
+  v_cols text := 'id, workspace_id, account_id, platform, external_destination_id, '
+    || 'name, handle, avatar_url, timezone, status, encrypted_destination_token, '
+    || 'rate_usage_pct, metadata, created_at, updated_at, '
+    || 'refresh_lease_owner, refresh_lease_expires_at, source_destination_id';
+  v_select text := 'SELECT gen_random_uuid(), d.workspace_id, d.account_id, d.platform, '
+    || 'd.external_destination_id, d.name, d.handle, d.avatar_url, d.timezone, d.status, '
+    || 'd.encrypted_destination_token, d.rate_usage_pct, d.metadata, d.created_at, d.updated_at, '
+    || 'd.refresh_lease_owner, d.refresh_lease_expires_at, d.id FROM public.destinations d';
+  -- Section-membership predicates (each is a WHERE fragment over alias d).
+  v_sched_children text := 'EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id) '
+    || 'OR EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id) '
+    || 'OR EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id) '
+    || 'OR EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id)';
+  v_no_membership text := 'NOT EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id) '
+    || 'AND NOT EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id) '
+    || 'AND NOT EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id) '
+    || 'AND NOT EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id) '
+    || 'AND NOT EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id) '
+    || 'AND NOT EXISTS (SELECT 1 FROM public.mirrors m WHERE m.workspace_id = d.workspace_id '
+    || 'AND m.target_platform = d.platform::text AND m.target_external_id = d.external_destination_id)';
+  v_sched text := '(' || v_sched_children || ') OR (' || v_no_membership || ')';
+  v_adu text := 'EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id)';
+  v_mirror text := 'EXISTS (SELECT 1 FROM public.mirrors m WHERE m.workspace_id = d.workspace_id '
+    || 'AND m.target_platform = d.platform::text AND m.target_external_id = d.external_destination_id)';
+  v_child_pred text;
+  v_expected int;
+  v_actual int;
   v_missing int;
+  v_mismatch int;
+  t text;
 BEGIN
+  -- 1–3. The three backfill INSERTs (same shape, one predicate each).
+  EXECUTE 'INSERT INTO public.schedule_destinations (' || v_cols || ') ' || v_select
+    || ' WHERE ' || v_sched || ' ON CONFLICT (account_id, external_destination_id) DO NOTHING';
+  EXECUTE 'INSERT INTO public.adu_destinations (' || v_cols || ') ' || v_select
+    || ' WHERE ' || v_adu || ' ON CONFLICT (account_id, external_destination_id) DO NOTHING';
+  EXECUTE 'INSERT INTO public.mirror_destinations (' || v_cols || ') ' || v_select
+    || ' WHERE ' || v_mirror || ' ON CONFLICT (account_id, external_destination_id) DO NOTHING';
+
+  -- A. Every old row has >= 1 copy (provenance join).
   SELECT count(*) INTO v_missing
   FROM public.destinations d
   WHERE NOT EXISTS (SELECT 1 FROM public.schedule_destinations sd WHERE sd.source_destination_id = d.id)
@@ -137,165 +99,48 @@ BEGIN
   IF v_missing > 0 THEN
     RAISE EXCEPTION 'spec 166 backfill invariant A violated: % destinations row(s) have no section copy', v_missing;
   END IF;
-END $$;
 
--- B1. Every old row with Schedule children has a Schedule copy.
-DO $$
-DECLARE
-  v_missing int;
-BEGIN
-  SELECT count(*) INTO v_missing
-  FROM public.destinations d
-  WHERE (
-    EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id)
-    OR EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id)
-    OR EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id)
-    OR EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id)
-  )
-  AND NOT EXISTS (SELECT 1 FROM public.schedule_destinations sd WHERE sd.source_destination_id = d.id);
-  IF v_missing > 0 THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant B1 violated: % destinations row(s) with Schedule children have no Schedule copy', v_missing;
-  END IF;
-END $$;
+  -- B/C/D/E, per section table — one loop, the table name and its child
+  -- predicate are the only things that vary.
+  FOREACH t IN ARRAY ARRAY['schedule_destinations', 'adu_destinations', 'mirror_destinations'] LOOP
+    v_child_pred := CASE t
+      WHEN 'schedule_destinations' THEN v_sched_children
+      WHEN 'adu_destinations' THEN v_adu
+      ELSE v_mirror
+    END;
 
--- B2. Every old row referenced by adu_configs has an ADU copy.
-DO $$
-DECLARE
-  v_missing int;
-BEGIN
-  SELECT count(*) INTO v_missing
-  FROM public.destinations d
-  WHERE EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id)
-    AND NOT EXISTS (SELECT 1 FROM public.adu_destinations ad WHERE ad.source_destination_id = d.id);
-  IF v_missing > 0 THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant B2 violated: % destinations row(s) with adu_configs have no ADU copy', v_missing;
-  END IF;
-END $$;
+    -- B. Every old row with children in this section has a copy here.
+    EXECUTE 'SELECT count(*) FROM public.destinations d WHERE (' || v_child_pred || ') '
+      || 'AND NOT EXISTS (SELECT 1 FROM public.' || t || ' c WHERE c.source_destination_id = d.id)'
+      INTO v_missing;
+    IF v_missing > 0 THEN
+      RAISE EXCEPTION 'spec 166 backfill invariant B violated: % destinations row(s) with children have no % copy', v_missing, t;
+    END IF;
 
--- B3. Every old row that is a mirror target has a mirror copy.
-DO $$
-DECLARE
-  v_missing int;
-BEGIN
-  SELECT count(*) INTO v_missing
-  FROM public.destinations d
-  WHERE EXISTS (
-    SELECT 1 FROM public.mirrors m
-    WHERE m.workspace_id = d.workspace_id
-      AND m.target_platform = d.platform::text
-      AND m.target_external_id = d.external_destination_id
-  )
-  AND NOT EXISTS (SELECT 1 FROM public.mirror_destinations md WHERE md.source_destination_id = d.id);
-  IF v_missing > 0 THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant B3 violated: % destinations row(s) that are mirror targets have no mirror copy', v_missing;
-  END IF;
-END $$;
+    -- C. Backfill copy count reconciles with the backfill predicate.
+    --    (Schedule uses the full predicate incl. the default arm.)
+    EXECUTE 'SELECT count(*) FROM public.destinations d WHERE ' ||
+      CASE t WHEN 'schedule_destinations' THEN v_sched ELSE v_child_pred END
+      INTO v_expected;
+    EXECUTE format('SELECT count(*) FROM public.%I WHERE source_destination_id IS NOT NULL', t)
+      INTO v_actual;
+    IF v_actual <> v_expected THEN
+      RAISE EXCEPTION 'spec 166 backfill invariant C violated: % provenance copies % <> expected %', t, v_actual, v_expected;
+    END IF;
 
--- C. Copy counts reconcile with the backfill predicates (provenance
--- copies only). Schedule expectation: Schedule children OR no
--- membership anywhere. ADU: adu_configs. Mirror: mirrors target.
-DO $$
-DECLARE
-  v_expected_schedule int;
-  v_actual_schedule int;
-  v_expected_adu int;
-  v_actual_adu int;
-  v_expected_mirror int;
-  v_actual_mirror int;
-BEGIN
-  SELECT count(*) INTO v_expected_schedule
-  FROM public.destinations d
-  WHERE EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id)
-     OR EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id)
-     OR EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id)
-     OR EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id)
-     OR (
-       NOT EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id)
-       AND NOT EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id)
-       AND NOT EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id)
-       AND NOT EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id)
-       AND NOT EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id)
-       AND NOT EXISTS (
-         SELECT 1 FROM public.mirrors m
-         WHERE m.workspace_id = d.workspace_id
-           AND m.target_platform = d.platform::text
-           AND m.target_external_id = d.external_destination_id
-       )
-     );
-  SELECT count(*) INTO v_actual_schedule
-  FROM public.schedule_destinations WHERE source_destination_id IS NOT NULL;
+    -- D. No backfill copy has a NULL provenance.
+    EXECUTE format('SELECT count(*) FROM public.%I WHERE source_destination_id IS NULL', t)
+      INTO v_missing;
+    IF v_missing > 0 THEN
+      RAISE EXCEPTION 'spec 166 backfill invariant D violated: % % row(s) have NULL source_destination_id', v_missing, t;
+    END IF;
 
-  SELECT count(*) INTO v_expected_adu
-  FROM public.destinations d
-  WHERE EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id);
-  SELECT count(*) INTO v_actual_adu
-  FROM public.adu_destinations WHERE source_destination_id IS NOT NULL;
-
-  SELECT count(*) INTO v_expected_mirror
-  FROM public.destinations d
-  WHERE EXISTS (
-    SELECT 1 FROM public.mirrors m
-    WHERE m.workspace_id = d.workspace_id
-      AND m.target_platform = d.platform::text
-      AND m.target_external_id = d.external_destination_id
-  );
-  SELECT count(*) INTO v_actual_mirror
-  FROM public.mirror_destinations WHERE source_destination_id IS NOT NULL;
-
-  IF v_actual_schedule <> v_expected_schedule THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant C violated: schedule_destinations provenance copies % <> expected %', v_actual_schedule, v_expected_schedule;
-  END IF;
-  IF v_actual_adu <> v_expected_adu THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant C violated: adu_destinations provenance copies % <> expected %', v_actual_adu, v_expected_adu;
-  END IF;
-  IF v_actual_mirror <> v_expected_mirror THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant C violated: mirror_destinations provenance copies % <> expected %', v_actual_mirror, v_expected_mirror;
-  END IF;
-END $$;
-
--- D. No backfill copy has a NULL provenance.
-DO $$
-DECLARE
-  v_nulls int;
-BEGIN
-  SELECT count(*) INTO v_nulls FROM public.schedule_destinations WHERE source_destination_id IS NULL;
-  IF v_nulls > 0 THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant D violated: % schedule_destinations row(s) have NULL source_destination_id', v_nulls;
-  END IF;
-  SELECT count(*) INTO v_nulls FROM public.adu_destinations WHERE source_destination_id IS NULL;
-  IF v_nulls > 0 THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant D violated: % adu_destinations row(s) have NULL source_destination_id', v_nulls;
-  END IF;
-  SELECT count(*) INTO v_nulls FROM public.mirror_destinations WHERE source_destination_id IS NULL;
-  IF v_nulls > 0 THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant D violated: % mirror_destinations row(s) have NULL source_destination_id', v_nulls;
-  END IF;
-END $$;
-
--- E. Token ciphertext identical per copy (value comparison, never decrypted).
-DO $$
-DECLARE
-  v_mismatch int;
-BEGIN
-  SELECT count(*) INTO v_mismatch
-  FROM public.schedule_destinations sd
-  JOIN public.destinations d ON d.id = sd.source_destination_id
-  WHERE sd.encrypted_destination_token IS DISTINCT FROM d.encrypted_destination_token;
-  IF v_mismatch > 0 THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant E violated: % schedule_destinations copie(s) have a token differing from their source row', v_mismatch;
-  END IF;
-  SELECT count(*) INTO v_mismatch
-  FROM public.adu_destinations ad
-  JOIN public.destinations d ON d.id = ad.source_destination_id
-  WHERE ad.encrypted_destination_token IS DISTINCT FROM d.encrypted_destination_token;
-  IF v_mismatch > 0 THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant E violated: % adu_destinations copie(s) have a token differing from their source row', v_mismatch;
-  END IF;
-  SELECT count(*) INTO v_mismatch
-  FROM public.mirror_destinations md
-  JOIN public.destinations d ON d.id = md.source_destination_id
-  WHERE md.encrypted_destination_token IS DISTINCT FROM d.encrypted_destination_token;
-  IF v_mismatch > 0 THEN
-    RAISE EXCEPTION 'spec 166 backfill invariant E violated: % mirror_destinations copie(s) have a token differing from their source row', v_mismatch;
-  END IF;
+    -- E. Token ciphertext identical per copy (value comparison, never decrypted).
+    EXECUTE format('SELECT count(*) FROM public.%I c JOIN public.destinations d ON d.id = c.source_destination_id '
+      || 'WHERE c.encrypted_destination_token IS DISTINCT FROM d.encrypted_destination_token', t)
+      INTO v_mismatch;
+    IF v_mismatch > 0 THEN
+      RAISE EXCEPTION 'spec 166 backfill invariant E violated: % % copie(s) have a token differing from their source row', v_mismatch, t;
+    END IF;
+  END LOOP;
 END $$;
