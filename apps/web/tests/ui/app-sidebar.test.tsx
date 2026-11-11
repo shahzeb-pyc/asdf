@@ -367,13 +367,17 @@ describe('AppSidebar prefetch (perf round 1)', () => {
     }
   });
 
-  it('above-fold top-level leaves keep default prefetch', () => {
+  // Spec 170 F2: the 10 top-level leaves no longer viewport-prefetch
+  // (same move PR #181 made for collapsible leaves). '/tenant/acme/'
+  // covers both the branding link and the Home leaf — both render with
+  // prefetch off.
+  it('top-level leaves render with prefetch off (spec 170 F2)', () => {
     renderSidebar(getUserSections('acme', false));
     for (const href of TOP_LEVEL_LEAF_HREFS) {
       const recorded = recordedLinkProps.filter((link) => link.href === href);
       expect(recorded.length).toBeGreaterThan(0);
       for (const link of recorded) {
-        expect(link.prefetch).toBeUndefined();
+        expect(link.prefetch).toBe(false);
       }
     }
   });

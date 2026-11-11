@@ -192,10 +192,16 @@ function AppSidebarContent({
         </SidebarMenuSubItem>
       );
     }
+    // Spec 170 F2: top-level leaves do NOT viewport-prefetch either.
+    // Same move as perf round 1 (PR #181) for the collapsible-section
+    // leaves above: the sidebar was firing one RSC prefetch per leaf
+    // on every cold load (HAR: 14 RSC requests = 7 routes x 2 waves).
+    // These links navigate on click like any other; the collapsible
+    // group parents' hover prefetch (below) is untouched.
     return (
       <SidebarMenuItem key={leaf.label}>
         <SidebarMenuButton asChild isActive={leafActive(leaf)} tooltip={leaf.label}>
-          <Link href={leaf.href} onClick={() => handleLeafClick(leaf.href)}>
+          <Link href={leaf.href} prefetch={false} onClick={() => handleLeafClick(leaf.href)}>
             {leaf.icon}
             <span>{leaf.label}</span>
           </Link>
@@ -251,8 +257,12 @@ function AppSidebarContent({
   return (
     <Sidebar collapsible={collapsible} variant="sidebar">
       <SidebarHeader>
+        {/* Spec 170 F2: the branding link points at the same Home route
+            as the top-level Home leaf, so it gets the same treatment —
+            no viewport prefetch. It still navigates on click. */}
         <Link
           href={brandingHref}
+          prefetch={false}
           onClick={() => handleLeafClick(brandingHref)}
           data-slot="sidebar-header-branding"
           data-testid="sidebar-branding-link"
