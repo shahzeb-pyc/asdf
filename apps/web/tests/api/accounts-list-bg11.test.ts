@@ -410,7 +410,7 @@ class FakePostgrestQuery {
   }
 
   select(columns: string, opts?: { count?: string; head?: boolean }): this {
-    this.headCount = opts?.head === true && opts?.count === 'exact';
+    this.headCount = opts?.head === true && opts.count === 'exact';
     return this.record('select', columns, opts ?? null);
   }
 
@@ -522,9 +522,8 @@ class FakePostgrestQuery {
     // First .order() call is the primary key: apply in reverse so
     // the stable sorts compose in call order.
     for (let i = this.orders.length - 1; i >= 0; i--) {
-      const order = this.orders[i];
-      if (!order) continue;
-      const { column, ascending } = order;
+      const { column, ascending } = this.orders[i];
+      rows = [...rows].sort((a, b) => {
       rows = [...rows].sort((a, b) => {
         const av = fakeValue(a, column);
         const bv = fakeValue(b, column);

@@ -159,14 +159,14 @@ async function syncLapsedAccountStatus(
       .eq('workspace_id', workspaceId)
       .eq('status', 'active')
       .lt('token_expires_at', nowIso);
-    if (lapsedCheck?.error) {
+    if (lapsedCheck.error) {
       console.error(
         '[handleListAccounts] Failed to check for lapsed account status via Supabase:',
         lapsedCheck.error
       );
       return;
     }
-    if (!lapsedCheck?.count) {
+    if (!lapsedCheck.count) {
       return;
     }
     const result = (await supabase
