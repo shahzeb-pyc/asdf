@@ -199,9 +199,11 @@ export type DatabaseDestinationRow = z.infer<typeof DatabaseDestinationRowSchema
 /**
  * Runtime schema for a section-destination row — the shared shape of
  * `schedule_destinations`, `adu_destinations`, and `mirror_destinations`
- * (spec 166 §4.2, migrations 20261111020000 / 20261111030000). Field for
- * field identical to `DatabaseDestinationRowSchema` above (including the
- * `.passthrough()` boundary correction and the deliberate omissions:
+ * (spec 166 §4.2, migrations 20261111020000 / 20261111030000). Derived
+ * from `DatabaseDestinationRowSchema` with `.extend()` so the shape
+ * CANNOT drift from it: field for field identical (including the
+ * `.passthrough()` boundary correction, which `.extend()` carries over
+ * from the base schema's definition, and the deliberate omissions —
  * `next_allowed_publish_at` was dropped from `destinations` by
  * 20261102160000, and the refresh-lease pair is worker-internal
  * coordination state the row schema does not model — exactly as for
@@ -209,28 +211,9 @@ export type DatabaseDestinationRow = z.infer<typeof DatabaseDestinationRowSchema
  * the `destinations.id` the copy was backfilled from (provenance, NOT a
  * foreign key; NULL for rows created after the split).
  */
-export const DatabaseSectionDestinationRowSchema = z
-  .object({
-    id: z.string().uuid(),
-    workspace_id: z.string().uuid(),
-    account_id: z.string().uuid(),
-    platform: PlatformSchema,
-    external_destination_id: z.string().min(1).max(255),
-    name: z.string().min(1).max(255),
-    handle: z.string().max(255).nullable(),
-    avatar_url: z.string().nullable(),
-    timezone: z.string().min(1).max(50),
-    status: z.enum(['active', 'rate_limited', 'disconnected', 'error']),
-    encrypted_destination_token: z.string().nullable(),
-    rate_usage_pct: z.number().int().min(0).max(100),
-    metadata: DatabaseDestinationMetadataSchema,
-    created_at: z.string().datetime({ offset: true }),
-    updated_at: z.string().datetime({ offset: true }),
-    source_destination_id: z.string().uuid().nullable(),
-  })
-  // Same boundary correction as DatabaseDestinationRowSchema (spec 139
-  // B15): unknown keys pass through untouched.
-  .passthrough();
+export const DatabaseSectionDestinationRowSchema = DatabaseDestinationRowSchema.extend({
+  source_destination_id: z.string().uuid().nullable(),
+});
 
 export type DatabaseSectionDestinationRow = z.infer<typeof DatabaseSectionDestinationRowSchema>;
 
@@ -430,17 +413,14 @@ export interface RecoverStuckPublishingItemsUnifiedArgs {
  * Shared Table shape for the three section-destination tables (spec 166
  * §4.5). One helper instead of three repeated entries — the tables are
  * byte-identical copies of one model, so their Database entries are too.
- * `destinations` keeps its explicit entry above.
+ * The required Insert fields are picked from the row itself (same keys
+ * as the `destinations` entry's Insert) rather than re-listed, so the
+ * helper cannot drift from the row shape. `destinations` keeps its
+ * explicit entry above.
  */
-interface SectionDestinationTable<Row> {
+interface SectionDestinationTable<Row extends DatabaseSectionDestinationRow> {
   Row: Row;
-  Insert: Partial<Row> & {
-    workspace_id: string;
-    account_id: string;
-    platform: Platform;
-    external_destination_id: string;
-    name: string;
-  };
+  Insert: Partial<Row> & Pick<Row, 'workspace_id' | 'account_id' | 'platform' | 'external_destination_id' | 'name'>;
   Update: Partial<Row>;
 }
 
