@@ -4,7 +4,7 @@
  * directly from its stored URL — never through the Vercel image optimiser
  * (`/_next/image`), which 402s on these URLs
  * (OPTIMIZED_IMAGE_REQUEST_PAYMENT_REQUIRED) and left every card on
- * initials. These tests pin the direct `<img>`: the rendered src is the
+ * initials. These tests pin the direct img element: the rendered src is the
  * stored URL verbatim, at 44px in the coloured status ring, with the
  * initials fallback intact when the URL is absent or the image fails.
  */
