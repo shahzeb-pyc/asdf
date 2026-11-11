@@ -205,19 +205,16 @@ export function getSupabaseAdminClient(): SupabaseClient | null {
 }
 
 /**
- * Auth-only client factory (spec 168 — admin client poisoned by
- * password login). Session-storing/reading Auth calls (signInWithPassword,
- * signUp, verifyOtp, exchangeCodeForSession, updateUser, getUser) run on
- * this client, NEVER on the admin singleton: supabase-js stores the user
- * session inside the client it signs in on and prefers it over the key,
- * so signing in on the admin client silently downgrades later DB/RPC
- * calls on that warm instance from service_role to `authenticated`
- * (ADU hub 500, code 42501). Fresh client per call — never cached, never
- * module state. One instance per auth flow: reuse it for the whole
- * verify → update → getUser sequence, because the session lives in that
- * instance's in-memory storage (persistSession: false). Null when
- * url/anonKey are missing — call sites decide how to fail: admin present
- * + auth null = loud throw, never a silent fallback to the admin client.
+ * Auth-only client factory (spec 168). Session-storing/reading Auth calls
+ * (signIn, signUp, verifyOtp, exchangeCodeForSession, updateUser, getUser)
+ * run here, NEVER on the admin singleton: supabase-js stores the user
+ * session in the client it signs in on and prefers it over the key, so a
+ * sign-in on the admin client silently downgrades later DB/RPC calls on
+ * that warm instance from service_role to `authenticated` (ADU hub 500,
+ * code 42501; cross-user, another user's workspace lookup returns zero
+ * rows → 404). Fresh per call, never cached; one instance per flow, as
+ * the session lives in that instance's in-memory storage. Null without
+ * config; call sites fail loud (admin present + auth null = throw).
  */
 export function getSupabaseAuthClient(): SupabaseClient | null {
   if (isTestDoubleAllowed() && mockSupabaseAuthClientForTesting) {

@@ -129,7 +129,6 @@ describe('verifySignupOtpViaSupabase mints the workspaceId claim (S3)', () => {
       workspaces: [{ id: WORKSPACE_A, subdomain: 'acme', owner_id: USER_ID }],
     });
     _setMockSupabaseServiceClient(fake as unknown as SupabaseClient);
-    // Spec 168: verifyOtp moved to the auth-only client.
     _setMockSupabaseAuthClient(fake as unknown as SupabaseClient);
 
     const { token, user } = await verifySignupOtpViaSupabase({
@@ -156,7 +155,6 @@ describe('verifySignupOtpViaSupabase mints the workspaceId claim (S3)', () => {
       new Set(['id'])
     );
     _setMockSupabaseServiceClient(fake as unknown as SupabaseClient);
-    // Spec 168: verifyOtp moved to the auth-only client.
     _setMockSupabaseAuthClient(fake as unknown as SupabaseClient);
 
     const { token } = await verifySignupOtpViaSupabase({
