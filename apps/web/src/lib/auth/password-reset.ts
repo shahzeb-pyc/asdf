@@ -11,7 +11,7 @@ import {
   deriveSubdomainFromEmail,
 } from '@fbuploadpro/contracts';
 import { escapePostgrestFilterValue, resolveCanonicalEmail } from './email';
-import { getSupabaseAdminClient } from './clients';
+import { getSupabaseAdminClient, getSupabaseAuthClient } from './clients';
 import { hashPassword } from './passwords';
 import { localPasswordStore, localUserStore } from './stores';
 import { findUserByEmail } from './users';
@@ -91,7 +91,13 @@ export async function resetUserPasswordWithOtp(params: {
 
   const supabase = getSupabaseAdminClient();
   if (supabase) {
-    const { error } = await supabase.auth.verifyOtp({
+    // Spec 168: verifyOtp + updateUser + getUser are session calls —
+    // one auth-only client for the whole flow, never the admin singleton.
+    const authClient = getSupabaseAuthClient();
+    if (!authClient) {
+      throw new Error('Supabase auth client is unavailable: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required for password reset.');
+    }
+    const { error } = await authClient.auth.verifyOtp({
       email: canonicalEmail,
       token: params.otp,
       type: 'recovery',
@@ -100,7 +106,7 @@ export async function resetUserPasswordWithOtp(params: {
       throw new Error('Invalid or expired verification code.');
     }
 
-    const { error: updateError } = await supabase.auth.updateUser({
+    const { error: updateError } = await authClient.auth.updateUser({
       password: params.password,
     });
     if (updateError) {
@@ -128,7 +134,7 @@ export async function resetUserPasswordWithOtp(params: {
           })
           .eq('id', existingUser.id);
       } else {
-        const { data: authUserData } = await supabase.auth.getUser();
+        const { data: authUserData } = await authClient.auth.getUser();
         if (authUserData?.user) {
           const u = authUserData.user;
           const metadata = u.user_metadata || {};
@@ -230,33 +236,45 @@ export async function resetUserPassword(params: {
 
   const supabase = getSupabaseAdminClient();
   if (supabase) {
+    // Spec 168: exchangeCodeForSession / verifyOtp / updateUser /
+    // getUser are session calls — one auth-only client instance for the
+    // whole flow, never the admin singleton. Trace note for the
+    // no-code/no-token updateUser branch: the only caller (the
+    // reset-password route) always passes otp, token, or code, and this
+    // function's own guard throws unless token||code is present — so
+    // that branch is unreachable via the route; its old session source
+    // was a session stored on the shared admin client, i.e. the poison itself.
+    const authClient = getSupabaseAuthClient();
+    if (!authClient) {
+      throw new Error('Supabase auth client is unavailable: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required for password reset.');
+    }
     if (params.code) {
-      const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(params.code);
+      const { data, error: exchangeError } = await authClient.auth.exchangeCodeForSession(params.code);
       if (exchangeError || !data?.session) {
         throw new Error('Invalid or expired password reset link.');
       }
-      const { error: updateError } = await supabase.auth.updateUser({
+      const { error: updateError } = await authClient.auth.updateUser({
         password: params.password,
       });
       if (updateError) {
         throw new Error(updateError.message);
       }
     } else if (params.token) {
-      const { data, error: verifyError } = await supabase.auth.verifyOtp({
+      const { data, error: verifyError } = await authClient.auth.verifyOtp({
         token_hash: params.token,
         type: 'recovery',
       });
       if (verifyError || !data?.session) {
         throw new Error('Invalid or expired password reset link.');
       }
-      const { error: updateError } = await supabase.auth.updateUser({
+      const { error: updateError } = await authClient.auth.updateUser({
         password: params.password,
       });
       if (updateError) {
         throw new Error(updateError.message);
       }
     } else {
-      const { error } = await supabase.auth.updateUser({
+      const { error } = await authClient.auth.updateUser({
         password: params.password,
       });
       if (error) {
@@ -267,7 +285,7 @@ export async function resetUserPassword(params: {
     // Invalidate existing sessions in production by updating password_updated_at in public.users
     try {
       const nowIso = new Date().toISOString();
-      const authUserData = typeof supabase.auth?.getUser === 'function' ? (await supabase.auth.getUser())?.data : null;
+      const authUserData = typeof authClient.auth?.getUser === 'function' ? (await authClient.auth.getUser())?.data : null;
       const targetUserId = authUserData?.user?.id;
       if (targetUserId) {
         await supabase

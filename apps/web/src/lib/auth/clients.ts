@@ -10,6 +10,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 let mockSupabaseClientForTesting: SupabaseClient | null = null;
 let mockSupabaseServiceClientForTesting: SupabaseClient | null = null;
+let mockSupabaseAuthClientForTesting: SupabaseClient | null = null;
 
 /**
  * Default per-request timeout for the admin (service-role) client
@@ -65,6 +66,11 @@ export function _setMockSupabaseServiceClient(client: SupabaseClient | null): vo
   mockSupabaseServiceClientForTesting = client;
 }
 
+export function _setMockSupabaseAuthClient(client: SupabaseClient | null): void {
+  assertTestDoubleAllowed('_setMockSupabaseAuthClient');
+  mockSupabaseAuthClientForTesting = client;
+}
+
 /**
  * Clears both mock clients and the cached admin client. Called by
  * `_resetAuthStores` (stores.ts) — this is the seam tests use between
@@ -75,6 +81,7 @@ export function _setMockSupabaseServiceClient(client: SupabaseClient | null): vo
 export function _resetMockSupabaseClients(): void {
   mockSupabaseClientForTesting = null;
   mockSupabaseServiceClientForTesting = null;
+  mockSupabaseAuthClientForTesting = null;
   cachedAdminClient = null;
   cachedAdminClientConfig = null;
 }
@@ -193,6 +200,42 @@ export function getSupabaseAdminClient(): SupabaseClient | null {
     if (isProduction) {
       throw error;
     }
+    return null;
+  }
+}
+
+/**
+ * Auth-only client factory (spec 168 — admin client poisoned by
+ * password login). Session-storing/reading Auth calls (signInWithPassword,
+ * signUp, verifyOtp, exchangeCodeForSession, updateUser, getUser) run on
+ * this client, NEVER on the admin singleton: supabase-js stores the user
+ * session inside the client it signs in on and prefers it over the key,
+ * so signing in on the admin client silently downgrades later DB/RPC
+ * calls on that warm instance from service_role to `authenticated`
+ * (ADU hub 500, code 42501). Fresh client per call — never cached, never
+ * module state. One instance per auth flow: reuse it for the whole
+ * verify → update → getUser sequence, because the session lives in that
+ * instance's in-memory storage (persistSession: false). Null when
+ * url/anonKey are missing — call sites decide how to fail: admin present
+ * + auth null = loud throw, never a silent fallback to the admin client.
+ */
+export function getSupabaseAuthClient(): SupabaseClient | null {
+  if (isTestDoubleAllowed() && mockSupabaseAuthClientForTesting) {
+    return mockSupabaseAuthClientForTesting;
+  }
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey || url.includes('placeholder') || anonKey.includes('placeholder')) {
+    return null;
+  }
+  try {
+    return createClient(url, anonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+  } catch {
     return null;
   }
 }

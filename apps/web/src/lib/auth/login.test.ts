@@ -15,6 +15,7 @@ import {
   verifySessionToken,
 } from '@fbuploadpro/contracts';
 import {
+  _setMockSupabaseAuthClient,
   _setMockSupabaseServiceClient,
   _resetMockSupabaseClients,
 } from './clients';
@@ -133,6 +134,8 @@ function installFake(
     failSelects
   );
   _setMockSupabaseServiceClient(fake as unknown as SupabaseClient);
+  // Spec 168: signInWithPassword moved to the auth-only client.
+  _setMockSupabaseAuthClient(fake as unknown as SupabaseClient);
   return fake;
 }
 

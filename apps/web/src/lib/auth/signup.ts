@@ -18,7 +18,7 @@ import { sanitizeAuthRedirectUrl } from '@/lib/auth-redirect';
 import { EMAIL_RATE_LIMIT_MESSAGE, isEmailRateLimitError } from '../auth-errors';
 import { logServerError } from '../server-analytics';
 import { resolveCanonicalEmail } from './email';
-import { getSupabaseAdminClient } from './clients';
+import { getSupabaseAdminClient, getSupabaseAuthClient } from './clients';
 import { hashPassword } from './passwords';
 import { localPasswordStore, localUserStore } from './stores';
 import { findUserByEmail, type AuthUser } from './users';
@@ -135,7 +135,13 @@ export async function signUpTenantUser(params: {
   let userRecord: AuthUser;
 
   if (supabase) {
-    const { data: authData, error: authError } = await supabase.auth.signUp({
+    // Spec 168: signUp stores a session — auth-only client, never the
+    // admin singleton. Admin present + auth null = loud throw.
+    const authClient = getSupabaseAuthClient();
+    if (!authClient) {
+      throw new Error('Supabase auth client is unavailable: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required for signup.');
+    }
+    const { data: authData, error: authError } = await authClient.auth.signUp({
       email: canonicalEmail,
       password: rawPassword,
       options: {
@@ -320,7 +326,12 @@ export async function verifySignupOtpViaSupabase(params: {
   let userRecord: AuthUser | null = await findUserByEmail(canonicalEmail);
 
   if (supabase) {
-    const firstAttempt = await supabase.auth.verifyOtp({
+    // Spec 168: verifyOtp stores a session — one auth-only client, never the admin singleton.
+    const authClient = getSupabaseAuthClient();
+    if (!authClient) {
+      throw new Error('Supabase auth client is unavailable: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required for signup verification.');
+    }
+    const firstAttempt = await authClient.auth.verifyOtp({
       email: canonicalEmail,
       token: params.otp,
       type: 'signup',
@@ -328,7 +339,7 @@ export async function verifySignupOtpViaSupabase(params: {
     let verifiedAuthUser = firstAttempt.data?.user ?? null;
 
     if (firstAttempt.error) {
-      const retry = await supabase.auth.verifyOtp({
+      const retry = await authClient.auth.verifyOtp({
         email: canonicalEmail,
         token: params.otp,
         type: 'email',
