@@ -237,6 +237,24 @@ async function resetFailedReelsForReactivation(
  * response when the change is rejected or a check fails; returns null
  * when the change may proceed (side effects already applied).
  */
+/**
+ * Spec 164: a setup cannot be turned back on while its Page is blocked.
+ * `error` always blocks; a plain `disconnected` destination blocks too
+ * (the page was removed — it is re-added, not resumed). A Pages-paused
+ * page (`disconnected` + `fb_status='paused'`) is a user choice, not a
+ * block: turning automation back on is allowed and its jobs wait at the
+ * destination gate until the page resumes. `rate_limited` is not a
+ * block here — the cooldown is time-bound and self-heals.
+ */
+export function isDestinationBlockedForAduReactivation(
+  status: string,
+  fbStatus: unknown,
+): boolean {
+  if (status === 'error') return true;
+  if (status === 'disconnected' && fbStatus !== 'paused') return true;
+  return false;
+}
+
 async function guardAduStatusChange(
   supabase: SupabaseClient,
   workspaceId: string,
@@ -249,6 +267,46 @@ async function guardAduStatusChange(
   if (target !== 'active') {
     return NextResponse.json(
       { error: 'This status can\'t be changed here.' },
+      { status: 400 }
+    );
+  }
+  // Spec 164: the destination gate runs before the direct-activate
+  // early return below — `fb_verification_required` → `active` used to
+  // sail through with no destination check, so a setup could be turned
+  // back on while its Page was still in error and intake would mint
+  // stuck jobs again. The load uses the same workspace-scoped select
+  // as refreshPageTokenForConfig. Fail closed: a missing destination
+  // row blocks activation.
+  const { data: destinationRow } = await supabase
+    .from('destinations')
+    .select('status, metadata')
+    .eq('id', current.destination_id)
+    .eq('workspace_id', workspaceId)
+    .maybeSingle();
+  const dest = destinationRow as {
+    status?: unknown;
+    metadata?: unknown;
+  } | null;
+  if (!dest || typeof dest.status !== 'string') {
+    console.error(
+      `[ADU PATCH] Reactivation blocked for config ${configId}: destination row missing`
+    );
+    return NextResponse.json(
+      { error: 'Could not find this page. Try again.' },
+      { status: 400 }
+    );
+  }
+  const destFbStatus = (
+    dest.metadata as { fb_status?: unknown } | null
+  )?.fb_status;
+  if (isDestinationBlockedForAduReactivation(dest.status, destFbStatus)) {
+    return NextResponse.json(
+      {
+        error:
+          dest.status === 'error'
+            ? 'This page can\'t post right now. Fix the issue in the Pages section first, then turn automation back on.'
+            : 'This page was removed. Add the page again to turn automation back on.',
+      },
       { status: 400 }
     );
   }

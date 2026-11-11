@@ -119,6 +119,8 @@ class FakeBuilder {
 
 interface FakeDb {
   calls: Array<{ table: string; ops: Op[]; payload?: unknown }>;
+  /** Every rpc call, in order — spec 164 pins the marker RPC here. */
+  rpcCalls: Array<{ fn: string; args: Record<string, unknown> }>;
   from: (table: string) => FakeBuilder;
   /** C4: the shared workspace_has_active_period RPC. Defaults to
    * entitled; the paused test below overrides it to false. */
@@ -129,14 +131,19 @@ function makeDb(
   handler: (table: string, ops: Op[], calls: FakeDb['calls']) => unknown,
 ): FakeDb {
   const calls: FakeDb['calls'] = [];
+  const rpcCalls: FakeDb['rpcCalls'] = [];
   const db = {
     calls,
+    rpcCalls,
     from: (table: string) =>
       new FakeBuilder(table, (t, ops, payload) => {
         calls.push({ table: t, ops: [...ops], payload });
         return handler(t, ops, calls);
       }),
-    rpc: async () => ({ data: true, error: null }),
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      rpcCalls.push({ fn, args });
+      return { data: true, error: null };
+    },
   };
   return db;
 }
@@ -1821,6 +1828,98 @@ describe('runAduTick', () => {
     expect(flippedTo(db, 'adu_configs', 'missing_permission', 'c1')).toBeDefined();
     expect(touchedTable(db, 'social_accounts')).toBe(false);
     expect(touchedTable(db, 'destinations')).toBe(false);
+  });
+
+  // --- Spec 164: the destination detail marker -----------------------
+  // The tick flipped the destination status but never wrote
+  // metadata.fb_status, so every ADU-broken page read as "Invalid
+  // token". The marker rides the mapper's destination flip: it is
+  // written only when the mapper actually flipped the destination,
+  // cleared on rate-limit, and never written for status-only
+  // decisions or when the publisher carried no marker facts.
+
+  /** The marker RPC calls, if any, in order. */
+  function markerCalls(db: FakeDb) {
+    return db.rpcCalls.filter(
+      (c) => c.fn === 'apply_destination_fb_status_marker',
+    );
+  }
+
+  it('writes the checkpoint marker when the mapper flips the destination to error (368/4854002)', async () => {
+    const { result, db } = await aduPublishTick({
+      status: 'failed',
+      error: {
+        kind: 'permanent',
+        code: '368',
+        subcode: '4854002',
+        message: 'Confirm your identity.',
+      },
+      targetDestinationFbStatus: 'checkpoint',
+    });
+    expect(result.failed).toBe(1);
+    expect(flippedTo(db, 'adu_configs', 'fb_verification_required', 'c1')).toBeDefined();
+    expect(flippedTo(db, 'destinations', 'error', 'dest-1')).toBeDefined();
+    expect(markerCalls(db)).toEqual([
+      {
+        fn: 'apply_destination_fb_status_marker',
+        args: { p_destination_id: 'dest-1', p_marker: 'checkpoint' },
+      },
+    ]);
+  });
+
+  it('writes no marker for a status-only failure (190/492)', async () => {
+    const { result, db } = await aduPublishTick({
+      status: 'failed',
+      error: {
+        kind: 'permanent',
+        code: '190',
+        subcode: '492',
+        message: 'Missing page access.',
+      },
+      targetDestinationFbStatus: 'missing_page_access',
+    });
+    expect(result.failed).toBe(1);
+    // The config still flips — the reason is visible where the setup
+    // lives — but the destination stays active and unstamped.
+    expect(flippedTo(db, 'adu_configs', 'missing_page_access', 'c1')).toBeDefined();
+    expect(touchedTable(db, 'destinations')).toBe(false);
+    expect(markerCalls(db)).toEqual([]);
+  });
+
+  it('clears the marker when the mapper flips the destination to rate_limited (368/1390008)', async () => {
+    const { result, db } = await aduPublishTick({
+      status: 'retry',
+      error: {
+        kind: 'retryable',
+        code: '368',
+        subcode: '1390008',
+        message: 'We limit how often you can post.',
+      },
+      targetDestinationFbStatus: null,
+    });
+    expect(result.retried).toBe(1);
+    expect(flippedTo(db, 'adu_configs', 'fb_rate_limited', 'c1')).toBeDefined();
+    expect(flippedTo(db, 'destinations', 'rate_limited', 'dest-1')).toBeDefined();
+    expect(markerCalls(db)).toEqual([
+      {
+        fn: 'apply_destination_fb_status_marker',
+        args: { p_destination_id: 'dest-1', p_marker: null },
+      },
+    ]);
+  });
+
+  it('writes no marker when the publisher carried no marker facts (non-numeric auth)', async () => {
+    const { result, db } = await aduPublishTick({
+      status: 'failed',
+      error: { kind: 'auth', code: 'auth', message: 'Authentication failed.' },
+    });
+    expect(result.failed).toBe(1);
+    // Fail-closed to the invalid-token decision: the destination flips
+    // to error with no marker, which Pages correctly reads as
+    // invalid_token.
+    expect(flippedTo(db, 'adu_configs', 'invalid_token', 'c1')).toBeDefined();
+    expect(flippedTo(db, 'destinations', 'error', 'dest-1')).toBeDefined();
+    expect(markerCalls(db)).toEqual([]);
   });
 
   it('stores the generic backend message for app-bug 190/2069032 and flips nothing', async () => {

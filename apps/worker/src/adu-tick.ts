@@ -17,6 +17,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { decryptToken } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { applyDestinationFbStatusMarker, type ConsumerDbClient } from './consumers.js';
 import { workspaceCanPublishForDestination } from './entitlement.js';
 
 /**
@@ -996,6 +997,36 @@ export async function runAduTick(options: {
         errorMessage: outcome.error?.message ?? null,
         detail: outcome.detail,
       });
+      // Spec 164: the ADU tick flipped the destination status but never
+      // wrote the detail marker, so every ADU-flipped error page read
+      // as "Invalid token". The marker rides the mapper's destination
+      // flip, exactly like the queue consumer (consumers.ts): it is
+      // written only when the mapper actually flipped the destination
+      // (destinationStatus !== null) — a status-only decision (e.g.
+      // 190/492 → missing_page_access, destination stays active) must
+      // not stamp a marker onto an active destination. The publisher's
+      // verdict is reused, not re-derived; `undefined` leaves the
+      // marker alone and `null` clears it (rate-limited). Best-effort
+      // inside the helper: a failed write is loud, never fatal.
+      if (
+        aduDecision.destinationStatus !== null &&
+        outcome.targetDestinationFbStatus !== undefined
+      ) {
+        // The helper only needs `db.rpc`, but a raw SupabaseClient is
+        // not assignable to ConsumerDbClient (its rpc returns a
+        // PostgrestFilterBuilder, not a Promise), so pass the rpc half
+        // through a thin adapter that awaits it into a real Promise.
+        await applyDestinationFbStatusMarker(
+          {
+            rpc: async (fn: string, args?: Record<string, unknown>) => {
+              const { data, error } = await supabase.rpc(fn, args);
+              return { data, error };
+            },
+          } as unknown as ConsumerDbClient,
+          destinationId,
+          outcome.targetDestinationFbStatus,
+        );
+      }
     }
     if (outcome.status === 'published') {
       await supabase

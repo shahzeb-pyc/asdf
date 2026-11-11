@@ -96,6 +96,24 @@ describe('getFacebookPageStatusAlert — spec 155', () => {
     expect(alert?.description).toContain('about 3 days');
   });
 
+  it('spec 164: the three polished descriptions read plainly, no jargon', () => {
+    expect(getFacebookPageStatusAlert('fb_rate_limited')?.description).toBe(
+      'Facebook is limiting how often this page can post. Posting pauses for about 3 days and starts again on its own when the limit lifts.',
+    );
+    expect(getFacebookPageStatusAlert('check_developer_app')?.description).toBe(
+      "Facebook has blocked this page in the developer app. Check the app's access settings, then turn posting back on.",
+    );
+    expect(getFacebookPageStatusAlert('2fa_required_on_BM')?.description).toBe(
+      'Turn on two-factor authentication in Business Manager, and make sure the connected account has an admin, editor, or moderator role on this page. Then turn posting back on.',
+    );
+    // None of the three names jargon or a vague "fix the problem".
+    for (const status of ['fb_rate_limited', 'check_developer_app', '2fa_required_on_BM'] as const) {
+      const description = getFacebookPageStatusAlert(status)?.description ?? '';
+      expect(description).not.toContain('cooldown');
+      expect(description).not.toContain('Fix the problem');
+    }
+  });
+
   it('no banner says "toggle" anywhere — Pages/mirrors have no toggle', () => {
     for (const status of [
       'invalid_token',

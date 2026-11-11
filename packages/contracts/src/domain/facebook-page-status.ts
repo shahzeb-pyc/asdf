@@ -201,7 +201,7 @@ function getFacebookPageStatusAlertForPages(
       return {
         title: 'Facebook Rate Limited',
         description:
-          'Meta is limiting how often this page can post. Automation pauses for about 3 days and will resume automatically when the cooldown ends.',
+          'Facebook is limiting how often this page can post. Posting pauses for about 3 days and starts again on its own when the limit lifts.',
         variant: 'critical',
         action: null,
       };
@@ -233,7 +233,7 @@ function getFacebookPageStatusAlertForPages(
       return {
         title: 'Developer App Access Blocked',
         description:
-          'Access is blocked for this page. Fix the problem in your developer app, then turn posting back on. Posting stays paused until then.',
+          'Facebook has blocked this page in the developer app. Check the app\'s access settings, then turn posting back on.',
         variant: 'critical',
         action: null,
       };
@@ -249,7 +249,7 @@ function getFacebookPageStatusAlertForPages(
       return {
         title: 'Business 2FA Required',
         description:
-          'The connected Facebook account must have an admin, editor, or moderator role on this page, and Business Manager two-factor authentication must be complete. Once that is done, turn posting back on.',
+          'Turn on two-factor authentication in Business Manager, and make sure the connected account has an admin, editor, or moderator role on this page. Then turn posting back on.',
         variant: 'critical',
         action: null,
       };
