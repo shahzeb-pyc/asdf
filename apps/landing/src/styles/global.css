@@ -98,18 +98,23 @@
   display: none;
 }
 
-/* Visually-hidden headings for the footer link columns:
-   announced to assistive technology, invisible on screen. */
-.visually-hidden {
+/* Skip link: hidden off-screen until focused, then visible below
+   the fixed topbar pill. */
+.skip-link {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  left: 16px;
+  top: -100px;
+  z-index: 100;
+  padding: 12px 20px;
+  border-radius: 9999px;
+  background-color: #111111;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.skip-link:focus {
+  top: 76px;
 }
 
 /* Clip-mask headline lines. Each line sits inside an
@@ -126,26 +131,12 @@
   display: block;
   will-change: transform;
 }
-.word-mask {
-  display: inline-block;
-  overflow: hidden;
-  padding-bottom: 0.12em;
-  margin-bottom: -0.12em;
-  vertical-align: bottom;
-}
-.word-inner {
-  display: inline-block;
-  will-change: transform;
-}
 
 /* Gold highlights. Full gold statically — no sweep, no motion.
    The hero, community and section 2 highlights are all plain
    static gold. */
 .hero-highlight {
   background-color: #f0b90b;
-  background-image: linear-gradient(#f0b90b, #f0b90b);
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
   color: #111111;
   border-radius: 12px;
   padding: 0.08em 0.15em;
@@ -160,9 +151,6 @@
 .community-highlight {
   display: inline-block;
   background-color: #f0b90b;
-  background-image: linear-gradient(#f0b90b, #f0b90b);
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
   color: #111111;
   border-radius: 6px;
   padding: 0.02em 0.12em;
@@ -247,18 +235,6 @@
   }
   .hero-sub {
     font-size: 14px;
-  }
-  .hero .grid-cols-3 > span {
-    width: 60px;
-    height: 60px;
-  }
-  .hero .grid-cols-3 > span > span:first-child {
-    width: 44px;
-    height: 44px;
-  }
-  .hero .grid-cols-3 > span > svg {
-    width: 22px;
-    height: 22px;
   }
 }
 
@@ -369,6 +345,13 @@
 }
 .faq-card summary::marker {
   content: "";
+}
+
+/* FAQ "+" becomes "×" when its accordion is open (CSS only, instant
+   — no transition, per this section's no-animation rule). */
+.faq-card[open] summary > span:last-child {
+  display: inline-block;
+  transform: rotate(45deg);
 }
 
 
@@ -1030,6 +1013,14 @@ button.rounded-full:hover {
 }
 .js .orbit-badge {
   animation: orbit-spin-rev 60s linear infinite;
+}
+
+/* Orbit pause (G12/M6): the page script adds .orbit-paused to
+   #section-2 while it is off-screen, pausing the ring + badges.
+   Zero visual change while Section 2 is visible. */
+.js #section-2.orbit-paused .orbit-ring,
+.js #section-2.orbit-paused .orbit-badge {
+  animation-play-state: paused;
 }
 
 /* Topbar hide-and-show: hides on scroll down past 120px, shows on
