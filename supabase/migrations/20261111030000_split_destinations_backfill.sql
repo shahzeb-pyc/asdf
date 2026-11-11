@@ -64,10 +64,7 @@ DECLARE
     || 'OR EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id) '
     || 'OR EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id) '
     || 'OR EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id)';
-  v_no_membership text := 'NOT EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id) '
-    || 'AND NOT EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id) '
-    || 'AND NOT EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id) '
-    || 'AND NOT EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id) '
+  v_no_membership text := 'NOT (' || v_sched_children || ') '
     || 'AND NOT EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id) '
     || 'AND NOT EXISTS (SELECT 1 FROM public.mirrors m WHERE m.workspace_id = d.workspace_id '
     || 'AND m.target_platform = d.platform::text AND m.target_external_id = d.external_destination_id)';

@@ -116,41 +116,79 @@ END $$;
 -- (account_id, external_destination_id), not by provenance, so a copy
 -- created after the split (NULL provenance) still counts as a copy.
 -- -----------------------------------------------------------------------------
+-- The view is written with CTEs so each structural test appears ONCE:
+-- `page_state` computes every flag per old row a single time, and
+-- `copies` unions the three section tables once. (An earlier form
+-- repeated the same NOT EXISTS blocks in every UNION branch and the
+-- same orphan-copy SELECT three times — the same facts, but tripping
+-- the duplication gate. The CTE form is also a single scan per table
+-- instead of one scan per branch.)
+-- -----------------------------------------------------------------------------
 CREATE VIEW public.section_destination_reconciliation AS
+WITH page_state AS (
+  SELECT
+    d.id,
+    d.account_id,
+    d.external_destination_id,
+    -- Schedule children? (any of the four Schedule child tables)
+    (EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id)
+      OR EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id)
+      OR EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id)
+      OR EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id))
+      AS has_sched_children,
+    EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id)
+      AS has_adu_child,
+    EXISTS (SELECT 1 FROM public.mirrors m
+      WHERE m.workspace_id = d.workspace_id
+        AND m.target_platform = d.platform::text
+        AND m.target_external_id = d.external_destination_id)
+      AS is_mirror_target,
+    -- A copy in each section? (canonical identity, not provenance.)
+    EXISTS (SELECT 1 FROM public.schedule_destinations sd
+      WHERE sd.account_id = d.account_id
+        AND sd.external_destination_id = d.external_destination_id)
+      AS has_schedule,
+    EXISTS (SELECT 1 FROM public.adu_destinations ad
+      WHERE ad.account_id = d.account_id
+        AND ad.external_destination_id = d.external_destination_id)
+      AS has_adu,
+    EXISTS (SELECT 1 FROM public.mirror_destinations md
+      WHERE md.account_id = d.account_id
+        AND md.external_destination_id = d.external_destination_id)
+      AS has_mirror
+  FROM public.destinations d
+),
+copies AS (
+  SELECT 'schedule'::text AS section, external_destination_id, source_destination_id, account_id
+    FROM public.schedule_destinations
+  UNION ALL
+  SELECT 'adu'::text, external_destination_id, source_destination_id, account_id
+    FROM public.adu_destinations
+  UNION ALL
+  SELECT 'mirror'::text, external_destination_id, source_destination_id, account_id
+    FROM public.mirror_destinations
+)
 -- (1) Schedule orphan: old row with Schedule children, no Schedule copy.
 SELECT 'orphan_child'::text AS kind,
        'schedule'::text AS section,
-       d.external_destination_id AS external_id,
-       d.id AS source_destination_id
-FROM public.destinations d
-WHERE (
-  EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id)
-  OR EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id)
-  OR EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id)
-  OR EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id)
-)
-AND NOT EXISTS (
-  SELECT 1 FROM public.schedule_destinations sd
-  WHERE sd.account_id = d.account_id
-    AND sd.external_destination_id = d.external_destination_id
-)
+       external_destination_id AS external_id,
+       id AS source_destination_id
+FROM page_state
+WHERE has_sched_children AND NOT has_schedule
 UNION ALL
 -- (2) ADU orphan: old row referenced by adu_configs, no ADU copy.
 SELECT 'orphan_child'::text AS kind,
        'adu'::text AS section,
-       d.external_destination_id AS external_id,
-       d.id AS source_destination_id
-FROM public.destinations d
-WHERE EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id)
-AND NOT EXISTS (
-  SELECT 1 FROM public.adu_destinations ad
-  WHERE ad.account_id = d.account_id
-    AND ad.external_destination_id = d.external_destination_id
-)
+       external_destination_id AS external_id,
+       id AS source_destination_id
+FROM page_state
+WHERE has_adu_child AND NOT has_adu
 UNION ALL
 -- (3) Mirror orphan: a mirrors target with no mirror copy.
 -- `mirrors.target_platform` is TEXT (20261029160000), so the platform
 -- comparison casts the enum to text. One row per distinct target.
+-- (A mirror target may have no `destinations` row at all, so this
+-- branch reads `mirrors` directly instead of `page_state`.)
 SELECT DISTINCT 'orphan_child'::text AS kind,
        'mirror'::text AS section,
        m.target_external_id AS external_id,
@@ -171,54 +209,16 @@ UNION ALL
 -- with no copy in any section — the §7.2 default arm failed.
 SELECT 'backfill_gap'::text AS kind,
        'none'::text AS section,
-       d.external_destination_id AS external_id,
-       d.id AS source_destination_id
-FROM public.destinations d
-WHERE NOT EXISTS (
-  SELECT 1 FROM public.schedule_destinations sd
-  WHERE sd.account_id = d.account_id
-    AND sd.external_destination_id = d.external_destination_id
-)
-AND NOT EXISTS (
-  SELECT 1 FROM public.adu_destinations ad
-  WHERE ad.account_id = d.account_id
-    AND ad.external_destination_id = d.external_destination_id
-)
-AND NOT EXISTS (
-  SELECT 1 FROM public.mirror_destinations md
-  WHERE md.account_id = d.account_id
-    AND md.external_destination_id = d.external_destination_id
-)
-AND NOT EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id)
-AND NOT EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id)
-AND NOT EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id)
-AND NOT EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id)
-AND NOT EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id)
-AND NOT EXISTS (
-  SELECT 1 FROM public.mirrors m
-  WHERE m.workspace_id = d.workspace_id
-    AND m.target_platform = d.platform::text
-    AND m.target_external_id = d.external_destination_id
-)
+       external_destination_id AS external_id,
+       id AS source_destination_id
+FROM page_state
+WHERE NOT has_schedule AND NOT has_adu AND NOT has_mirror
+  AND NOT has_sched_children AND NOT has_adu_child AND NOT is_mirror_target
 UNION ALL
 -- (5) Orphan copies: account gone from social_accounts (one row per copy).
 SELECT 'orphan_copy'::text AS kind,
-       'schedule'::text AS section,
-       sd.external_destination_id AS external_id,
-       sd.source_destination_id AS source_destination_id
-FROM public.schedule_destinations sd
-WHERE NOT EXISTS (SELECT 1 FROM public.social_accounts sa WHERE sa.id = sd.account_id)
-UNION ALL
-SELECT 'orphan_copy'::text AS kind,
-       'adu'::text AS section,
-       ad.external_destination_id AS external_id,
-       ad.source_destination_id AS source_destination_id
-FROM public.adu_destinations ad
-WHERE NOT EXISTS (SELECT 1 FROM public.social_accounts sa WHERE sa.id = ad.account_id)
-UNION ALL
-SELECT 'orphan_copy'::text AS kind,
-       'mirror'::text AS section,
-       md.external_destination_id AS external_id,
-       md.source_destination_id AS source_destination_id
-FROM public.mirror_destinations md
-WHERE NOT EXISTS (SELECT 1 FROM public.social_accounts sa WHERE sa.id = md.account_id);
+       section,
+       external_destination_id AS external_id,
+       source_destination_id
+FROM copies
+WHERE NOT EXISTS (SELECT 1 FROM public.social_accounts sa WHERE sa.id = copies.account_id);
