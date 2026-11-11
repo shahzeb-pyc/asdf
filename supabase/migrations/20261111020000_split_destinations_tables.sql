@@ -166,8 +166,12 @@ CREATE TRIGGER trg_mirror_destinations_updated_at
 --                   structural fact viewed from the child side and the
 --                   parent side, so it is emitted once, not twice.
 --   backfill_gap  — an old `destinations` row with NO copy in ANY
---                   section (violates the §7.2 invariant "every old row
---                   has >= 1 copy"). Section is 'none'.
+--                   section AND no membership anywhere (no child row
+--                   in any section table, no mirror target) — the
+--                   §7.2 default arm failed for a never-added page.
+--                   Section is 'none'. Disjoint from `orphan_child`
+--                   by construction (a child-bearing row is flagged
+--                   there, never here), so one problem is one row.
 --   orphan_copy   — a copy whose account_id no longer exists in
 --                   `social_accounts` (FK CASCADE should prevent this;
 --                   belt-and-braces, spec §8 item 4).
@@ -228,7 +232,8 @@ WHERE NOT EXISTS (
     AND md.external_destination_id = m.target_external_id
 )
 UNION ALL
--- (4) Backfill gap: old row with no copy in any section.
+-- (4) Backfill gap: never-added old row (no membership anywhere)
+-- with no copy in any section — the §7.2 default arm failed.
 SELECT 'backfill_gap'::text AS kind,
        'none'::text AS section,
        d.external_destination_id AS external_id,
@@ -248,6 +253,17 @@ AND NOT EXISTS (
   SELECT 1 FROM public.mirror_destinations md
   WHERE md.account_id = d.account_id
     AND md.external_destination_id = d.external_destination_id
+)
+AND NOT EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id)
+AND NOT EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id)
+AND NOT EXISTS (SELECT 1 FROM public.publish_logs pl WHERE pl.destination_id = d.id)
+AND NOT EXISTS (SELECT 1 FROM public.posting_slot_claims psc WHERE psc.destination_id = d.id)
+AND NOT EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id)
+AND NOT EXISTS (
+  SELECT 1 FROM public.mirrors m
+  WHERE m.workspace_id = d.workspace_id
+    AND m.target_platform = d.platform::text
+    AND m.target_external_id = d.external_destination_id
 )
 UNION ALL
 -- (5) Orphan copies: account gone from social_accounts (one row per copy).
