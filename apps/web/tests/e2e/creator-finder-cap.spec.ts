@@ -26,7 +26,12 @@ const NOTE =
 
 async function installCreatorFinderFixtures(
   page: import('@playwright/test').Page,
-  opts: { used: number; trendingStatus: number },
+  opts: {
+    used: number;
+    trendingStatus: number;
+    trendingCreators?: Array<Record<string, unknown>>;
+    enrichDelayMs?: number;
+  },
 ) {
   await page.route(`**/api/tenant/${SUB}/creator-finder/regions`, (route) =>
     route.fulfill({
@@ -76,10 +81,92 @@ async function installCreatorFinderFixtures(
               message: 'Daily limit exceeded',
               dailyLimitExceeded: true,
             }
-          : { region: 'PK', creators: [], videosSeen: 0 },
+          : {
+              region: 'PK',
+              creators: opts.trendingCreators ?? [],
+              videosSeen: 0,
+            },
       ),
     }),
   );
+  await page.route(
+    `**/api/tenant/${SUB}/creator-finder/enrich`,
+    async (route) => {
+      if (opts.enrichDelayMs) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, opts.enrichDelayMs),
+        );
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          creators: [
+            {
+              handle: 'alice',
+              displayName: 'Alice Fit',
+              avatarUrl: null,
+              latestVideoTitle: null,
+              latestVideoCover: null,
+              profileUrl: 'https://www.tiktok.com/@alice',
+              enrichment: {
+                bio: 'Fitness creator',
+                followerCount: 12400,
+                verified: true,
+                hashtags: [],
+                mentions: [],
+              },
+            },
+          ],
+          saveFailed: false,
+        }),
+      });
+    },
+  );
+}
+
+/**
+ * Return-first flow (spec 169): the search answers with basic
+ * creators at once and the enrich call fills in the details after.
+ * The enrich answer is delayed so the basic card is observably on
+ * screen before the details fill in.
+ */
+async function searchFillsInDetails(
+  page: import('@playwright/test').Page,
+  context: import('@playwright/test').BrowserContext,
+) {
+  await context.addCookies([
+    { ...SESSION_COOKIE, value: mintSessionToken('user') },
+  ]);
+  await installCreatorFinderFixtures(page, {
+    used: 0,
+    trendingStatus: 200,
+    trendingCreators: [
+      {
+        handle: 'alice',
+        displayName: 'Alice Fit',
+        avatarUrl: null,
+        latestVideoTitle: null,
+        latestVideoCover: null,
+        profileUrl: 'https://www.tiktok.com/@alice',
+      },
+    ],
+    enrichDelayMs: 500,
+  });
+  await page.goto(`/tenant/${SUB}/creator-finder`);
+
+  await page.getByRole('button', { name: 'Find trending creators' }).click();
+
+  await expect(page.getByText('@alice')).toBeVisible();
+  await expect(
+    page.getByText('Details unavailable for this creator.'),
+  ).toBeVisible();
+  await expect(page.getByText('Fitness creator')).toBeVisible();
+  await expect(page.getByText('12.4K followers')).toBeVisible();
+  await expect(
+    page.getByText('Details unavailable for this creator.'),
+  ).toHaveCount(0);
+  await expectNoDocumentOverflow(page);
 }
 
 test.describe('Creator Finder daily cap at 360px', () => {
@@ -127,5 +214,23 @@ test.describe('Creator Finder daily cap at 360px', () => {
     // No generic search-error banner alongside the cap block.
     await expect(page.getByText("Couldn't find creators")).toHaveCount(0);
     await expectNoDocumentOverflow(page);
+  });
+
+  test('a search shows basic cards first, then fills in details (spec 169)', async ({
+    page,
+    context,
+  }) => {
+    await searchFillsInDetails(page, context);
+  });
+});
+
+test.describe('Creator Finder return-first enrichment at desktop width', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('a search shows basic cards first, then fills in details (spec 169)', async ({
+    page,
+    context,
+  }) => {
+    await searchFillsInDetails(page, context);
   });
 });

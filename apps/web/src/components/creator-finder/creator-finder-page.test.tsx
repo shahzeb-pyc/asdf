@@ -185,3 +185,110 @@ describe('CreatorFinderPage video and hashtag tabs', () => {
     ).toBeTruthy();
   });
 });
+
+describe('CreatorFinderPage lazy loading and return-first enrichment (spec 169)', () => {
+  function savedCallCount() {
+    return getMock.mock.calls.filter((call) =>
+      String(call[0]).includes('/creator-finder/saved'),
+    ).length;
+  }
+
+  it('does not fetch Saved on mount', async () => {
+    renderPage();
+    await screen.findByText('0 of 100 used today');
+    expect(savedCallCount()).toBe(0);
+    // The visible Trending tab still loads its own data.
+    expect(
+      getMock.mock.calls.some((call) =>
+        String(call[0]).includes('/creator-finder/regions'),
+      ),
+    ).toBe(true);
+  });
+
+  it('fetches Saved when the Saved tab opens', async () => {
+    renderPage();
+    await screen.findByText('0 of 100 used today');
+    expect(savedCallCount()).toBe(0);
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Saved' }));
+    await screen.findByText(
+      'No saved creators yet. Search trending, niche, or similar creators and they will be saved automatically.',
+    );
+    expect(savedCallCount()).toBeGreaterThan(0);
+  });
+
+  it('shows basic cards first, then fills in details after enrich', async () => {
+    const basicCreator = {
+      handle: 'alice',
+      displayName: 'Alice Fit',
+      avatarUrl: null,
+      latestVideoTitle: null,
+      latestVideoCover: null,
+      profileUrl: 'https://www.tiktok.com/@alice',
+    };
+    const enrichedCreator = {
+      ...basicCreator,
+      enrichment: {
+        bio: 'Fitness creator',
+        followerCount: 12400,
+        verified: true,
+        hashtags: [],
+        mentions: [],
+      },
+    };
+    getMock.mockImplementation((path: string) => {
+      if (path.includes('/creator-finder/trending')) {
+        return Promise.resolve({ region: 'PK', creators: [basicCreator] });
+      }
+      if (path.includes('/creator-finder/regions')) {
+        return Promise.resolve({
+          regions: [{ code: 'PK', name: 'Pakistan' }],
+          defaultRegion: 'PK',
+        });
+      }
+      if (path.includes('/creator-finder/usage')) {
+        return Promise.resolve({ used: 0, limit: 100, date: '2026-11-03' });
+      }
+      if (path.includes('/creator-finder/saved')) {
+        return Promise.resolve({
+          creators: [],
+          total: 0,
+          page: 1,
+          pageSize: 30,
+          totalPages: 0,
+        });
+      }
+      return Promise.resolve({});
+    });
+    let resolveEnrich: (value: {
+      creators: unknown[];
+      saveFailed: boolean;
+    }) => void = () => {};
+    postMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveEnrich = resolve;
+        }),
+    );
+    renderPage();
+    await screen.findByText('0 of 100 used today');
+    await screen.findByDisplayValue('Pakistan');
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Find trending creators' }),
+    );
+    await screen.findByText('@alice');
+    expect(
+      screen.getByText('Details unavailable for this creator.'),
+    ).toBeTruthy();
+    resolveEnrich({ creators: [enrichedCreator], saveFailed: false });
+    await screen.findByText('Fitness creator');
+    expect(screen.getByText('12.4K followers')).toBeTruthy();
+    expect(
+      screen.queryByText('Details unavailable for this creator.'),
+    ).toBeNull();
+    expect(
+      postMock.mock.calls.some((call) =>
+        String(call[0]).includes('/creator-finder/enrich'),
+      ),
+    ).toBe(true);
+  });
+});
