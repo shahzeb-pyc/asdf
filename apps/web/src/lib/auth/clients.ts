@@ -229,16 +229,15 @@ export function getSupabaseAuthClient(): SupabaseClient | null {
   if (!url || !anonKey || url.includes('placeholder') || anonKey.includes('placeholder')) {
     return null;
   }
-  try {
-    return createClient(url, anonKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    });
-  } catch {
-    return null;
-  }
+  // No try/catch here by design (spec 168, fail loud): a malformed config
+  // throws instead of silently returning null — the regression guardrails
+  // ban bare-catch-return, and call sites fail loud either way.
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
 }
 
 export function getCookieDomain(requestHost?: string | null): string | undefined {
