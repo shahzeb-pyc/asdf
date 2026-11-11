@@ -196,6 +196,55 @@ export const DatabaseDestinationRowSchema = z
 
 export type DatabaseDestinationRow = z.infer<typeof DatabaseDestinationRowSchema>;
 
+/**
+ * Runtime schema for a section-destination row — the shared shape of
+ * `schedule_destinations`, `adu_destinations`, and `mirror_destinations`
+ * (spec 166 §4.2, migrations 20261111020000 / 20261111030000). Field for
+ * field identical to `DatabaseDestinationRowSchema` above (including the
+ * `.passthrough()` boundary correction and the deliberate omission of
+ * `next_allowed_publish_at` — the column exists in the table, the row
+ * schema does not model it, exactly as for `destinations`), plus the
+ * one extra column: `source_destination_id`, the `destinations.id` the
+ * copy was backfilled from (provenance, NOT a foreign key; NULL for
+ * rows created after the split).
+ */
+export const DatabaseSectionDestinationRowSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspace_id: z.string().uuid(),
+    account_id: z.string().uuid(),
+    platform: PlatformSchema,
+    external_destination_id: z.string().min(1).max(255),
+    name: z.string().min(1).max(255),
+    handle: z.string().max(255).nullable(),
+    avatar_url: z.string().nullable(),
+    timezone: z.string().min(1).max(50),
+    status: z.enum(['active', 'rate_limited', 'disconnected', 'error']),
+    encrypted_destination_token: z.string().nullable(),
+    rate_usage_pct: z.number().int().min(0).max(100),
+    metadata: DatabaseDestinationMetadataSchema,
+    created_at: z.string().datetime({ offset: true }),
+    updated_at: z.string().datetime({ offset: true }),
+    source_destination_id: z.string().uuid().nullable(),
+  })
+  // Same boundary correction as DatabaseDestinationRowSchema (spec 139
+  // B15): unknown keys pass through untouched.
+  .passthrough();
+
+export type DatabaseSectionDestinationRow = z.infer<typeof DatabaseSectionDestinationRowSchema>;
+
+// Thin aliases — one per section table. The three tables are
+// byte-identical copies of one model (spec 166 §1), so the aliases
+// share the one schema object. No section may import another section's
+// row type; the distinct names are the enforcement point in review.
+export const DatabaseScheduleDestinationRowSchema = DatabaseSectionDestinationRowSchema;
+export const DatabaseAduDestinationRowSchema = DatabaseSectionDestinationRowSchema;
+export const DatabaseMirrorDestinationRowSchema = DatabaseSectionDestinationRowSchema;
+
+export type DatabaseScheduleDestinationRow = z.infer<typeof DatabaseScheduleDestinationRowSchema>;
+export type DatabaseAduDestinationRow = z.infer<typeof DatabaseAduDestinationRowSchema>;
+export type DatabaseMirrorDestinationRow = z.infer<typeof DatabaseMirrorDestinationRowSchema>;
+
 export interface DatabasePostingSlotRow {
   id: string;
   destination_id: string;
@@ -438,6 +487,42 @@ export interface Database {
           name: string;
         };
         Update: Partial<DatabaseDestinationRow>;
+      };
+      // Spec 166 §4.5: the three section tables. `DatabaseDestinationRowSchema`
+      // and the `destinations` entry stay until PR I removes the old table's
+      // readers; they are deleted only with the old table (PR J).
+      schedule_destinations: {
+        Row: DatabaseScheduleDestinationRow;
+        Insert: Partial<DatabaseScheduleDestinationRow> & {
+          workspace_id: string;
+          account_id: string;
+          platform: Platform;
+          external_destination_id: string;
+          name: string;
+        };
+        Update: Partial<DatabaseScheduleDestinationRow>;
+      };
+      adu_destinations: {
+        Row: DatabaseAduDestinationRow;
+        Insert: Partial<DatabaseAduDestinationRow> & {
+          workspace_id: string;
+          account_id: string;
+          platform: Platform;
+          external_destination_id: string;
+          name: string;
+        };
+        Update: Partial<DatabaseAduDestinationRow>;
+      };
+      mirror_destinations: {
+        Row: DatabaseMirrorDestinationRow;
+        Insert: Partial<DatabaseMirrorDestinationRow> & {
+          workspace_id: string;
+          account_id: string;
+          platform: Platform;
+          external_destination_id: string;
+          name: string;
+        };
+        Update: Partial<DatabaseMirrorDestinationRow>;
       };
       posting_slots: {
         Row: DatabasePostingSlotRow;
