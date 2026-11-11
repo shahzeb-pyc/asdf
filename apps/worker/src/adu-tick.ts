@@ -17,7 +17,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { decryptToken } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { workspaceOwnerHasActivePeriod } from './entitlement.js';
+import { workspaceCanPublishForDestination } from './entitlement.js';
 
 /**
  * ADU worker tick — schedule intake + reel publish, on the minute tick.
@@ -735,10 +735,12 @@ export async function runAduTick(options: {
       result.published += 1;
       continue;
     }
-    // Entitlement pause (audit fix 2026-11-01): when the owning
-    // workspace has no active paid period, the job is NOT claimed
-    // and NOT published — it stays pending_publish for a later
-    // tick, so renewal resumes it without any missed-slot flood
+    // Entitlement pause (audit fix 2026-11-01; S2 count gate): when
+    // the owning workspace has no active paid period, or is at cap
+    // for the config's destination platform without the destination
+    // registered, the job is NOT claimed and NOT published — it
+    // stays pending_publish for a later tick, so renewal (or
+    // registration) resumes it without any missed-slot flood
     // (ADU jobs are not slot-based; they publish as soon as the
     // entitlement returns). The workspace comes from the config,
     // which the claim below would load anyway; loading it first
@@ -747,11 +749,11 @@ export async function runAduTick(options: {
     {
       const { data: gateConfigRow } = await supabase
         .from('adu_configs')
-        .select('workspace_id, status')
+        .select('workspace_id, status, destination_id')
         .eq('id', job.config_id)
         .maybeSingle();
       const gateConfig = gateConfigRow as
-        | { workspace_id?: string; status?: string }
+        | { workspace_id?: string; status?: string; destination_id?: string }
         | null;
       const gateWorkspaceId = gateConfig?.workspace_id;
       // Publish-loop gate: only 'active' configs publish. A config in
@@ -764,12 +766,39 @@ export async function runAduTick(options: {
         );
         continue;
       }
-      const entitled = gateWorkspaceId
-        ? await workspaceOwnerHasActivePeriod(supabase, gateWorkspaceId, now)
-        : false;
+      // S2: the destination row gives the platform and the key
+      // (external_destination_id ?? id). A missing destination row
+      // fails closed — the job stays pending_publish, exactly as
+      // the publish loop's destination-missing failure below.
+      // (gateConfig is non-null here: the status check above
+      // continued on any other value.)
+      const gateDestinationId = gateConfig.destination_id;
+      let gateDestinationRow: unknown = null;
+      if (gateDestinationId) {
+        const { data } = await supabase
+          .from('destinations')
+          .select('platform, external_destination_id')
+          .eq('id', gateDestinationId)
+          .maybeSingle();
+        gateDestinationRow = data;
+      }
+      const gateDestination = gateDestinationRow as {
+        platform?: string;
+        external_destination_id?: string | null;
+      } | null;
+      const entitled =
+        gateWorkspaceId && gateDestination?.platform && gateDestinationId
+          ? await workspaceCanPublishForDestination(
+              supabase,
+              gateWorkspaceId,
+              gateDestination.platform,
+              gateDestination.external_destination_id ?? gateDestinationId,
+              now
+            )
+          : false;
       if (!entitled) {
         console.error(
-          `[adu-tick] job=${job.id} paused: owning workspace has no active paid period; leaving pending_publish`
+          `[adu-tick] job=${job.id} paused: owning workspace cannot publish for this destination (no active period or at cap); leaving pending_publish`
         );
         continue;
       }

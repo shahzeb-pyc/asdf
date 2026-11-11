@@ -173,6 +173,40 @@ describe('processMirrorCheck', () => {
     expect(state.published).toHaveLength(0);
   });
 
+  it('S2: mirror whose target is unregistered at cap does nothing; the gate gets workspace, platform and key', async () => {
+    const state = newState();
+    const deps = fakeDeps(state, [reel('v1', 100), reel('v2', 200)]);
+    const gateArgs: Array<[string, string, string]> = [];
+    deps.checkEntitlement = async (workspaceId, platform, destinationKey) => {
+      gateArgs.push([workspaceId, platform, destinationKey]);
+      return false;
+    };
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result).toEqual({ posted: 0, skipped: 0, failed: 0 });
+    expect(state.claimed).toHaveLength(0);
+    expect(state.published).toHaveLength(0);
+    expect(gateArgs).toEqual([['ws_1', 'facebook', 'fb_123']]);
+    // Pause semantics unchanged: only nextCheckAt advances.
+    expect(state.mirrorUpdates).toHaveLength(1);
+    expect(state.mirrorUpdates[0]?.patch).toEqual({
+      nextCheckAt: '2026-10-29T13:00:00.000Z',
+    });
+  });
+
+  it('S2: mirror whose target is registered at cap proceeds through the check', async () => {
+    const state = newState();
+    const deps = fakeDeps(state, [reel('v1', 100)]);
+    const gateArgs: Array<[string, string, string]> = [];
+    deps.checkEntitlement = async (workspaceId, platform, destinationKey) => {
+      gateArgs.push([workspaceId, platform, destinationKey]);
+      return true;
+    };
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result.posted).toBe(1);
+    expect(state.published).toHaveLength(1);
+    expect(gateArgs).toEqual([['ws_1', 'facebook', 'fb_123']]);
+  });
+
   it('posts only items newer than the last posted reel', async () => {
     const state = newState();
     const feed = [reel('v1', 100), reel('v2', 200), reel('v3', 300)];
@@ -399,16 +433,16 @@ describe('processMirrorCheck', () => {
   });
 });
 
-describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
+describe('processMirrorCheck — S2 due downgrade un-pauses the mirror', () => {
   /**
    * Minimal in-memory Supabase fake, just enough for the REAL
-   * workspaceOwnerHasActivePeriod helper plus the activation it
-   * runs: rpc('workspace_has_active_period') computed from the
-   * rows, and from() chains for workspaces / users /
-   * subscription_periods / subscription_payments /
-   * seller_commissions. This test fails on the old code: the old
-   * inline mirror copy never called activateDueScheduledDowngrade,
-   * so the check would pause (posted 0, no period created).
+   * workspaceCanPublishForDestination helper plus the activation
+   * it runs: rpc('can_publish_for') computed from the rows, and
+   * from() chains for workspaces / users / subscription_periods /
+   * subscription_payments / seller_commissions. This test fails
+   * on the old code: the old inline mirror copy never called
+   * activateDueScheduledDowngrade, so the check would pause
+   * (posted 0, no period created).
    */
   type EntRow = Record<string, unknown>;
   interface EntDb {
@@ -417,6 +451,10 @@ describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
     periods: EntRow[];
     payments: EntRow[];
     commissions: EntRow[];
+    /** S2: subscription_usage rows the can_publish_for fake counts. */
+    usage: EntRow[];
+    /** S2: destinations rows the can_publish_for fake checks for 'disconnected'. */
+    destinations: EntRow[];
     /** Every rpc() call, in order — proves the gate goes through the RPC. */
     rpcCalls: Array<{ fn: string; args: Record<string, unknown> }>;
     /** subscription_periods selects — must stay 0 on the live path. */
@@ -521,9 +559,13 @@ describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
   function entitlementClient(db: EntDb): SupabaseClient {
     return {
       from: (table: string) => new EntBuilder(db, table),
+      // S2: can_publish_for computed from the fake rows — admin,
+      // or an active period plus the count half (registered key
+      // or counted usage under the period's *_count cap, with the
+      // publish-now and disconnected exclusions).
       rpc: async (fn: string, args: Record<string, unknown>) => {
         db.rpcCalls.push({ fn, args });
-        if (fn !== 'workspace_has_active_period') {
+        if (fn !== 'can_publish_for') {
           throw new InternalError(`unexpected rpc ${fn}`);
         }
         const workspace = db.workspaces.find((w) => w['id'] === args['p_workspace_id']);
@@ -531,13 +573,55 @@ describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
         const user = db.users.find((u) => u['id'] === ownerId);
         if (user?.['role'] === 'admin') return { data: true, error: null };
         const at = Date.parse(args['p_at'] as string);
-        const active = db.periods.some((p) => {
-          if (p['user_id'] !== ownerId || p['superseded_at'] !== null) return false;
-          const starts = Date.parse(p['starts_at'] as string);
-          const ends = Date.parse(p['ends_at'] as string);
-          return starts <= at && ends > at;
-        });
-        return { data: active, error: null };
+        const period = db.periods
+          .filter((p) => {
+            if (p['user_id'] !== ownerId || p['superseded_at'] !== null) return false;
+            const starts = Date.parse(p['starts_at'] as string);
+            const ends = Date.parse(p['ends_at'] as string);
+            return starts <= at && ends > at;
+          })
+          .sort(
+            (a, b) => Date.parse(b['ends_at'] as string) - Date.parse(a['ends_at'] as string)
+          ).at(0);
+        if (!period) return { data: false, error: null };
+        const platform = args['p_platform'] as string;
+        const key = args['p_destination_key'] as string;
+        const isPublishNow = (feature: unknown): boolean =>
+          feature === 'publish-now' ||
+          feature === 'instagram-publish-now' ||
+          feature === 'threads-publish-now';
+        const registered = db.usage.some(
+          (u) =>
+            u['user_id'] === ownerId &&
+            u['platform'] === platform &&
+            u['destination_key'] === key &&
+            !isPublishNow(u['feature'])
+        );
+        if (registered) return { data: true, error: null };
+        const disconnectedIds = new Set(
+          db.destinations
+            .filter(
+              (d) =>
+                d['status'] === 'disconnected' &&
+                d['platform'] === platform &&
+                db.workspaces.some(
+                  (w) => w['id'] === d['workspace_id'] && w['owner_id'] === ownerId
+                )
+            )
+            .map((d) => d['id'])
+        );
+        const usage = db.usage.filter(
+          (u) =>
+            u['user_id'] === ownerId &&
+            u['platform'] === platform &&
+            !isPublishNow(u['feature']) &&
+            !disconnectedIds.has(u['destination_id'])
+        ).length;
+        const count =
+          typeof period[`${platform}_count`] === 'number'
+            ? (period[`${platform}_count`] as number)
+            : 0;
+        return { data: usage < count, error: null };
       },
     } as unknown as SupabaseClient;
   }
@@ -548,7 +632,7 @@ describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
    * exercises the exact checkEntitlement processMirrorCheck runs in
    * production. Only the gate is wired — every other dep stays the
    * in-memory fake, so the check body runs without network. A
-   * complete revert of the C4 wiring change is visible to this
+   * complete revert of the S2 wiring change is visible to this
    * suite: on the old code the wired gate is the inline three-query
    * copy, which never calls the RPC and never activates a due
    * downgrade, so the due test fails there (posted 0, no period)
@@ -585,6 +669,8 @@ describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
         },
       ],
       commissions: [],
+      usage: [],
+      destinations: [],
       rpcCalls: [],
       periodSelects: 0,
     };
@@ -606,9 +692,15 @@ describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
     // returned false, then the post-activation re-check RPC.
     expect(db.rpcCalls).toHaveLength(2);
     expect(db.rpcCalls.map((c) => c.fn)).toEqual([
-      'workspace_has_active_period',
-      'workspace_has_active_period',
+      'can_publish_for',
+      'can_publish_for',
     ]);
+    expect(db.rpcCalls[0]?.args).toEqual({
+      p_workspace_id: 'ws_1',
+      p_platform: 'facebook',
+      p_destination_key: 'fb_123',
+      p_at: '2026-10-29T12:00:00.000Z',
+    });
   });
 
   it('mirror with live period proceeds through the wired shared-helper gate', async () => {
@@ -619,6 +711,7 @@ describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
         {
           id: 'period-live',
           user_id: 'user-1',
+          facebook_count: 2,
           starts_at: '2026-10-01T00:00:00.000Z',
           ends_at: '2026-11-28T00:00:00.000Z',
           superseded_at: null,
@@ -626,6 +719,8 @@ describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
       ],
       payments: [],
       commissions: [],
+      usage: [],
+      destinations: [],
       rpcCalls: [],
       periodSelects: 0,
     };
@@ -635,11 +730,17 @@ describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
     const result = await processMirrorCheck(deps, mirror());
     expect(result.posted).toBe(1);
     // The wired gate called the shared helper once, with the
-    // mirror's workspace, and read no periods table directly.
+    // mirror's workspace, target platform and target key, and read
+    // no periods table directly.
     expect(db.rpcCalls).toEqual([
       {
-        fn: 'workspace_has_active_period',
-        args: { p_workspace_id: 'ws_1', p_at: '2026-10-29T12:00:00.000Z' },
+        fn: 'can_publish_for',
+        args: {
+          p_workspace_id: 'ws_1',
+          p_platform: 'facebook',
+          p_destination_key: 'fb_123',
+          p_at: '2026-10-29T12:00:00.000Z',
+        },
       },
     ]);
     expect(db.periodSelects).toBe(0);
@@ -652,6 +753,8 @@ describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
       periods: [],
       payments: [],
       commissions: [],
+      usage: [],
+      destinations: [],
       rpcCalls: [],
       periodSelects: 0,
     };

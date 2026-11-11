@@ -33,6 +33,9 @@ BEGIN
   -- together (CASCADE covers redemptions/refunds). Dedicated rig
   -- DB only; this never runs anywhere else.
   TRUNCATE public.subscription_periods, public.subscription_payments CASCADE;
+  -- subscription_usage carries no FK, so the CASCADE above does
+  -- not clear it (S2 cases seed usage rows per case).
+  TRUNCATE public.subscription_usage;
   INSERT INTO public.destination_claim_limits (platform, metric, cap, window_seconds) VALUES
     ('instagram', 'published', 100, 86400),
     ('instagram', 'calls',      25,  3600),
@@ -164,4 +167,90 @@ BEGIN
          1, p_result, p_at
   FROM generate_series(1, p_count);
 END;
+$$;
+
+-- =============================================================================
+-- S2 (can_publish_for) fixture helpers.
+-- =============================================================================
+
+-- Set the rig period's cap for one platform.
+CREATE OR REPLACE FUNCTION public.claim138_set_count(
+  p_platform TEXT,
+  p_count INT
+)
+RETURNS VOID
+LANGUAGE sql
+AS $$
+  UPDATE public.subscription_periods SET
+    facebook_count = CASE WHEN p_platform = 'facebook' THEN p_count ELSE facebook_count END,
+    instagram_count = CASE WHEN p_platform = 'instagram' THEN p_count ELSE instagram_count END,
+    threads_count = CASE WHEN p_platform = 'threads' THEN p_count ELSE threads_count END,
+    x_count = CASE WHEN p_platform = 'x' THEN p_count ELSE x_count END,
+    tiktok_count = CASE WHEN p_platform = 'tiktok' THEN p_count ELSE tiktok_count END,
+    youtube_count = CASE WHEN p_platform = 'youtube' THEN p_count ELSE youtube_count END
+  WHERE id = public.claim138_test_id('period', 1);
+$$;
+
+-- Insert one subscription_usage row for the rig owner. The id is
+-- md5-derived from (platform, key, feature), so a case's usage set
+-- is deterministic; distinct keys per case keep the insert unique.
+CREATE OR REPLACE FUNCTION public.claim138_usage(
+  p_platform TEXT,
+  p_destination_key TEXT,
+  p_feature TEXT DEFAULT 'schedule',
+  p_destination_id UUID DEFAULT NULL
+)
+RETURNS UUID
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_id UUID := md5('claim138-usage-' || p_platform || '-' || p_destination_key || '-' || p_feature)::uuid;
+BEGIN
+  INSERT INTO public.subscription_usage
+    (id, user_id, platform, destination_key, feature, destination_id)
+  VALUES
+    (v_id, public.claim138_test_id('user', 1), p_platform, p_destination_key, p_feature, p_destination_id);
+  RETURN v_id;
+END;
+$$;
+
+-- Expire the rig period (ends_at in the past) or supersede it.
+CREATE OR REPLACE FUNCTION public.claim138_expire_period()
+RETURNS VOID
+LANGUAGE sql
+AS $$
+  -- ends_at one hour ago: still after starts_at (now() - 1 day),
+  -- so the ends_at > starts_at CHECK holds while the window is over.
+  UPDATE public.subscription_periods
+  SET ends_at = now() - INTERVAL '1 hour'
+  WHERE id = public.claim138_test_id('period', 1);
+$$;
+
+CREATE OR REPLACE FUNCTION public.claim138_supersede_period()
+RETURNS VOID
+LANGUAGE sql
+AS $$
+  UPDATE public.subscription_periods
+  SET superseded_at = now() - INTERVAL '1 hour'
+  WHERE id = public.claim138_test_id('period', 1);
+$$;
+
+-- Change the rig user's role ('admin' exempts the owner from counts).
+CREATE OR REPLACE FUNCTION public.claim138_set_role(p_role TEXT)
+RETURNS VOID
+LANGUAGE sql
+AS $$
+  UPDATE public.users SET role = p_role
+  WHERE id = public.claim138_test_id('user', 1);
+$$;
+
+-- Mark one queue item as a publish-now request (the due claim's
+-- count exemption only applies to marked rows).
+CREATE OR REPLACE FUNCTION public.claim138_mark_publish_now(p_item UUID)
+RETURNS VOID
+LANGUAGE sql
+AS $$
+  UPDATE public.queue_items
+  SET publish_now_requested_at = now() - INTERVAL '1 minute'
+  WHERE id = p_item;
 $$;

@@ -8,7 +8,12 @@
  * current semantics (spec 138 parity contract §1–§8), NOT captured from
  * the implementation under test.
  *
- * The suite asserts the CURRENT claim semantics. Case 9 (3-day
+ * The suite asserts the CURRENT claim semantics. Cases S2-1..S2-17
+ * (appended for S2, can_publish_for count enforcement) assert the
+ * count predicate: at-cap unregistered destinations claim zero,
+ * registered/admin/marked rows claim normally, the slot and
+ * publish-now claims keep their contracts, and the planner uses
+ * the usage indexes. Case 9 (3-day
  * rate_limited flip, migration 20261102160000) is NOT pre-fix
  * comparable: the pre-fix body (migrations up to 20261022130000)
  * keyed recovery off the removed cooldown column, so case 9 only
@@ -145,6 +150,58 @@ async function callRpc(
   const { rows } = await ctx.client.query<ClaimedRow>(
     `SELECT * FROM public.claim_due_queue_items($1::public.platform, $2::text[], $3::int, $4::int)`,
     [platform, laneKindSet, limit, maxPerDestination]
+  );
+  return rows;
+}
+
+async function setCount(ctx: Ctx, platform: string, count: number): Promise<void> {
+  await ctx.client.query(`SELECT public.claim138_set_count($1, $2)`, [platform, count]);
+}
+
+async function usage(
+  ctx: Ctx,
+  platform: string,
+  key: string,
+  feature = 'schedule',
+  destinationId: string | null = null
+): Promise<void> {
+  await ctx.client.query(`SELECT public.claim138_usage($1, $2, $3, $4)`, [
+    platform,
+    key,
+    feature,
+    destinationId,
+  ]);
+}
+
+async function markPublishNow(ctx: Ctx, itemId: string): Promise<void> {
+  await ctx.client.query(`SELECT public.claim138_mark_publish_now($1)`, [itemId]);
+}
+
+async function slotFor(ctx: Ctx, destinationId: string, minutesAgo: number): Promise<string> {
+  const { rows } = await ctx.client.query<{ id: string }>(
+    `INSERT INTO public.posting_slots (destination_id, kind, time_of_day, is_active)
+     VALUES ($1::uuid, ARRAY['text'], (now() - ($2 || ' minutes')::interval)::time, true)
+     RETURNING id`,
+    [destinationId, String(minutesAgo)]
+  );
+  return rows[0]?.id as string;
+}
+
+async function callSlotRpc(
+  ctx: Ctx,
+  destinationId: string,
+  slotId: string
+): Promise<{ id: string }[]> {
+  const { rows } = await ctx.client.query<{ id: string }>(
+    `SELECT * FROM public.claim_posting_slot_item($1::uuid, $2::uuid, (now() AT TIME ZONE 'UTC')::date, now())`,
+    [destinationId, slotId]
+  );
+  return rows;
+}
+
+async function callPublishNowRpc(ctx: Ctx): Promise<{ id: string }[]> {
+  const { rows } = await ctx.client.query<{ id: string }>(
+    `SELECT * FROM public.claim_publish_now_items(100)`
   );
   return rows;
 }
@@ -606,6 +663,297 @@ async function case12(ctx: Ctx): Promise<void> {
   check(remaining[0]?.n === 100, 'c12: exactly 100 youtube items remain queued', `remaining=${remaining[0]?.n}`);
 }
 
+// ---------------------------------------------------------------------------
+// S2: can_publish_for count enforcement in the claim RPCs.
+// The rig period seeds counts of 5 per platform (claim138_reset);
+// each case narrows the facebook cap to 1 where the cap matters.
+// ---------------------------------------------------------------------------
+async function caseS2DueBelowCap(ctx: Ctx): Promise<void> {
+  const d = await dest(ctx, 'facebook', 1);
+  const itemId = await item(ctx, d, 'facebook', 1);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimed.length === 1 && claimed[0]?.id === itemId,
+    's2 due below cap: paid owner claims normally'
+  );
+}
+
+async function caseS2DueAtCapUnregistered(ctx: Ctx): Promise<void> {
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'other-key');
+  const d = await dest(ctx, 'facebook', 1);
+  await item(ctx, d, 'facebook', 1);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(claimed.length === 0, 's2 due at cap unregistered: nothing claimed', `claimed=${claimed.length}`);
+  await expectUntouched(ctx, d, 1, at(ctx, -MIN), 's2 due at cap unregistered');
+}
+
+async function caseS2DueAtCapRegistered(ctx: Ctx): Promise<void> {
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'ext-dest-facebook-1');
+  const d = await dest(ctx, 'facebook', 1);
+  const itemId = await item(ctx, d, 'facebook', 1);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimed.length === 1 && claimed[0]?.id === itemId,
+    's2 due at cap registered: claims normally'
+  );
+}
+
+async function caseS2DueRowIdKey(ctx: Ctx): Promise<void> {
+  await setCount(ctx, 'facebook', 1);
+  const d = await dest(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', d);
+  await item(ctx, d, 'facebook', 1);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimed.length === 0,
+    's2 key agreement: a usage row keyed by the row id alone does not register the destination',
+    `claimed=${claimed.length}`
+  );
+}
+
+async function caseS2DueExpired(ctx: Ctx): Promise<void> {
+  await ctx.client.query(`SELECT public.claim138_expire_period()`);
+  const d = await dest(ctx, 'facebook', 1);
+  await item(ctx, d, 'facebook', 1);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(claimed.length === 0, 's2 due expired period: nothing claimed', `claimed=${claimed.length}`);
+}
+
+async function caseS2DueSuperseded(ctx: Ctx): Promise<void> {
+  await ctx.client.query(`SELECT public.claim138_supersede_period()`);
+  const d = await dest(ctx, 'facebook', 1);
+  await item(ctx, d, 'facebook', 1);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimed.length === 0,
+    's2 due superseded-only period: nothing claimed',
+    `claimed=${claimed.length}`
+  );
+}
+
+async function caseS2DueAdmin(ctx: Ctx): Promise<void> {
+  await ctx.client.query(`SELECT public.claim138_set_role('admin')`);
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'other-key');
+  const d = await dest(ctx, 'facebook', 1);
+  const itemId = await item(ctx, d, 'facebook', 1);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimed.length === 1 && claimed[0]?.id === itemId,
+    's2 due admin at cap unregistered: claims normally'
+  );
+}
+
+async function caseS2DueMarked(ctx: Ctx): Promise<void> {
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'other-key');
+  const d = await dest(ctx, 'facebook', 1);
+  const itemId = await item(ctx, d, 'facebook', 1);
+  await markPublishNow(ctx, itemId);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimed.length === 1 && claimed[0]?.id === itemId,
+    's2 due marked publish-now row: exempt from the count half'
+  );
+}
+
+async function caseS2DueMarkedExpired(ctx: Ctx): Promise<void> {
+  // Verifier regression (PR #211 SEND BACK): the marked-row
+  // exemption must be from the COUNT half only, not from the
+  // period half. A marked row for an expired owner claims nothing
+  // — same fixture as the verifier's live proof (expired period
+  // + at-cap usage + one marked queued Facebook item).
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'other-key');
+  await ctx.client.query(`SELECT public.claim138_expire_period()`);
+  const d = await dest(ctx, 'facebook', 1);
+  const itemId = await item(ctx, d, 'facebook', 1);
+  await markPublishNow(ctx, itemId);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimed.length === 0,
+    's2 due marked publish-now row, expired period: nothing claimed',
+    `claimed=${claimed.length}`
+  );
+}
+
+async function caseS2DueDisconnected(ctx: Ctx): Promise<void> {
+  await setCount(ctx, 'facebook', 1);
+  const dDisc = await dest(ctx, 'facebook', 9, { status: 'disconnected' });
+  await usage(ctx, 'facebook', 'ext-dest-facebook-9', 'schedule', dDisc);
+  const d = await dest(ctx, 'facebook', 1);
+  const itemId = await item(ctx, d, 'facebook', 1);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimed.length === 1 && claimed[0]?.id === itemId,
+    's2 due disconnected subtraction: usage below cap, claims normally'
+  );
+}
+
+async function caseS2DueLegacyPublishNow(ctx: Ctx): Promise<void> {
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'other-key');
+  await usage(ctx, 'facebook', 'ext-dest-facebook-1', 'publish-now');
+  const d = await dest(ctx, 'facebook', 1);
+  await item(ctx, d, 'facebook', 1);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimed.length === 0,
+    's2 due legacy publish-now-only row: does not register, nothing claimed',
+    `claimed=${claimed.length}`
+  );
+}
+
+async function caseS2Downgrade(ctx: Ctx): Promise<void> {
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'ext-dest-facebook-1');
+  await usage(ctx, 'facebook', 'other-key');
+  const dReg = await dest(ctx, 'facebook', 1);
+  const regItem = await item(ctx, dReg, 'facebook', 1);
+  const dUnreg = await dest(ctx, 'facebook', 2);
+  await item(ctx, dUnreg, 'facebook', 1);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimed.length === 1 && claimed[0]?.id === regItem,
+    's2 downgrade: registered claims, unregistered does not',
+    `claimed=${claimed.length}`
+  );
+}
+
+async function caseS2SlotAtCap(ctx: Ctx): Promise<void> {
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'other-key');
+  const d = await dest(ctx, 'facebook', 1);
+  await item(ctx, d, 'facebook', 1);
+  const slotId = await slotFor(ctx, d, 2);
+  const claimed = await callSlotRpc(ctx, d, slotId);
+  check(claimed.length === 0, 's2 slot at cap unregistered: nothing claimed', `claimed=${claimed.length}`);
+  const s = await itemState(ctx, d, 1);
+  check(s.status === 'queued', 's2 slot at cap unregistered: item stays queued', `status=${s.status}`);
+}
+
+async function caseS2SlotRegistered(ctx: Ctx): Promise<void> {
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'ext-dest-facebook-1');
+  const d = await dest(ctx, 'facebook', 1);
+  const itemId = await item(ctx, d, 'facebook', 1);
+  const slotId = await slotFor(ctx, d, 2);
+  const claimed = await callSlotRpc(ctx, d, slotId);
+  check(
+    claimed.length === 1 && claimed[0]?.id === itemId,
+    's2 slot at cap registered: claims normally'
+  );
+}
+
+async function caseS2SlotOutsideWindow(ctx: Ctx): Promise<void> {
+  const d = await dest(ctx, 'facebook', 1);
+  await item(ctx, d, 'facebook', 1);
+  const slotId = await slotFor(ctx, d, 30);
+  const claimed = await callSlotRpc(ctx, d, slotId);
+  check(claimed.length === 0, 's2 slot outside window: nothing claimed', `claimed=${claimed.length}`);
+}
+
+async function caseS2PublishNow(ctx: Ctx): Promise<void> {
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'other-key');
+  const d = await dest(ctx, 'facebook', 1);
+  const itemId = await item(ctx, d, 'facebook', 1);
+  await markPublishNow(ctx, itemId);
+  const claimed = await callPublishNowRpc(ctx);
+  check(
+    claimed.length === 1 && claimed[0]?.id === itemId,
+    's2 publish-now at cap: claims normally (RPC not redefined, uncapped)'
+  );
+}
+
+async function caseS2Explain(ctx: Ctx): Promise<void> {
+  // Scale the usage + periods tables so the planner cannot prefer
+  // a sequential scan for a selective (user_id, platform) lookup.
+  await ctx.client.query(
+    `INSERT INTO public.subscription_usage (user_id, platform, destination_key, feature)
+     SELECT md5('s2-scale-user-' || g)::uuid, 'facebook', 'key-' || g, 'schedule'
+     FROM generate_series(1, 5000) AS g`
+  );
+  await ctx.client.query(
+    `INSERT INTO public.subscription_periods
+       (user_id, facebook_count, instagram_count, threads_count, x_count, tiktok_count, youtube_count, starts_at, ends_at, superseded_at)
+     SELECT md5('s2-scale-user-' || g)::uuid, 1, 1, 1, 1, 1, 1, now() - interval '1 day', now() + interval '29 days', NULL
+     FROM generate_series(1, 2000) AS g`
+  );
+  await ctx.client.query(`ANALYZE public.subscription_usage`);
+  await ctx.client.query(`ANALYZE public.subscription_periods`);
+  // A LANGUAGE sql function body is opaque to EXPLAIN (the call
+  // plans as a single Result node), so the planner evidence is
+  // the EXPLAIN of the predicate's two queries, textually mirrored
+  // from can_publish_for, plus the timed claim call below.
+  const explainQuery = async (label: string, sql: string): Promise<string> => {
+    const { rows } = await ctx.client.query<{ 'QUERY PLAN': string }>(
+      `EXPLAIN (ANALYZE, BUFFERS) ${sql}`
+    );
+    const plan = rows.map((r) => r['QUERY PLAN']).join('\n');
+    console.log(`[parity] s2 explain ${label}:\n` + plan);
+    return plan;
+  };
+  const countPlan = await explainQuery(
+    'usage count',
+    `WITH disconnected AS (
+       SELECT d.id, d.platform
+       FROM public.destinations d
+       JOIN public.workspaces w ON w.id = d.workspace_id
+       WHERE w.owner_id = public.claim138_test_id('user', 1)
+         AND d.status = 'disconnected'
+     )
+     SELECT count(*) FROM public.subscription_usage u
+     WHERE u.user_id = public.claim138_test_id('user', 1)
+       AND u.platform = 'facebook'
+       AND u.feature NOT IN ('publish-now', 'instagram-publish-now', 'threads-publish-now')
+       AND NOT EXISTS (
+         SELECT 1 FROM disconnected d
+         WHERE d.id = u.destination_id
+           AND d.platform::text = u.platform
+       )`
+  );
+  check(
+    !countPlan.includes('Seq Scan on public.subscription_usage'),
+    's2 explain: usage count has no sequential scan on subscription_usage'
+  );
+  check(
+    countPlan.includes('idx_subscription_usage_user_platform'),
+    's2 explain: the usage count uses the (user_id, platform) index'
+  );
+  const existsPlan = await explainQuery(
+    'registered EXISTS',
+    `SELECT EXISTS (
+       SELECT 1 FROM public.subscription_usage u
+       WHERE u.user_id = public.claim138_test_id('user', 1)
+         AND u.platform = 'facebook'
+         AND u.destination_key = 'ext-dest-facebook-1'
+         AND u.feature NOT IN ('publish-now', 'instagram-publish-now', 'threads-publish-now')
+     )`
+  );
+  check(
+    !existsPlan.includes('Seq Scan on public.subscription_usage'),
+    's2 explain: registered EXISTS has no sequential scan on subscription_usage'
+  );
+  check(
+    existsPlan.includes('idx_subscription_usage_user_platform'),
+    's2 explain: the registered check uses a (user_id, platform, ...) index'
+  );
+  // Timed claim call on the seeded state: the added predicate must
+  // not blow the rig's < 5 s scale bound (the scale suite asserts
+  // the same bound at certification shape).
+  const d = await dest(ctx, 'facebook', 1);
+  await item(ctx, d, 'facebook', 1);
+  const claimPlan = await explainQuery(
+    'claim call',
+    `SELECT * FROM public.claim_due_queue_items('facebook', NULL, 500, 3)`
+  );
+  const ms = Number(/Execution Time: ([0-9.]+) ms/.exec(claimPlan)?.[1] ?? Number.NaN);
+  check(!Number.isNaN(ms) && ms < 5000, 's2 explain: claim call completes in under 5 s', `execution=${ms} ms`);
+}
+
 const CASES: Array<[string, (ctx: Ctx) => Promise<void>]> = [
   ['1 at-cap deferral to exact window end', case1],
   ['2 one-minute floor', case2],
@@ -619,7 +967,82 @@ const CASES: Array<[string, (ctx: Ctx) => Promise<void>]> = [
   ['10 no-rule platform', case10],
   ['11 lane filtering', case11],
   ['12 selection invariants (clamp + rank order)', case12],
+  ['S2-1 due below cap', caseS2DueBelowCap],
+  ['S2-2 due at cap unregistered', caseS2DueAtCapUnregistered],
+  ['S2-3 due at cap registered', caseS2DueAtCapRegistered],
+  ['S2-4 key agreement (row-id key)', caseS2DueRowIdKey],
+  ['S2-5 due expired period', caseS2DueExpired],
+  ['S2-6 due superseded-only period', caseS2DueSuperseded],
+  ['S2-7 due admin at cap', caseS2DueAdmin],
+  ['S2-8 due marked publish-now row', caseS2DueMarked],
+  ['S2-9 due disconnected subtraction', caseS2DueDisconnected],
+  ['S2-10 due legacy publish-now-only row', caseS2DueLegacyPublishNow],
+  ['S2-11 downgrade interplay', caseS2Downgrade],
+  ['S2-12 slot at cap unregistered', caseS2SlotAtCap],
+  ['S2-13 slot at cap registered', caseS2SlotRegistered],
+  ['S2-14 slot outside window', caseS2SlotOutsideWindow],
+  ['S2-15 publish-now at cap', caseS2PublishNow],
+  ['S2-16 planner evidence (usage indexes)', caseS2Explain],
+  ['S2-17 due marked publish-now row, expired period', caseS2DueMarkedExpired],
 ];
+
+/** S2 race (criterion 11): two concurrent claim calls against the
+ * same fixture. At cap both return zero rows; below cap for an
+ * already-registered destination the two calls together admit the
+ * single item exactly once. Seeds commit first: the concurrent
+ * callers run in their own transactions and must see the seed. */
+async function raceCheck(pool: Pool): Promise<void> {
+  async function seed(cap: number, usageKey: string | null): Promise<string> {
+    const seedClient = await pool.connect();
+    try {
+      await seedClient.query('BEGIN');
+      await seedClient.query('SELECT public.claim138_reset()');
+      await seedClient.query(`SELECT public.claim138_set_count('facebook', $1)`, [cap]);
+      if (usageKey !== null) {
+        await seedClient.query(`SELECT public.claim138_usage('facebook', $1)`, [usageKey]);
+      }
+      const { rows } = await seedClient.query<{ id: string }>(
+        `SELECT public.claim138_destination('facebook', 1, 'active', '{}'::jsonb, NULL) AS id`
+      );
+      const destId = rows[0]?.id as string;
+      await seedClient.query(
+        `SELECT public.claim138_item($1, 'facebook', 1, 'text', 'queued', NULL, NULL, NULL)`,
+        [destId]
+      );
+      await seedClient.query('COMMIT');
+      return destId;
+    } catch (err) {
+      await seedClient.query('ROLLBACK');
+      throw err;
+    } finally {
+      seedClient.release();
+    }
+  }
+  async function claimTwice(): Promise<number[]> {
+    const c1 = await pool.connect();
+    const c2 = await pool.connect();
+    try {
+      const [r1, r2] = await Promise.all([
+        c1.query(`SELECT * FROM public.claim_due_queue_items('facebook', NULL, 500, 3)`),
+        c2.query(`SELECT * FROM public.claim_due_queue_items('facebook', NULL, 500, 3)`),
+      ]);
+      return [r1.rows.length, r2.rows.length];
+    } finally {
+      c1.release();
+      c2.release();
+    }
+  }
+  console.log('[parity] race: concurrent claims at cap');
+  await seed(1, 'other-key');
+  const [atCapFirst, atCapSecond] = await claimTwice();
+  check(atCapFirst === 0, 'race at-cap: first concurrent claim returns zero rows', `claimed=${atCapFirst}`);
+  check(atCapSecond === 0, 'race at-cap: second concurrent claim returns zero rows', `claimed=${atCapSecond}`);
+  console.log('[parity] race: concurrent claims below cap, registered');
+  await seed(1, 'ext-dest-facebook-1');
+  const [belowFirst, belowSecond] = await claimTwice();
+  const total = belowFirst + belowSecond;
+  check(total === 1, 'race below-cap registered: concurrent claims admit the item exactly once', `claimed=${total}`);
+}
 
 async function main(): Promise<void> {
   const url = process.env.CLAIM_RPC_PG_URL;
@@ -657,6 +1080,7 @@ async function main(): Promise<void> {
       if (failures === failuresBefore) console.log(`[parity] case ${name}: PASS`);
       else console.error(`[parity] case ${name}: FAIL`);
     }
+    await raceCheck(pool);
   } finally {
     await pool.end();
   }

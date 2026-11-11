@@ -192,70 +192,87 @@ export async function activateDueScheduledDowngrade(
 }
 
 /**
- * Entitlement gate for worker publish paths (audit fix 2026-11-01).
+ * Count-aware entitlement gate for worker publish paths (S2).
  *
- * At expiry or refund-drop, queued posts PAUSE: they stay queued
- * and are never claimed. On renewal they RESUME claiming at future
- * slots; missed slots stay lost, no flood. The slot-claim RPCs
- * enforce the same rule in SQL (migration
- * 20261101090001_billing_audit_claim_entitlement, unapplied until
- * the owner applies it); ADU and mirror publishing have no RPC
- * claim, so they call this helper directly from worker code.
+ * One RPC call to the shared Postgres function can_publish_for
+ * (migration 20261110130000_can_publish_for) — the same function
+ * the two counted claim RPCs call, so the SQL and TS gates can
+ * never diverge again. The owner may publish to a destination
+ * when an admin owns the workspace, or when the owner holds an
+ * active period AND the destination is already registered OR the
+ * owner's counted usage for the platform is still under the
+ * active period's cap.
  *
- * Admin owners are exempt (admins never buy plans). Any lookup
- * failure returns false (fail closed): the job stays queued for a
- * later tick instead of publishing on an unverified entitlement.
- *
- * C4: the check itself is ONE call to the shared Postgres function
- * workspace_has_active_period (migration
- * 20261110000000_workspace_has_active_period) — the same function
- * the three claim RPCs call, so the SQL and TS gates can never
- * diverge again. The workspace's owner is resolved only on the
- * false path, to run the C3 activation backstop below, so the
- * active/admin path costs exactly one RPC call.
+ * `true` returns immediately. `false` runs the C3 activation
+ * backstop (runActivationBackstop below) and re-checks with the
+ * same can_publish_for RPC — never with a periods select. Any
+ * lookup failure returns false (fail closed): the job stays
+ * queued for a later tick instead of publishing on an unverified
+ * entitlement. The RPC error is logged loudly, never thrown.
  */
-export async function workspaceOwnerHasActivePeriod(
+export async function workspaceCanPublishForDestination(
   supabase: SupabaseClient,
   workspaceId: string,
+  platform: string,
+  destinationKey: string,
   now: Date = new Date()
 ): Promise<boolean> {
   try {
-    const { data, error } = await supabase.rpc('workspace_has_active_period', {
+    const { data, error } = await supabase.rpc('can_publish_for', {
       p_workspace_id: workspaceId,
+      p_platform: platform,
+      p_destination_key: destinationKey,
       p_at: now.toISOString(),
     });
     if (error) {
-      console.error('[worker] active-period check failed:', error);
+      console.error('[worker] publish-count check failed:', error);
       return false;
     }
     if (data === true) return true;
-    // No active period: a scheduled downgrade whose start has
-    // arrived activates here, on the worker tick — a publishing
-    // plan must not wait for the user to open the app. This is
-    // C3's backstop, kept by C4; it is also what un-pauses mirrors
-    // now that the mirror gate calls this helper. If activation
-    // created a period, re-check with the same RPC — never with a
-    // periods select.
-    const { data: workspace, error: workspaceError } = await supabase
-      .from('workspaces')
-      .select('owner_id')
-      .eq('id', workspaceId)
-      .maybeSingle();
-    const ownerId = (workspace as { owner_id?: string } | null)?.owner_id;
-    if (workspaceError || !ownerId) return false;
-    if (await activateDueScheduledDowngrade(supabase, ownerId, now)) {
-      const { data: rechecked, error: recheckError } = await supabase.rpc(
-        'workspace_has_active_period',
-        { p_workspace_id: workspaceId, p_at: now.toISOString() }
-      );
-      if (recheckError) {
-        console.error('[worker] active-period re-check failed:', recheckError);
-        return false;
-      }
-      return rechecked === true;
-    }
-    return false;
+    // No active period or at cap: a scheduled downgrade whose
+    // start has arrived activates here, on the worker tick — a
+    // publishing plan must not wait for the user to open the app.
+    // If activation created a period, re-check with the same RPC.
+    return await runActivationBackstop(supabase, workspaceId, platform, destinationKey, now);
   } catch {
     return false;
   }
+}
+
+/**
+ * C3 activation backstop, shared by every worker gate (S2: the
+ * backstop code exists once). Resolves the workspace's owner,
+ * activates a due scheduled downgrade for that owner, and on
+ * success re-checks with the same can_publish_for RPC the caller
+ * already used — never with a periods select. Returns false when
+ * there is no owner to activate for, or when nothing was due.
+ */
+async function runActivationBackstop(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  platform: string,
+  destinationKey: string,
+  now: Date
+): Promise<boolean> {
+  const { data: workspace, error: workspaceError } = await supabase
+    .from('workspaces')
+    .select('owner_id')
+    .eq('id', workspaceId)
+    .maybeSingle();
+  const ownerId = (workspace as { owner_id?: string } | null)?.owner_id;
+  if (workspaceError || !ownerId) return false;
+  if (await activateDueScheduledDowngrade(supabase, ownerId, now)) {
+    const { data: rechecked, error: recheckError } = await supabase.rpc('can_publish_for', {
+      p_workspace_id: workspaceId,
+      p_platform: platform,
+      p_destination_key: destinationKey,
+      p_at: now.toISOString(),
+    });
+    if (recheckError) {
+      console.error('[worker] publish-count re-check failed:', recheckError);
+      return false;
+    }
+    return rechecked === true;
+  }
+  return false;
 }

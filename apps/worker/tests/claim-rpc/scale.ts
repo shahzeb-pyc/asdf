@@ -14,6 +14,16 @@
  * (500) items, and defers nothing (the fixture keeps every destination
  * under both caps, so the expected deferred count is 0).
  *
+ * Before the timed call, ONE untimed warm-up claim runs with the exact
+ * same arguments and its claimed rows are reset to 'queued' (status +
+ * claimed_at). The bound therefore measures a warm claim: the cold
+ * first call in the test environment (cold cache / cold planner) was
+ * measuring 7–10 s while the same call warm measures well under the
+ * bound, so the bound guards the steady-state grouped implementation,
+ * not cold-cache variance. The warm-up defers nothing (the fixture
+ * keeps every destination under both caps), so no scheduled_time
+ * changes need undoing.
+ *
  * The pre-fix implementation measured 54.5 s for the equivalent isolated
  * instagram-fast call in the blocker report — this bound is breached by
  * the old code by ~11x. The script prints the measured duration either
@@ -143,6 +153,29 @@ async function main(): Promise<void> {
       console.log('[scale] CLAIM_RPC_SEED_ONLY=1: seeded, skipping the claim call (use for explain.ts)');
       return;
     }
+
+    // Warm-up: one untimed claim with the exact timed-call arguments, so
+    // the bound measures a warm claim. The claim sets status='publishing'
+    // + claimed_at on claimed rows, so reset them to 'queued' before the
+    // timed call: with p_max_per_destination=3 and 2 pre-seeded in-flight
+    // per due destination, un-reset warm-up claims could push
+    // destinations toward the cap and change the timed claim's deferred
+    // count. The warm-up defers nothing (the fixture keeps every
+    // destination under both caps), so no scheduled_time changes need
+    // undoing.
+    const warmStart = performance.now();
+    const { rows: warmed } = await pool.query<{ id: string }>(
+      `SELECT id FROM public.claim_due_queue_items('instagram'::public.platform, $1::text[], 500, 3)`,
+      [FAST_LANE]
+    );
+    const warmMs = performance.now() - warmStart;
+    console.log(
+      `[scale] warm-up claim call: ${warmMs.toFixed(1)} ms, claimed=${warmed.length}`
+    );
+    await pool.query(
+      `UPDATE public.queue_items SET status = 'queued', claimed_at = NULL WHERE id = ANY($1::uuid[])`,
+      [warmed.map((r) => r.id)]
+    );
 
     const started = performance.now();
     const { rows: claimed } = await pool.query(

@@ -961,6 +961,15 @@ describe('runAduTick', () => {
         return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
+      // S2: the gate loads the destination row before the claim;
+      // without it the job would pause and never reach the claim
+      // this test is about.
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return {
+          data: { platform: 'facebook', external_destination_id: 'ext-dest-1' },
+          error: null,
+        };
+      }
       return { data: [], error: null };
     });
     const result = await runAduTick({
@@ -1171,10 +1180,19 @@ describe('runAduTick', () => {
         return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
+      // S2: the gate loads the destination row for the config's
+      // destination and calls can_publish_for with its platform
+      // and key (external_destination_id ?? id). The RPC below
+      // answers false, so the job pauses; the workspaces row is
+      // still read on the false path (owner lookup + activation
+      // backstop).
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return {
+          data: { platform: 'facebook', external_destination_id: 'ext-dest-1' },
+          error: null,
+        };
+      }
       // No active period: expired workspace, so the job pauses.
-      // C4: the gate is the workspace_has_active_period RPC now;
-      // the workspaces/users/periods rows below are still read on
-      // the false path (owner lookup + activation backstop).
       if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
       if (table === 'users') return { data: { role: 'user' }, error: null };
       if (table === 'subscription_periods') return { data: [], error: null };
@@ -1196,6 +1214,150 @@ describe('runAduTick', () => {
         c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'publishing'),
     );
     expect(claim).toBeUndefined();
+  });
+
+  // --- S2 count gate ---------------------------------------------------
+  // The ADU publish gate calls can_publish_for with the config
+  // destination's platform and key (external_destination_id ??
+  // id). A registered destination at cap passes; an unregistered
+  // one at cap stays pending_publish; a missing destination row
+  // fails closed without ever calling the RPC.
+
+  /** One pending job through the publish loop with a controlled gate answer. */
+  async function s2GateTick(opts: {
+    rpcResult: boolean;
+    rpcCapture: Array<Record<string, unknown>>;
+    destinationRow: Row | null;
+  }) {
+    const job = {
+      id: 'job-1',
+      config_id: 'c1',
+      reel_id: 'reel-1',
+      publish_retries: 0,
+      graph_post_id: null,
+      adu_reels: { caption: 'hi', media_url: 'https://example.invalid/r.mp4', media_object_key: 'r.mp4' },
+    };
+    const publisher = fakePublisher(async () => ({ status: 'published', externalPostId: 'g1' }));
+    const encryptedAccess = await encryptToken('access', MASTER_KEY);
+    const encryptedDestination = await encryptToken('dest-token', MASTER_KEY);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'pending_publish')) {
+        return { data: [job], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')) {
+        return { data: [], error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
+      }
+      if (table === 'adu_configs') return { data: [], error: null };
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return {
+          data:
+            opts.destinationRow === null
+              ? null
+              : {
+                  id: 'dest-1',
+                  account_id: 'acc-1',
+                  workspace_id: 'ws-1',
+                  platform: 'facebook',
+                  status: 'active',
+                  encrypted_destination_token: encryptedDestination,
+                  ...opts.destinationRow,
+                },
+          error: null,
+        };
+      }
+      if (table === 'destinations') return { data: [], error: null };
+      if (table === 'social_accounts') {
+        return {
+          data: {
+            id: 'acc-1',
+            status: 'active',
+            encrypted_access_token: encryptedAccess,
+            encrypted_refresh_token: null,
+          },
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+    db.rpc = async (fn, args) => {
+      opts.rpcCapture.push({ fn, ...args });
+      return { data: opts.rpcResult, error: null };
+    };
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(publisher),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    return { result, db, publisher };
+  }
+
+  it('S2: at-cap owner with a registered destination publishes; the gate passes the external key', async () => {
+    const rpcCapture: Array<Record<string, unknown>> = [];
+    const { result, publisher } = await s2GateTick({
+      rpcResult: true,
+      rpcCapture,
+      destinationRow: { external_destination_id: 'ext-dest-1' },
+    });
+    expect(publisher.publish).toHaveBeenCalled();
+    expect(result.published).toBe(1);
+    // Key agreement (§6 criterion 8): the external id, not the row id.
+    expect(rpcCapture).toEqual([
+      {
+        fn: 'can_publish_for',
+        p_workspace_id: 'ws-1',
+        p_platform: 'facebook',
+        p_destination_key: 'ext-dest-1',
+        p_at: NOW.toISOString(),
+      },
+    ]);
+  });
+
+  it('S2: at-cap owner with an unregistered destination stays pending_publish', async () => {
+    const rpcCapture: Array<Record<string, unknown>> = [];
+    const { result, db, publisher } = await s2GateTick({
+      rpcResult: false,
+      rpcCapture,
+      destinationRow: { external_destination_id: 'ext-dest-1' },
+    });
+    expect(publisher.publish).not.toHaveBeenCalled();
+    expect(result.published).toBe(0);
+    expect(rpcCapture).toHaveLength(1);
+    const claim = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'publishing'),
+    );
+    expect(claim).toBeUndefined();
+  });
+
+  it('S2: missing destination row stays pending_publish without calling the RPC', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const rpcCapture: Array<Record<string, unknown>> = [];
+    const { result, db, publisher } = await s2GateTick({
+      rpcResult: true,
+      rpcCapture,
+      destinationRow: null,
+    });
+    expect(publisher.publish).not.toHaveBeenCalled();
+    expect(result.published).toBe(0);
+    expect(rpcCapture).toHaveLength(0);
+    const claim = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'publishing'),
+    );
+    expect(claim).toBeUndefined();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('job=job-1 paused: owning workspace cannot publish for this destination'),
+    );
+    errSpy.mockRestore();
   });
 
   // --- ADU reel publish stores the Facebook error detail (PR #171
