@@ -426,13 +426,13 @@
         "routeSpecificGzipBytes": 53930,
         "routeSpecificRawBytes": 174152
       },
-      "/tenant/[subdomain]/pages": {
+      "/tenant/[subdomain]/inapp-schedule": {
         "firstLoadGzipBytes": 175680,
         "firstLoadRawBytes": 593408,
         "routeSpecificGzipBytes": 38585,
         "routeSpecificRawBytes": 124623
       },
-      "/tenant/[subdomain]/pages/[pageId]": {
+      "/tenant/[subdomain]/inapp-schedule/[pageId]": {
         "firstLoadGzipBytes": 210662,
         "firstLoadRawBytes": 737785,
         "routeSpecificGzipBytes": 75336,
