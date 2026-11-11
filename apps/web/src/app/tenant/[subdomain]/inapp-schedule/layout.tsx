@@ -6,8 +6,8 @@
 import type { Metadata } from "next";
 import * as React from "react";
 
-export const metadata: Metadata = { title: "Schedule" };
+export const metadata: Metadata = { title: "In-App Schedule" };
 
-export default function TenantPagesLayout({ children }: { children: React.ReactNode }) {
+export default function TenantInAppScheduleLayout({ children }: { children: React.ReactNode }) {
   return children;
 }

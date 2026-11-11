@@ -88,7 +88,7 @@ describe('destination redirect', () => {
         : Promise.resolve(PAGES)
     );
     expect(await runRedirect()).toBe(
-      '/tenant/acme/pages/11111111-1111-4111-8111-111111111111'
+      '/tenant/acme/inapp-schedule/11111111-1111-4111-8111-111111111111'
     );
   });
 
@@ -100,7 +100,7 @@ describe('destination redirect', () => {
           })
         : Promise.resolve(PAGES)
     );
-    expect(await runRedirect()).toBe('/tenant/acme/pages');
+    expect(await runRedirect()).toBe('/tenant/acme/inapp-schedule');
   });
 
   it('finds a page beyond page 1 instead of falling back to the list', async () => {
@@ -137,7 +137,7 @@ describe('destination redirect', () => {
       return Promise.resolve(pageParam === '2' ? page2 : page1);
     });
     expect(await runRedirect()).toBe(
-      '/tenant/acme/pages/11111111-1111-4111-8111-111111111111'
+      '/tenant/acme/inapp-schedule/11111111-1111-4111-8111-111111111111'
     );
     expect(
       serverApiFetchMock.mock.calls.some(
@@ -155,11 +155,11 @@ describe('destination redirect', () => {
         ? Promise.resolve(FB_DESTINATION)
         : Promise.resolve({ pages: [], total: 0 })
     );
-    expect(await runRedirect()).toBe('/tenant/acme/pages');
+    expect(await runRedirect()).toBe('/tenant/acme/inapp-schedule');
   });
 
   it('redirects to the Pages list when the destination lookup fails', async () => {
     serverApiFetchMock.mockRejectedValue(new Error('not found'));
-    expect(await runRedirect()).toBe('/tenant/acme/pages');
+    expect(await runRedirect()).toBe('/tenant/acme/inapp-schedule');
   });
 });

@@ -762,7 +762,7 @@ export default function TenantDedicatedPageView({
       // so the just-disconnected page does not linger in the list
       // cache for up to 60s after the redirect.
       void invalidatePage();
-      router.push(`/tenant/${subdomain}/pages`);
+      router.push(`/tenant/${subdomain}/inapp-schedule`);
     },
     onError: (error) => {
       toast.error(
@@ -778,7 +778,7 @@ export default function TenantDedicatedPageView({
     await disconnectMutation.mutateAsync();
   }, [disconnectMutation]);
 
-  const pagesListHref = `/tenant/${subdomain}/pages`;
+  const inAppScheduleListHref = `/tenant/${subdomain}/inapp-schedule`;
 
   // Back/forward navigation: when the URL's ?tab= changes without
   // a click (popstate), adopt it — including its visited mount —
@@ -808,7 +808,7 @@ export default function TenantDedicatedPageView({
     if (urlTab === null || TAB_IDS.has(urlTab) || !subdomain || !pageId) return;
     const nextParams = new URLSearchParams(searchParams.toString());
     nextParams.set('tab', activeTabRef.current);
-    router.replace(`/tenant/${subdomain}/pages/${pageId}?${nextParams.toString()}`, {
+    router.replace(`/tenant/${subdomain}/inapp-schedule/${pageId}?${nextParams.toString()}`, {
       scroll: false,
     });
   }, [urlTab, router, searchParams, subdomain, pageId]);
@@ -846,7 +846,7 @@ export default function TenantDedicatedPageView({
       if (changed && subdomain && pageId) {
         const nextParams = new URLSearchParams(searchParams.toString());
         nextParams.set('tab', next);
-        router.push(`/tenant/${subdomain}/pages/${pageId}?${nextParams.toString()}`, {
+        router.push(`/tenant/${subdomain}/inapp-schedule/${pageId}?${nextParams.toString()}`, {
           scroll: false,
         });
       }
@@ -900,15 +900,15 @@ export default function TenantDedicatedPageView({
 
       {/* Legacy navigation anchor for compatibility */}
       <a
-        href={pagesListHref}
-        data-testid="back-to-pages-btn"
+        href={inAppScheduleListHref}
+        data-testid="back-to-inapp-schedule-btn"
         className="hidden"
         onClick={(e) => {
           e.preventDefault();
-          router.push(pagesListHref);
+          router.push(inAppScheduleListHref);
         }}
       >
-        Back to Schedule
+        Back to In-App Schedule
       </a>
 
       {/* Loading initial page — skeleton at the frame's final geometry */}
@@ -946,7 +946,7 @@ export default function TenantDedicatedPageView({
               type="button"
               variant={pageError.showRetry ? 'secondary' : undefined}
               data-testid="page-error-return-btn"
-              onClick={() => router.push(pagesListHref)}
+              onClick={() => router.push(inAppScheduleListHref)}
             >
               Return to Pages
             </Button>

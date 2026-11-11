@@ -85,7 +85,7 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
     redirect('/admin/subscriptions');
   }
 
-  const pagesHref = href('/pages');
+  const inAppScheduleHref = href('/inapp-schedule');
   const accountsHref = href('/accounts');
   const mediaHref = href('/media');
   const museHref = href('/muse');
@@ -147,7 +147,7 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
                 mediaHref,
                 creatorFinderHref,
                 accountsHref,
-                pagesHref,
+                inAppScheduleHref,
                 billingHref,
               })}
             />

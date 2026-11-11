@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render as rtlRender, fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import TenantDedicatedPageView from '@/app/tenant/[subdomain]/pages/[pageId]/page-section-shell';
+import TenantDedicatedPageView from '@/app/tenant/[subdomain]/inapp-schedule/[pageId]/page-section-shell';
 import { tabsTriggerVariants } from '@/components/shared/ui/tabs';
 import type { FacebookPageItem } from '@/components/pages/page-card';
 
@@ -149,7 +149,7 @@ describe('Dedicated tab row — URL tabs', () => {
     await user.click(screen.getByTestId('tab-queue-btn'));
     expect(mockPush).toHaveBeenCalledTimes(1);
     const pushed = String(mockPush.mock.calls[0]?.[0] ?? '');
-    expect(pushed).toContain('/tenant/cyberdyne/pages/page-101');
+    expect(pushed).toContain('/tenant/cyberdyne/inapp-schedule/page-101');
     expect(pushed).toContain('tab=queue');
     expect(mockPush.mock.calls[0]?.[1]).toEqual({ scroll: false });
   });

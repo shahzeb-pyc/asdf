@@ -286,8 +286,8 @@ export function PageCard({
     failedAvatarUrl !== page.profilePictureUrl;
 
   const targetHref = subdomain
-    ? `/tenant/${subdomain}/pages/${page.id}`
-    : `/pages/${page.id}`;
+    ? `/tenant/${subdomain}/inapp-schedule/${page.id}`
+    : `/inapp-schedule/${page.id}`;
 
   // The Facebook link inside the card must never trigger the card's own
   // navigation: clicks stopPropagation on the link itself, and keyboard

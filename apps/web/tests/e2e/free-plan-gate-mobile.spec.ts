@@ -118,9 +118,9 @@ test.describe('Free-plan gate at 390px', () => {
     await installBillingFixture(page, { entitlement: entitlement('paid'), payments: [] });
     const calls = countEntitlementRequests(page);
 
-    await page.goto(`/tenant/${TENANT.subdomain}/pages`);
+    await page.goto(`/tenant/${TENANT.subdomain}/inapp-schedule`);
     await expect(page.getByTestId('free-plan-upgrade-dialog')).toHaveCount(0);
-    await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/pages`));
+    await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/inapp-schedule`));
     expect(calls.count()).toBe(1);
 
     // SPA navigation through the sidebar drawer: the old provider
@@ -133,8 +133,8 @@ test.describe('Free-plan gate at 390px', () => {
     expect(calls.count()).toBe(1);
 
     await openSidebar(page);
-    await page.getByRole('link', { name: 'Schedule' }).click();
-    await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/pages`));
+    await page.getByRole('link', { name: 'In-App Schedule' }).click();
+    await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/inapp-schedule`));
     await expect(page.getByTestId('free-plan-upgrade-dialog')).toHaveCount(0);
     expect(calls.count()).toBe(1);
   });
@@ -148,7 +148,7 @@ test.describe('Free-plan gate at 390px', () => {
     await installApiFixtures(page, state);
     await installBillingFixture(page, { entitlement: entitlement('free'), payments: [] });
 
-    await page.goto(`/tenant/${TENANT.subdomain}/pages`);
+    await page.goto(`/tenant/${TENANT.subdomain}/inapp-schedule`);
     const dialog = page.getByTestId('free-plan-upgrade-dialog');
     await expect(dialog).toBeVisible();
     await expect(page.getByText("You're on the Free plan")).toBeVisible();
@@ -182,7 +182,7 @@ test.describe('Free-plan gate at 390px', () => {
     await installBillingFixture(page, { entitlement: entitlement('free'), payments: [] });
     const calls = countEntitlementRequests(page);
 
-    await page.goto(`/tenant/${TENANT.subdomain}/pages`);
+    await page.goto(`/tenant/${TENANT.subdomain}/inapp-schedule`);
     await expect(page.getByTestId('free-plan-upgrade-dialog')).toBeVisible();
     expect(calls.count()).toBe(1);
 
@@ -205,9 +205,9 @@ test.describe('Free-plan gate at 390px', () => {
     await installApiFixtures(page, state);
     await installBillingFixture(page, { entitlement: entitlement('expired'), payments: [] });
 
-    await page.goto(`/tenant/${TENANT.subdomain}/pages`);
+    await page.goto(`/tenant/${TENANT.subdomain}/inapp-schedule`);
     await expect(page.getByTestId('free-plan-upgrade-dialog')).toHaveCount(0);
-    await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/pages`));
+    await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/inapp-schedule`));
     await expectNoDocumentOverflow(page);
   });
 });

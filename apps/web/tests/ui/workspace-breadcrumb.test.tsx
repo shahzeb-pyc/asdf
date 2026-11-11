@@ -38,13 +38,13 @@ describe('WorkspaceBreadcrumb (Spec 052)', () => {
       { label: 'Facebook' },
       { label: 'Accounts' },
     ]);
-    expect(computeBreadcrumbs('/tenant/acme/pages', 'acme')).toEqual([
+    expect(computeBreadcrumbs('/tenant/acme/inapp-schedule', 'acme')).toEqual([
       { label: 'Facebook' },
-      { label: 'Schedule' },
+      { label: 'In-App Schedule' },
     ]);
-    expect(computeBreadcrumbs('/tenant/acme/pages/page-456', 'acme')).toEqual([
+    expect(computeBreadcrumbs('/tenant/acme/inapp-schedule/page-456', 'acme')).toEqual([
       { label: 'Facebook' },
-      { label: 'Schedule', href: '/tenant/acme/pages' },
+      { label: 'In-App Schedule', href: '/tenant/acme/inapp-schedule' },
       { label: 'Details' },
     ]);
     expect(computeBreadcrumbs('/tenant/acme/instagram/accounts', 'acme')).toEqual([
@@ -70,15 +70,15 @@ describe('WorkspaceBreadcrumb (Spec 052)', () => {
     expect(computeBreadcrumbs('', 'acme')).toEqual([{ label: 'Home' }]);
   });
 
-  it('renders the trail with the Schedule crumb as a link and the last crumb as the current page', () => {
-    mockPathname = '/tenant/acme/pages/page-456';
+  it('renders the trail with the In-App Schedule crumb as a link and the last crumb as the current page', () => {
+    mockPathname = '/tenant/acme/inapp-schedule/page-456';
     render(<WorkspaceBreadcrumb subdomain="acme" />);
 
     const nav = screen.getByRole('navigation', { name: 'Breadcrumbs' });
     expect(nav).toHaveAttribute('data-testid', 'workspace-breadcrumb');
     expect(screen.getByText('Facebook')).toBeInTheDocument();
-    const scheduleLink = screen.getByRole('link', { name: 'Schedule' });
-    expect(scheduleLink).toHaveAttribute('href', '/tenant/acme/pages');
+    const scheduleLink = screen.getByRole('link', { name: 'In-App Schedule' });
+    expect(scheduleLink).toHaveAttribute('href', '/tenant/acme/inapp-schedule');
     const details = screen.getByText('Details');
     expect(details).toHaveAttribute('aria-current', 'page');
   });

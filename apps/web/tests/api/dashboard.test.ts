@@ -224,7 +224,7 @@ describe('Tenant workspace home — redesign (2026-11-02)', () => {
     expect(html).toContain('TikTok Repost');
 
     // Quick links in the approved order, and only those five.
-    const quickLinks = ['Media Library', 'Creator Finder', 'Facebook Accounts', 'Facebook Schedule', 'Billing'];
+    const quickLinks = ['Media Library', 'Creator Finder', 'Facebook Accounts', 'Facebook In-App Schedule', 'Billing'];
     let lastIndex = -1;
     for (const label of quickLinks) {
       const index = html.indexOf(label, lastIndex + 1);
@@ -238,7 +238,7 @@ describe('Tenant workspace home — redesign (2026-11-02)', () => {
     expect(html).not.toContain('data-testid="summary-cards"');
     expect(html).not.toContain('data-testid="setup-checklist"');
     expect(html).not.toContain('data-testid="needs-attention"');
-    expect(html).not.toContain('data-testid="pages-empty-state"');
+    expect(html).not.toContain('data-testid="inapp-schedule-empty-state"');
     expect(html).not.toContain('Connected pages');
     expect(html).not.toContain('Followers gained');
 

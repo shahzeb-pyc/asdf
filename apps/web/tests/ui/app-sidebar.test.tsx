@@ -149,7 +149,7 @@ describe('sidebar section configs (structural)', () => {
       'Prompt Library',
       'Creator Finder',
       'Accounts',
-      'Schedule',
+      'In-App Schedule',
       'Publish Now',
       'Auto Repost',
       'Auto Download/Upload',
@@ -271,7 +271,7 @@ describe('AppSidebar rendering (separation matrix)', () => {
     const { unmount } = renderSidebar(getUserSections('acme', false));
     // Home: Instagram leaves are hidden (group closed). The Instagram
     // Schedule link is disambiguated by href: Facebook also has a
-    // leaf now labelled Schedule, and it is open by default.
+    // leaf now labelled In-App Schedule, and it is open by default.
     expect(
       document.querySelector('a[href="/tenant/acme/instagram/schedule"]'),
     ).toBeNull();
@@ -316,7 +316,7 @@ describe('AppSidebar single-click behaviour', () => {
   });
 
   it('a collapsible parent in icon-collapsed mode navigates via router.push', () => {
-    mockPathname = '/tenant/acme/pages';
+    mockPathname = '/tenant/acme/inapp-schedule';
     renderSidebar(getUserSections('acme', false), { defaultOpen: false, collapsible: 'icon' });
     const facebook = screen.getByRole('button', { name: /Facebook/ });
     fireEvent.click(facebook);
@@ -337,7 +337,7 @@ describe('AppSidebar prefetch (perf round 1)', () => {
   // so its five leaves are the rendered collapsible-section links.
   const FACEBOOK_LEAF_HREFS = [
     '/tenant/acme/accounts',
-    '/tenant/acme/pages',
+    '/tenant/acme/inapp-schedule',
     '/tenant/acme/publish-now',
     '/tenant/acme/tiktok-mirrors',
     '/tenant/acme/auto-download-upload',

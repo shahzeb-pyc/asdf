@@ -3,9 +3,9 @@
  *
  * The former 844-line client route is decomposed: this file is the
  * server-first entry only; the interactive surface lives in
- * `pages-shell.tsx`, the toolbar in `components/pages/pages-toolbar`,
+ * `pages-shell.tsx`, the toolbar in `components/pages/inapp-schedule-toolbar`,
  * and the pure helpers (sorting, filtering, subtitle) in
- * `components/pages/pages-helpers.ts` with their names and behaviour
+ * `components/pages/inapp-schedule-helpers.ts` with their names and behaviour
  * preserved for the parity suites.
  *
  * Server-first pattern (spec 137 §3.2.4): the pages list, the
@@ -36,18 +36,18 @@ import {
   serverApiFetch,
 } from '@/lib/data/server';
 
-import PagesLoading from './loading';
-import { PagesShell } from './pages-shell';
+import InAppScheduleLoading from './loading';
+import { InAppScheduleShell } from './inapp-schedule-shell';
 
-interface TenantPagesPageProps {
+interface TenantInAppSchedulePageProps {
   params: Promise<{ subdomain: string }>;
   searchParams?: Promise<{ page?: string }>;
 }
 
-export default async function TenantPagesPage({
+export default async function TenantInAppSchedulePage({
   params,
   searchParams,
-}: Readonly<TenantPagesPageProps>) {
+}: Readonly<TenantInAppSchedulePageProps>) {
   const { subdomain } = await params;
   const tenant = queryKeys.tenant(subdomain);
   const rawPage = Number.parseInt((await searchParams)?.page ?? '', 10);
@@ -114,8 +114,8 @@ export default async function TenantPagesPage({
 
   return (
     <DataHydration state={state}>
-      <React.Suspense fallback={<PagesLoading />}>
-        <PagesShell subdomain={subdomain} />
+      <React.Suspense fallback={<InAppScheduleLoading />}>
+        <InAppScheduleShell subdomain={subdomain} />
       </React.Suspense>
     </DataHydration>
   );

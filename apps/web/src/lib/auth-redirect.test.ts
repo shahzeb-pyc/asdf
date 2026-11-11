@@ -31,9 +31,9 @@ describe('resolveAdminLoginRedirect', () => {
     ['https://preview.vercel.app/tenant/e2e/sellers', '/admin/sellers'],
     ['https://preview.vercel.app/tenant/e2e/sellers/abc-123', '/admin/sellers/abc-123'],
     // User sections are NOT honored.
-    ['/pages', '/admin/subscriptions'],
-    ['/tenant/e2e/pages', '/admin/subscriptions'],
-    ['https://e2e.localhost:3100/pages', '/admin/subscriptions'],
+    ['/inapp-schedule', '/admin/subscriptions'],
+    ['/tenant/e2e/inapp-schedule', '/admin/subscriptions'],
+    ['https://e2e.localhost:3100/inapp-schedule', '/admin/subscriptions'],
     // Missing / dangerous targets fall back to the panel home.
     [null, '/admin/subscriptions'],
     ['', '/admin/subscriptions'],

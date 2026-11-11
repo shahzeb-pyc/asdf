@@ -275,7 +275,7 @@ describe('Auth Hardening Contracts (Spec 014)', () => {
     });
 
     it('accepts safe relative paths in returnUrl (ISSUE-28 / Principle 12)', () => {
-      const validPaths = ['/media', '/accounts', '/pages', '/settings', '/publishing', '/'];
+      const validPaths = ['/media', '/accounts', '/inapp-schedule', '/settings', '/publishing', '/'];
       for (const path of validPaths) {
         const result = LoginRequestSchema.safeParse({
           email: 'janedoe@gmail.com',

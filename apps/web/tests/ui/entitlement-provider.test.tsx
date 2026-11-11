@@ -290,7 +290,7 @@ describe('once-per-session seed (no automatic refetch)', () => {
     // pathname change, which refetched and unmounted the section
     // while the new answer pended — the reload paid users reported.
     // The same client and tree, only the pathname changed.
-    navState.pathname = '/tenant/acme/pages';
+    navState.pathname = '/tenant/acme/inapp-schedule';
     result.rerender(makeTree());
     await waitFor(() => expect(screen.getByTestId('word-probe')).toHaveTextContent('Paid'));
     expect(screen.getByTestId('gate-child')).toBeInTheDocument();

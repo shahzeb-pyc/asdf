@@ -122,6 +122,33 @@ function mapOldAdminTenantPathToAdmin(pathname: string): string {
   return '/admin/subscriptions';
 }
 
+/**
+ * Spec 167: old Pages-section address → In-App Schedule (301).
+ * Returns the redirect response when the request path is the old
+ * `/pages` section address (bare, or `/tenant/<segment>`-prefixed),
+ * else null. Only the exact lowercase `pages` segment redirects;
+ * the optional prefix is preserved, so prefixed old links stay
+ * prefixed. Plain string scans, no regex (see stripTrailingSlashes
+ * above for why this file avoids regexes).
+ */
+function buildInAppScheduleRedirect(request: NextRequest): NextResponse | null {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+  let prefix = '';
+  let rest = pathname;
+  const tenantPrefix = '/tenant/';
+  if (pathname.startsWith(tenantPrefix)) {
+    const afterTenant = pathname.slice(tenantPrefix.length);
+    const slashIndex = afterTenant.indexOf('/');
+    if (slashIndex === -1) return null;
+    prefix = pathname.slice(0, tenantPrefix.length + slashIndex);
+    rest = afterTenant.slice(slashIndex);
+  }
+  if (rest !== '/pages' && !rest.startsWith('/pages/')) return null;
+  url.pathname = `${prefix}/inapp-schedule${rest.slice('/pages'.length)}`;
+  return NextResponse.redirect(url, 301);
+}
+
 function isReturnUrlTargetingTenant(
   returnUrlParam: string | null | undefined,
   tenantSubdomain: string,
@@ -392,6 +419,19 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   }
 
   const nonce = generateNonce();
+
+  // Spec 167: the old Facebook Pages section address redirects
+  // permanently (301) to its new name, for every visitor — before
+  // session/role routing, so a logged-out bookmark lands on the new
+  // address and then hits login with the new returnUrl. Bare and
+  // /tenant/<sub>-prefixed forms map alike; the query string is
+  // preserved because the URL is rebuilt from request.url.
+  // /api/.../pages never reaches here (the bypass above returns
+  // first).
+  const oldPagesRedirect = buildInAppScheduleRedirect(request);
+  if (oldPagesRedirect) {
+    return applyCspHeaders(oldPagesRedirect, nonce);
+  }
 
   // Extract subdomain and determine routing target
   const { subdomain, isApex, isReserved } = extractSubdomain(host, rootDomain);

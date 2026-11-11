@@ -226,7 +226,7 @@ describe('Command palette (spec 130 §5.6)', () => {
     const pageRow = await screen.findByTestId('palette-item-fb-page-55555555-5555-4555-8555-555555555555');
     await user.click(pageRow);
     await waitFor(() =>
-      expect(mockPush).toHaveBeenCalledWith('/tenant/acme/pages/55555555-5555-4555-8555-555555555555')
+      expect(mockPush).toHaveBeenCalledWith('/tenant/acme/inapp-schedule/55555555-5555-4555-8555-555555555555')
     );
   });
 

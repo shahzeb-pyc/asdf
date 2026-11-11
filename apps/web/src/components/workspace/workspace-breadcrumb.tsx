@@ -4,10 +4,11 @@
  * WorkspaceBreadcrumb — rebuilt on token-backed utilities only
  * (spec 130 §5.2, PR-130-2a). The `computeBreadcrumbs` mapping is
  * preserved byte-for-byte in behaviour (spec §4.1): tenant root →
- * Home; simple top levels; Facebook › Accounts; Facebook › Schedule
- * (› Details, with the Schedule crumb a link); platform labels +
- * Accounts; unknown segments fall back to a title-cased label. The
- * last crumb carries `aria-current="page"`.
+ * Home; simple top levels; Facebook › Accounts; Facebook ›
+ * In-App Schedule (› Details, with the In-App Schedule crumb a
+ * link); platform labels + Accounts; unknown segments fall back
+ * to a title-cased label. The last crumb carries
+ * `aria-current="page"`.
  */
 
 import React from 'react';
@@ -59,15 +60,15 @@ export function computeBreadcrumbs(
   if (first === 'accounts') {
     return [{ label: 'Facebook' }, { label: 'Accounts' }];
   }
-  if (first === 'pages') {
+  if (first === 'inapp-schedule') {
     if (segments.length > 1) {
       return [
         { label: 'Facebook' },
-        { label: 'Schedule', href: buildTenantHref(subdomain, '/pages', useCleanPaths) },
+        { label: 'In-App Schedule', href: buildTenantHref(subdomain, '/inapp-schedule', useCleanPaths) },
         { label: 'Details' },
       ];
     }
-    return [{ label: 'Facebook' }, { label: 'Schedule' }];
+    return [{ label: 'Facebook' }, { label: 'In-App Schedule' }];
   }
 
   if (first && PLATFORM_LABELS[first]) {

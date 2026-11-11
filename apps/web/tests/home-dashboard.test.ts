@@ -93,21 +93,21 @@ describe('quick links and the no-queue-data rule', () => {
       mediaHref: '/tenant/acme/media',
       creatorFinderHref: '/tenant/acme/creator-finder',
       accountsHref: '/tenant/acme/accounts',
-      pagesHref: '/tenant/acme/pages',
+      inAppScheduleHref: '/tenant/acme/inapp-schedule',
       billingHref: '/tenant/acme/my-plan',
     });
     expect(links.map((link) => link.label)).toEqual([
       'Media Library',
       'Creator Finder',
       'Facebook Accounts',
-      'Facebook Schedule',
+      'Facebook In-App Schedule',
       'Billing',
     ]);
     expect(links.map((link) => link.href)).toEqual([
       '/tenant/acme/media',
       '/tenant/acme/creator-finder',
       '/tenant/acme/accounts',
-      '/tenant/acme/pages',
+      '/tenant/acme/inapp-schedule',
       '/tenant/acme/my-plan',
     ]);
     // No Queue/Calendar sections, and no Posting Times or Prompt
@@ -129,6 +129,6 @@ describe('quick links and the no-queue-data rule', () => {
     expect(links.some((link) => link.label === 'Media Library')).toBe(false);
     expect(links.some((link) => link.label === 'Creator Finder')).toBe(false);
     expect(links.some((link) => link.label === 'Facebook Accounts')).toBe(false);
-    expect(links.some((link) => link.label === 'Facebook Schedule')).toBe(false);
+    expect(links.some((link) => link.label === 'Facebook In-App Schedule')).toBe(false);
   });
 });

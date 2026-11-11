@@ -18,7 +18,7 @@
  * Behaviour parity (spec §6): attention-first ordering, the
  * all/active/needs-attention/paused status filters, text search,
  * the account filter, and the situational subtitle — computed by the
- * same helpers the parity suites pin (`components/pages/pages-helpers`).
+ * same helpers the parity suites pin (`components/pages/inapp-schedule-helpers`).
  * The Add Page finish confirmation is a top-right toast + gold card
  * highlight (see handlePagesImported), never a banner.
  *
@@ -70,32 +70,32 @@ import {
   type FacebookPageItem,
   type FacebookPageStatus,
 } from '@/components/pages/page-card';
-import { PagesEmptyState } from '@/components/pages/pages-empty-state';
+import { InAppScheduleEmptyState } from '@/components/pages/inapp-schedule-empty-state';
 import {
-  PagesScaleToolbar,
+  InAppScheduleScaleToolbar,
   type PageAccountFilterOption,
-} from '@/components/pages/pages-toolbar';
+} from '@/components/pages/inapp-schedule-toolbar';
 import {
   computeSituationalSubtitle,
   sortPagesAttentionFirst,
   type PageStatusFilter,
-} from '@/components/pages/pages-helpers';
+} from '@/components/pages/inapp-schedule-helpers';
 import { AddPageModal } from '@/components/pages/add-page-modal';
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 import { buildDirectConnectUrl } from '@/components/accounts/connect-account-modal';
 
-export interface PagesShellProps {
+export interface InAppScheduleShellProps {
   subdomain: string;
 }
 
 /** Id of the Pages-only toaster: top-right, used solely by Add Page confirmations. */
 const PAGES_IMPORT_TOASTER_ID = 'pages-import-toaster';
 
-function PagesLoadingSkeleton() {
+function InAppScheduleLoadingSkeleton() {
   return (
     <div
-      data-testid="pages-loading-skeleton"
+      data-testid="inapp-schedule-loading-skeleton"
       aria-busy="true"
       aria-label="Loading pages"
       className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3"
@@ -107,7 +107,7 @@ function PagesLoadingSkeleton() {
   );
 }
 
-export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
+export function InAppScheduleShell({ subdomain }: Readonly<InAppScheduleShellProps>) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
@@ -342,7 +342,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
       }
       const query = params.toString();
       router.replace(
-        query ? `/tenant/${subdomain}/pages?${query}` : `/tenant/${subdomain}/pages`
+        query ? `/tenant/${subdomain}/inapp-schedule?${query}` : `/tenant/${subdomain}/inapp-schedule`
       );
     },
     [router, searchParams, subdomain]
@@ -487,7 +487,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   }, [total, attentionTotal, isFiltered]);
 
   const handleSelectPage = (page: FacebookPageItem) => {
-    router.push(`/tenant/${subdomain}/pages/${page.id}`);
+    router.push(`/tenant/${subdomain}/inapp-schedule/${page.id}`);
   };
 
   const handlePagesImported = (result: {
@@ -559,18 +559,18 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
 
   let contentNode: React.ReactNode;
   if (isLoading) {
-    contentNode = <PagesLoadingSkeleton />;
+    contentNode = <InAppScheduleLoadingSkeleton />;
   } else if (pagesQuery.isError && pages.length === 0) {
     contentNode = (
       <EmptyState
         type="not-found"
-        data-testid="pages-load-error"
+        data-testid="inapp-schedule-load-error"
         title="Couldn't load your pages"
         description="Please try again."
         action={
           <Button
             type="button"
-            data-testid="pages-load-retry-btn"
+            data-testid="inapp-schedule-load-retry-btn"
             onClick={() => {
               void pagesQuery.refetch();
             }}
@@ -582,7 +582,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     );
   } else if (pages.length === 0 && !isFiltered) {
     contentNode = (
-      <PagesEmptyState
+      <InAppScheduleEmptyState
         onAddPage={() => setIsAddModalOpen(true)}
         addDisabled={facebookCap?.atCap ?? false}
         cap={facebookCap}
@@ -595,7 +595,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   } else if (pages.length === 0 && isFiltered) {
     contentNode = (
       <div
-        data-testid="pages-filter-empty"
+        data-testid="inapp-schedule-filter-empty"
         className="rounded-md border border-line bg-panel"
       >
         <EmptyState
@@ -606,7 +606,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
             <Button
               type="button"
               variant="outline"
-              data-testid="pages-clear-filters-btn"
+              data-testid="inapp-schedule-clear-filters-btn"
               onClick={handleClearFilters}
             >
               Clear filters
@@ -619,7 +619,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     contentNode = (
       <>
         <div
-          data-testid="pages-grid"
+          data-testid="inapp-schedule-grid"
           className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3"
         >
           {pages.map((page) => (
@@ -645,19 +645,19 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
 
   return (
     <div
-      data-testid="facebook-pages-page"
+      data-testid="facebook-inapp-schedule-page"
       className="mx-auto box-border w-full max-w-300 px-6 py-6"
     >
       {/* Page Header */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1
-            data-testid="pages-page-title"
+            data-testid="inapp-schedule-page-title"
             className="mb-1 text-xxl font-bold tracking-h1 text-ink"
           >
-            Schedule
+            In-App Schedule
           </h1>
-          <p data-testid="pages-page-subtitle" className="m-0 text-body text-ink-sub">
+          <p data-testid="inapp-schedule-page-subtitle" className="m-0 text-body text-ink-sub">
             {situationalSubtitle}
           </p>
           {facebookCap ? (
@@ -714,7 +714,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
           stale or missing until these queries succeed again. */}
       {secondaryQueryFailed && (
         <div
-          data-testid="pages-secondary-error"
+          data-testid="inapp-schedule-secondary-error"
           role="alert"
           className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-sm border border-link/25 bg-link/10 px-3 py-2.5 text-body leading-body text-ink"
         >
@@ -726,7 +726,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
             type="button"
             variant="outline"
             size="sm"
-            data-testid="pages-secondary-retry-btn"
+            data-testid="inapp-schedule-secondary-retry-btn"
             onClick={() => {
               void accountsQuery.refetch();
               void byocQuery.refetch();
@@ -744,7 +744,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
           them would strand the user on a filtered page with no way
           back. */}
       {!isLoading && (
-        <PagesScaleToolbar
+        <InAppScheduleScaleToolbar
           searchQuery={searchQuery}
           onSearchChange={handleSearchChange}
           statusFilter={statusFilter}

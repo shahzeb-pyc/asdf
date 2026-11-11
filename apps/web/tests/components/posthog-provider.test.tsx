@@ -18,14 +18,14 @@ const posthogMocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/posthog', () => posthogMocks);
 
-const PAGES_PATH = '/pages';
+const INAPP_SCHEDULE_PATH = '/inapp-schedule';
 const HOST_REGION = 'US';
 
 const navState = vi.hoisted(() => ({
-  // Literal here, not PAGES_PATH: hoisted factories run before the
+  // Literal here, not INAPP_SCHEDULE_PATH: hoisted factories run before the
   // module's top-level consts initialize (TDZ). beforeEach resets
-  // this to PAGES_PATH anyway, so both stay the same value.
-  pathname: '/pages',
+  // this to INAPP_SCHEDULE_PATH anyway, so both stay the same value.
+  pathname: '/inapp-schedule',
   search: '',
 }));
 
@@ -38,7 +38,7 @@ import { PostHogProvider } from '@/components/posthog-provider';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  navState.pathname = PAGES_PATH;
+  navState.pathname = INAPP_SCHEDULE_PATH;
   navState.search = '';
 });
 
@@ -50,7 +50,7 @@ describe('PostHogProvider', () => {
       </PostHogProvider>
     );
     expect(posthogMocks.initPostHog).toHaveBeenCalledWith('test-key', 'US');
-    expect(posthogMocks.capturePageview).toHaveBeenCalledWith(PAGES_PATH);
+    expect(posthogMocks.capturePageview).toHaveBeenCalledWith(INAPP_SCHEDULE_PATH);
     expect(posthogMocks.identifyUser).not.toHaveBeenCalled();
   });
 
@@ -60,14 +60,14 @@ describe('PostHogProvider', () => {
         <div>child</div>
       </PostHogProvider>
     );
-    expect(posthogMocks.capturePageview).toHaveBeenCalledWith(PAGES_PATH);
-    navState.pathname = PAGES_PATH;
+    expect(posthogMocks.capturePageview).toHaveBeenCalledWith(INAPP_SCHEDULE_PATH);
+    navState.pathname = INAPP_SCHEDULE_PATH;
     navState.search = 'tab=queue';
     rerender(
       <PostHogProvider apiKey="test-key" host={HOST_REGION}>
         <div>child</div>
       </PostHogProvider>
     );
-    expect(posthogMocks.capturePageview).toHaveBeenCalledWith(`${PAGES_PATH}?tab=queue`);
+    expect(posthogMocks.capturePageview).toHaveBeenCalledWith(`${INAPP_SCHEDULE_PATH}?tab=queue`);
   });
 });

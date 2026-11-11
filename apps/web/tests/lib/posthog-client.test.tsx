@@ -126,16 +126,16 @@ describe('capturePageview', () => {
   it('captures $pageview with a full $current_url on navigation', async () => {
     const { lib, instance } = await loadClient();
     lib.initPostHog(TEST_KEY, HOST_REGION);
-    lib.capturePageview('/pages?tab=queue');
+    lib.capturePageview('/inapp-schedule?tab=queue');
     await flush();
     expect(instance.capture).toHaveBeenCalledWith('$pageview', {
-      $current_url: 'http://localhost:3000/pages?tab=queue',
+      $current_url: 'http://localhost:3000/inapp-schedule?tab=queue',
     });
   });
 
   it('never throws before init, and is dropped when init never runs', async () => {
     const { lib, instance } = await loadClient();
-    expect(() => lib.capturePageview('/pages')).not.toThrow();
+    expect(() => lib.capturePageview('/inapp-schedule')).not.toThrow();
     await flush();
     // No init ever runs, so the buffered pageview is never delivered.
     expect(instance.capture).not.toHaveBeenCalled();

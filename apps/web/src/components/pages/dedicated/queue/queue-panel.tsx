@@ -189,7 +189,7 @@ export function QueuePanel({
     (nextPage: number) => {
       const nextParams = new URLSearchParams(searchParams.toString());
       nextParams.set('page', String(nextPage));
-      router.push(buildTenantHref(subdomain, `/pages/${pageId}?${nextParams.toString()}`, isTenantSubdomainHost(window.location.hostname, subdomain)), {
+      router.push(buildTenantHref(subdomain, `/inapp-schedule/${pageId}?${nextParams.toString()}`, isTenantSubdomainHost(window.location.hostname, subdomain)), {
         scroll: false,
       });
     },

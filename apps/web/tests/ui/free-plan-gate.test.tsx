@@ -293,7 +293,7 @@ describe('FreePlanGate', () => {
     // not re-read it — that re-check on every section change is the
     // reload paid users reported.
     mockApiGet.mockResolvedValue(entitlement('paid'));
-    mocks.pathname = '/tenant/acme/pages';
+    mocks.pathname = '/tenant/acme/inapp-schedule';
     rerenderGate();
     await waitFor(() => expect(screen.getByTestId('free-plan-upgrade-dialog')).toBeInTheDocument());
     expect(screen.queryByText('Section content')).not.toBeInTheDocument();

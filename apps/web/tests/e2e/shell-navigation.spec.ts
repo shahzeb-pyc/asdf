@@ -111,9 +111,9 @@ test.describe('shell navigation + workspace switch (spec 130 §5.9)', () => {
     await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/accounts$`));
     await expect(page.getByTestId('workspace-breadcrumb')).toContainText('Accounts');
 
-    await page.getByRole('link', { name: /^Schedule/ }).click();
-    await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/pages$`));
-    await expect(page.getByTestId('workspace-breadcrumb')).toContainText('Schedule');
+    await page.getByRole('link', { name: 'In-App Schedule' }).click();
+    await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/inapp-schedule$`));
+    await expect(page.getByTestId('workspace-breadcrumb')).toContainText('In-App Schedule');
 
     await page.getByRole('link', { name: /^Home/ }).click();
     await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/?$`));

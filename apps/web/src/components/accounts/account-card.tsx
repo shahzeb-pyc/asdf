@@ -292,7 +292,7 @@ export function AccountCard({
       // sharing a name used to land on an ambiguous filter. The
       // Pages route still resolves a legacy display-name param, so
       // old links keep working.
-      router.push(buildTenantHref(currentSubdomain, `/pages?account=${encodeURIComponent(account.id)}`, isTenantSubdomainHost(window.location.hostname, currentSubdomain)));
+      router.push(buildTenantHref(currentSubdomain, `/inapp-schedule?account=${encodeURIComponent(account.id)}`, isTenantSubdomainHost(window.location.hostname, currentSubdomain)));
     } else {
       setIsPagesExpanded((prev) => !prev);
     }

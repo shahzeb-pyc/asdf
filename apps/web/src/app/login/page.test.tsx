@@ -232,21 +232,21 @@ describe("login form (form standard reference conversion)", () => {
 
 describe("login session-expired contract (§3.1)", () => {
   it("renders the session-expired notice when reason=session-expired is present", () => {
-    setUrl("/login?next=%2Ftenant%2Fe2e%2Fpages&reason=session-expired");
+    setUrl("/login?next=%2Ftenant%2Fe2e%2Finapp-schedule&reason=session-expired");
     render(<LoginPage />);
     expect(screen.getByText(SESSION_EXPIRED_NOTICE)).toBeTruthy();
   });
 
   it("honours the safe `next` path as the post-login returnUrl", async () => {
     const user = userEvent.setup();
-    setUrl("/login?next=%2Ftenant%2Fe2e%2Fpages&reason=session-expired");
+    setUrl("/login?next=%2Ftenant%2Fe2e%2Finapp-schedule&reason=session-expired");
     fetchMock.mockResolvedValue(jsonResponse(200, SUCCESS_BODY));
     render(<LoginPage />);
     await fillAndSubmit(user, "owner@gmail.com", "correct-password");
 
     await waitFor(() => expect(completeAuthRedirect).toHaveBeenCalled());
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(String(init.body)).returnUrl).toBe("/tenant/e2e/pages");
+    expect(JSON.parse(String(init.body)).returnUrl).toBe("/tenant/e2e/inapp-schedule");
   });
 
   it("never honours an external `next` (no open redirect)", async () => {
@@ -277,18 +277,18 @@ describe("login session-expired contract (§3.1)", () => {
 
 describe("login returnUrl sent to the API (absolute-URL Validation failed fix)", () => {
   it("toApiReturnUrl strips an absolute workspace URL to its relative path", () => {
-    expect(toApiReturnUrl("https://shahzebpyc.fbuploadpro.com/tenant/e2e/pages")).toBe(
-      "/tenant/e2e/pages"
+    expect(toApiReturnUrl("https://shahzebpyc.fbuploadpro.com/tenant/e2e/inapp-schedule")).toBe(
+      "/tenant/e2e/inapp-schedule"
     );
     expect(
-      toApiReturnUrl("https://shahzebpyc.fbuploadpro.com/tenant/e2e/pages?tab=media#top")
-    ).toBe("/tenant/e2e/pages?tab=media#top");
+      toApiReturnUrl("https://shahzebpyc.fbuploadpro.com/tenant/e2e/inapp-schedule?tab=media#top")
+    ).toBe("/tenant/e2e/inapp-schedule?tab=media#top");
     expect(toApiReturnUrl("https://shahzebpyc.fbuploadpro.com/")).toBe("/");
   });
 
   it("toApiReturnUrl passes an already-relative path through unchanged", () => {
-    expect(toApiReturnUrl("/tenant/e2e/pages")).toBe("/tenant/e2e/pages");
-    expect(toApiReturnUrl("/tenant/e2e/pages?tab=media")).toBe("/tenant/e2e/pages?tab=media");
+    expect(toApiReturnUrl("/tenant/e2e/inapp-schedule")).toBe("/tenant/e2e/inapp-schedule");
+    expect(toApiReturnUrl("/tenant/e2e/inapp-schedule?tab=media")).toBe("/tenant/e2e/inapp-schedule?tab=media");
   });
 
   it("toApiReturnUrl omits a relative result that does not start with '/'", () => {
@@ -318,7 +318,7 @@ describe("login returnUrl sent to the API (absolute-URL Validation failed fix)",
     vi.stubEnv("NEXT_PUBLIC_ROOT_DOMAIN", "fbuploadpro.com");
     try {
       setUrl(
-        "/login?returnUrl=https%3A%2F%2Fshahzebpyc.fbuploadpro.com%2Ftenant%2Fe2e%2Fpages"
+        "/login?returnUrl=https%3A%2F%2Fshahzebpyc.fbuploadpro.com%2Ftenant%2Fe2e%2Finapp-schedule"
       );
       fetchMock.mockResolvedValue(jsonResponse(200, SUCCESS_BODY));
       render(<LoginPage />);
@@ -327,7 +327,7 @@ describe("login returnUrl sent to the API (absolute-URL Validation failed fix)",
       await waitFor(() => expect(completeAuthRedirect).toHaveBeenCalled());
       const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(String(init.body)) as { returnUrl?: string };
-      expect(body.returnUrl).toBe("/tenant/e2e/pages");
+      expect(body.returnUrl).toBe("/tenant/e2e/inapp-schedule");
       expect(body.returnUrl).not.toContain("://");
     } finally {
       vi.unstubAllEnvs();

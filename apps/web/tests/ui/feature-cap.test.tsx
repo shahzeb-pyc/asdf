@@ -27,7 +27,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/tenant/acme/pages',
+  usePathname: () => '/tenant/acme/inapp-schedule',
 }));
 
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';

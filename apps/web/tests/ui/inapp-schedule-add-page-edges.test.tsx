@@ -25,8 +25,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { queryKeys } from '@/lib/data/query-keys';
 import { AddPageModal } from '@/components/pages/add-page-modal';
-import { PagesScaleToolbar } from '@/components/pages/pages-toolbar';
-import { PagesShell } from '@/app/tenant/[subdomain]/pages/pages-shell';
+import { InAppScheduleScaleToolbar } from '@/components/pages/inapp-schedule-toolbar';
+import { InAppScheduleShell } from '@/app/tenant/[subdomain]/inapp-schedule/inapp-schedule-shell';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 import type { FacebookPageItem } from '@/components/pages/page-card';
 
@@ -267,7 +267,7 @@ describe('Add Page edges', () => {
   it('R16: two accounts sharing a display name stay two filter options', async () => {
     const user = userEvent.setup();
     render(
-      <PagesScaleToolbar
+      <InAppScheduleScaleToolbar
         searchQuery=""
         onSearchChange={vi.fn()}
         statusFilter="all"
@@ -280,7 +280,7 @@ describe('Add Page edges', () => {
         ]}
       />
     );
-    await user.click(screen.getByTestId('pages-account-filter'));
+    await user.click(screen.getByTestId('inapp-schedule-account-filter'));
     const options = await screen.findAllByRole('option', { name: 'Sam' });
     expect(options).toHaveLength(2);
   });
@@ -351,14 +351,14 @@ describe('Pages shell secondary failures + import visibility', () => {
     });
     render(
       <QueryClientProvider client={queryClient}>
-        <PagesShell subdomain="acme" />
+        <InAppScheduleShell subdomain="acme" />
       </QueryClientProvider>
     );
-    const notice = await screen.findByTestId('pages-secondary-error');
+    const notice = await screen.findByTestId('inapp-schedule-secondary-error');
     expect(notice.textContent).toContain(
       "couldn't be refreshed, so account filters may be incomplete"
     );
-    expect(screen.getByTestId('pages-secondary-retry-btn')).toBeTruthy();
+    expect(screen.getByTestId('inapp-schedule-secondary-retry-btn')).toBeTruthy();
   });
 
   it('K9: after an import the shell lands on the imported account, not the filter it came from', async () => {
@@ -423,7 +423,7 @@ describe('Pages shell secondary failures + import visibility', () => {
     currentSearchParams = new URLSearchParams(`account=${johnAccount.id}`);
     render(
       <QueryClientProvider client={queryClient}>
-        <PagesShell subdomain="acme" />
+        <InAppScheduleShell subdomain="acme" />
       </QueryClientProvider>
     );
     await waitFor(() => {
@@ -456,7 +456,7 @@ describe('Pages shell secondary failures + import visibility', () => {
     fireEvent.click(confirm);
     await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith(
-        `/tenant/acme/pages?account=${sarahAccount.id}`
+        `/tenant/acme/inapp-schedule?account=${sarahAccount.id}`
       );
     });
   });

@@ -96,7 +96,7 @@ function seedCalendar(now: Date = new Date()) {
 async function openCalendarTab(page: Page, fixedTime?: Date) {
   // Install before navigation so every app read of the clock sees it.
   if (fixedTime) await page.clock.install({ time: fixedTime });
-  await page.goto(`/tenant/${TENANT.subdomain}/pages/${FACEBOOK_PAGE.id}`);
+  await page.goto(`/tenant/${TENANT.subdomain}/inapp-schedule/${FACEBOOK_PAGE.id}`);
   await page.getByTestId('tab-calendar-view-btn').click();
   await expect(page.getByTestId('calendar-view-panel')).toBeVisible({ timeout: 15_000 });
 }
