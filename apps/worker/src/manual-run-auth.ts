@@ -17,12 +17,17 @@
 async function sha256(value: string): Promise<Uint8Array | null> {
   // Bare `crypto` is the typed global in the worker (see refresh.ts
   // `crypto.randomUUID()`); `globalThis.crypto` is not in the lib.
-  if (typeof crypto === 'undefined' || !crypto.subtle) return null;
-  const data = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(value)
-  );
-  return new Uint8Array(data);
+  // Any failure here fails closed (null → no match → 401).
+  try {
+    if (typeof crypto === 'undefined') return null;
+    const data = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(value)
+    );
+    return new Uint8Array(data);
+  } catch {
+    return null;
+  }
 }
 
 /** Constant-time equality over equal-length byte arrays. */

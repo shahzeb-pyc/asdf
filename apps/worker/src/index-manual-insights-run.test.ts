@@ -17,7 +17,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encryptToken } from '@fbuploadpro/contracts';
-import worker, { type Env } from './index.js';
+import worker, { type Env, handleScheduled } from './index.js';
 
 const MASTER_KEY =
   'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
@@ -341,6 +341,40 @@ describe('POST /admin/insights-followers/run', () => {
     expect(await second.json()).toEqual({
       error: 'insights_followers_cycle_in_flight',
     });
+    release(graphOk(5000));
+    const firstRes = await first;
+    expect(firstRes.status).toBe(200);
+    expect(fetchCalls).toBe(1);
+  });
+
+  it('scheduled cron skips while a manual run is in flight on the same isolate', async () => {
+    const db = fakeDb();
+    await seedDestination(db);
+    seedAduConfig(db);
+    seedMirror(db);
+    let release!: (res: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    let fetchCalls = 0;
+    vi.stubGlobal('fetch', async () => {
+      fetchCalls += 1;
+      return gate;
+    });
+    const env = testEnv(fakeClient(db));
+    const first = postRun(env, authHeaders());
+    // Let the manual run pass auth + scan and block on the Graph fetch.
+    await new Promise((r) => setTimeout(r, 50));
+    await handleScheduled(
+      { cron: '0 22 * * *', scheduledTime: Date.now() } as never,
+      { TOKEN_ENCRYPTION_KEY: MASTER_KEY } as never,
+      undefined,
+      { db: fakeClient(db) as never, now: new Date() }
+    );
+    // The cron did not start a second cycle: no extra Graph call,
+    // no writes yet.
+    expect(fetchCalls).toBe(1);
+    expect(db.updates).toEqual([]);
     release(graphOk(5000));
     const firstRes = await first;
     expect(firstRes.status).toBe(200);
