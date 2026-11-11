@@ -15,7 +15,6 @@ import {
   verifySessionToken,
 } from '@fbuploadpro/contracts';
 import {
-  _setMockSupabaseAuthClient,
   _setMockSupabaseServiceClient,
   _resetMockSupabaseClients,
 } from './clients';
@@ -134,7 +133,6 @@ function installFake(
     failSelects
   );
   _setMockSupabaseServiceClient(fake as unknown as SupabaseClient);
-  _setMockSupabaseAuthClient(fake as unknown as SupabaseClient);
   return fake;
 }
 

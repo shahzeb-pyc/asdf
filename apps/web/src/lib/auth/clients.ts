@@ -56,14 +56,18 @@ export function assertTestDoubleAllowed(caller: string): void {
   }
 }
 
+// Spec 168: installing a mock Supabase client (either setter below) also points the auth-only
+// client at the same fake — tests fake one Supabase. _setMockSupabaseAuthClient afterwards points auth elsewhere.
 export function _setMockSupabaseClient(client: SupabaseClient | null): void {
   assertTestDoubleAllowed('_setMockSupabaseClient');
   mockSupabaseClientForTesting = client;
+  mockSupabaseAuthClientForTesting = client;
 }
 
 export function _setMockSupabaseServiceClient(client: SupabaseClient | null): void {
   assertTestDoubleAllowed('_setMockSupabaseServiceClient');
   mockSupabaseServiceClientForTesting = client;
+  mockSupabaseAuthClientForTesting = client;
 }
 
 export function _setMockSupabaseAuthClient(client: SupabaseClient | null): void {
@@ -72,7 +76,7 @@ export function _setMockSupabaseAuthClient(client: SupabaseClient | null): void 
 }
 
 /**
- * Clears both mock clients and the cached admin client. Called by
+ * Clears all three mock clients and the cached admin client. Called by
  * `_resetAuthStores` (stores.ts) — this is the seam tests use between
  * cases, so clearing the cache here keeps env-swapping tests correct:
  * after a reset, the next getSupabaseAdminClient() re-resolves the

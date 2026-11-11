@@ -13,7 +13,6 @@ import {
   verifySessionToken,
 } from '@fbuploadpro/contracts';
 import {
-  _setMockSupabaseAuthClient,
   _setMockSupabaseServiceClient,
   _resetMockSupabaseClients,
 } from './clients';
@@ -129,7 +128,6 @@ describe('verifySignupOtpViaSupabase mints the workspaceId claim (S3)', () => {
       workspaces: [{ id: WORKSPACE_A, subdomain: 'acme', owner_id: USER_ID }],
     });
     _setMockSupabaseServiceClient(fake as unknown as SupabaseClient);
-    _setMockSupabaseAuthClient(fake as unknown as SupabaseClient);
 
     const { token, user } = await verifySignupOtpViaSupabase({
       email: 'client@gmail.com',
@@ -155,7 +153,6 @@ describe('verifySignupOtpViaSupabase mints the workspaceId claim (S3)', () => {
       new Set(['id'])
     );
     _setMockSupabaseServiceClient(fake as unknown as SupabaseClient);
-    _setMockSupabaseAuthClient(fake as unknown as SupabaseClient);
 
     const { token } = await verifySignupOtpViaSupabase({
       email: 'client@gmail.com',
