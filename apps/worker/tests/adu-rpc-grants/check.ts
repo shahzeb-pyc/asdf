@@ -20,9 +20,19 @@
  *       total_count window), status filter, search across source
  *       username / destination name / external id, Most/Least
  *       Followers sort, and stats sums (total followers = sum of
- *       followers_gained; net gained = sum of max(0, gained-count)).
- *   (d) The hardening migration is idempotent: re-applying
- *       20261030140000 exits clean and the grants above still hold.
+ *       current_followers; net gained = sum of max(0, current-starting)).
+ *       Plus the spec 162 send-back fix (round 2): adu_hub_list
+ *       returns followers_updated_at — a stamped config's timestamp
+ *       round-trips through the RPC and an unstamped config reads
+ *       null, so the Facebook hub route can hand the value to
+ *       buildAduConfigView instead of it being null forever.
+ *   (d) The hub RPC definitions are idempotent: re-applying the
+ *       20261111010000 (spec 162) hub-RPC block exits clean and the
+ *       grants above still hold. The 20261030140000 hardening file
+ *       itself is no longer re-appliable as a whole: its hub
+ *       CREATE OR REPLACE statements carry the pre-rename return
+ *       type, which PostgreSQL rejects (42P13) once the rename
+ *       landed — the rename, not the grants, broke that check.
  *
  * Usage:
  *   ADU_RPC_GRANTS_PG_URL=postgres://postgres@/adu_rpc?host=<socket>&port=5432 \
@@ -190,13 +200,15 @@ async function seed(pool: Pool): Promise<void> {
   // B active/300 gained on 300 starting (net 0), C paused/50 on 0 (net 50).
   // 'inactive' no longer exists (ADU statuses PR: turning automation
   // off is Pause now), so the third config is seeded 'paused'.
+  // A carries a stamped followers_updated_at (spec 162 round 2):
+  // the hub list must return the column and the stamp must round-trip.
   await pool.query(
     `INSERT INTO public.adu_configs (id, workspace_id, destination_id, source_platform, source_username,
-       timezone, posts_per_day, schedule_type, posting_times, status, sync_status, followers_count, followers_gained)
+       timezone, posts_per_day, schedule_type, posting_times, status, sync_status, starting_followers, current_followers, followers_updated_at)
      VALUES
-       ('a0000000-0000-4000-8000-000000000001', $1, $2, 'instagram', 'alpha_source', 'UTC', 1, 'dailyrandom', '{}', 'active', 'synced', 100, 150),
-       ('a0000000-0000-4000-8000-000000000002', $1, $3, 'tiktok', 'beta_source', 'UTC', 2, 'dailyrandom', '{}', 'active', 'synced', 300, 300),
-       ('a0000000-0000-4000-8000-000000000003', $1, $4, 'youtube', 'gamma_source', 'UTC', 1, 'dailyrandom', '{}', 'paused', 'synced', 0, 50)`,
+       ('a0000000-0000-4000-8000-000000000001', $1, $2, 'instagram', 'alpha_source', 'UTC', 1, 'dailyrandom', '{}', 'active', 'synced', 100, 150, '2026-11-10T22:00:00.000Z'),
+       ('a0000000-0000-4000-8000-000000000002', $1, $3, 'tiktok', 'beta_source', 'UTC', 2, 'dailyrandom', '{}', 'active', 'synced', 300, 300, NULL),
+       ('a0000000-0000-4000-8000-000000000003', $1, $4, 'youtube', 'gamma_source', 'UTC', 1, 'dailyrandom', '{}', 'paused', 'synced', 0, 50, NULL)`,
     [WS_ID, DEST_A, DEST_B, DEST_C],
   );
 }
@@ -297,9 +309,33 @@ async function main(): Promise<void> {
     const listMost = await attempt(pool, 'service_role',
       'SELECT * FROM public.adu_hub_list($1, NULL, NULL, $2, 9, 0)', [WS_ID, 'Most Followers']);
     check(
-      Number(listMost.rows[0]?.followers_gained) === 300,
-      'hub list Most Followers sorts by followers_gained desc',
-      String(listMost.rows[0]?.followers_gained),
+      Number(listMost.rows[0]?.current_followers) === 300,
+      'hub list Most Followers sorts by current_followers desc',
+      String(listMost.rows[0]?.current_followers),
+    );
+    // Spec 162 round 2: the timestamp column must be present in the
+    // RPC output at all — without it in RETURNS TABLE the key is
+    // absent (not null) and the hub view reads null forever. The
+    // stamped config's value must round-trip; unstamped configs read
+    // null, never a faked time.
+    const listAll = await attempt(pool, 'service_role',
+      'SELECT * FROM public.adu_hub_list($1, NULL, NULL, NULL, 9, 0)', [WS_ID]);
+    check(listAll.ok && listAll.rows.length === 3, 'hub list returns all 3 rows for timestamp check', String(listAll.rows.length));
+    check(
+      listAll.rows.every((r) => 'followers_updated_at' in r),
+      'hub list rows carry followers_updated_at',
+    );
+    const stamped = listAll.rows.find((r) => r.source_username === 'alpha_source');
+    check(
+      stamped !== undefined && new Date(stamped.followers_updated_at as string).toISOString() === '2026-11-10T22:00:00.000Z',
+      'hub list returns the stamped followers_updated_at',
+      String(stamped?.followers_updated_at),
+    );
+    check(
+      listAll.rows
+        .filter((r) => r.source_username !== 'alpha_source')
+        .every((r) => r.followers_updated_at === null),
+      'hub list returns null followers_updated_at for unstamped configs',
     );
     const stats = await attempt(pool, 'service_role',
       'SELECT * FROM public.adu_hub_stats($1, NULL, NULL)', [WS_ID]);
@@ -307,7 +343,7 @@ async function main(): Promise<void> {
     check(Number(stats.rows[0]?.total_count) === 3, 'hub stats total is 3', String(stats.rows[0]?.total_count));
     check(
       Number(stats.rows[0]?.total_followers_sum) === 500,
-      'hub stats total followers = sum(followers_gained) = 500',
+      'hub stats total followers = sum(current_followers) = 500',
       String(stats.rows[0]?.total_followers_sum),
     );
     check(
@@ -319,11 +355,38 @@ async function main(): Promise<void> {
       'SELECT * FROM public.adu_hub_list($1, NULL, NULL, NULL, 9, 0)', ['99999999-9999-4999-8999-999999999999']);
     check(emptyList.ok && emptyList.rows.length === 0, 'hub list for unknown workspace returns 0 rows');
 
-    console.log('(d) hardening migration idempotency');
-    const hardening = readFileSync(join(migrationsDir, '20261030140000_adu_rpc_hardening.sql'), 'utf8');
-    await pool.query(hardening);
+    console.log('(d) hub RPC definition idempotency (spec 162)');
+    // The 20261030140000 hardening file is no longer re-appliable as
+    // a whole: its hub CREATE OR REPLACE statements carry the
+    // pre-rename return type (followers_count/followers_gained),
+    // which PostgreSQL rejects with 42P13 once the spec 162 rename
+    // landed. The re-appliable unit now is the CURRENT hub-RPC
+    // block — the tail of 20261111010000 (DROP + CREATE + grant
+    // closure for all four hub RPCs). Re-applying it must exit
+    // clean and leave the grant closure intact.
+    const spec162 = readFileSync(
+      join(migrationsDir, '20261111010000_insights_worker_daily_followers.sql'),
+      'utf8',
+    );
+    const marker = '-- --- Facebook hub RPCs';
+    const at = spec162.indexOf(marker);
+    if (at < 0) throw new Error('spec 162 migration hub-RPC marker not found');
+    await pool.query(spec162.slice(at));
+    for (const fn of [
+      ...HUB_FUNCTIONS,
+      'threads_adu_hub_list',
+      'threads_adu_hub_stats',
+    ] as const) {
+      const g = await catalogGrants(pool, fn);
+      check(g.exists, `${fn}() still exists after re-apply`);
+      check(g.secdef === false, `${fn}() still NOT security definer after re-apply`);
+      check(
+        g.pub === false && g.anon_ === false && g.auth_ === false && g.svc === true,
+        `${fn}() grant closure still holds after re-apply`,
+      );
+    }
     const g2 = await catalogGrants(pool, 'claim_adu_buffer_downloads');
-    check(g2.pub === false && g2.svc === true, 'grants still hold after re-applying the hardening migration');
+    check(g2.pub === false && g2.svc === true, 'claim grants still hold after re-applying the hub RPC definitions');
   } finally {
     await pool.end();
   }

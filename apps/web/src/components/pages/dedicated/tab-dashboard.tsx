@@ -24,6 +24,7 @@ import type { FacebookPageItem } from '../page-card';
 import type { PostFormat } from '@fbuploadpro/contracts';
 import { formatSlotDisplay } from './posting-times/posting-time-utils';
 import { formatQueueTime } from './queue/queue-utils';
+import { formatFollowersUpdatedAt } from '@/lib/format-followers-updated-at';
 
 export interface PageQueueItemSummary {
   id: string;
@@ -164,17 +165,24 @@ export function PageTabDashboard({
             )}
           </div>
           {/*
-            K4: this figure is the STORED follower count, not a
-            live one — the stored row is written only at import
-            (pages/import writes current_followers from Graph at
-            import time; no refresh job, sync, or insights fetch
-            ever updates it). Insights' "Followers" is the live
-            total, so the two can legitimately differ. The note
-            says so instead of inventing a live call or faking
-            agreement; there is no stored timestamp to show, so
-            no "last updated" date is claimed.
+            K4 (spec 162): this figure is the STORED follower count,
+            not a live one — the stored row is written at import and
+            refreshed by the daily insights worker (03:00 PKT), which
+            stamps metadata.followers_updated_at on every successful
+            check. Insights' "Followers" is the live total, so the
+            two can legitimately differ. The note shows when the
+            stored figure was last updated — a dash when no check
+            has ever stamped it, never a faked time.
           */}
-          <span className="mt-1 block text-body text-ink-dim">At last import</span>
+          <span className="mt-1 block text-body text-ink-dim">
+            {(() => {
+              const updated = formatFollowersUpdatedAt(
+                page.followersUpdatedAt,
+                pageTimezone
+              );
+              return updated ? `Updated ${updated}` : '—';
+            })()}
+          </span>
         </div>
 
         <div data-testid="metric-queued-count" className={cardClass}>

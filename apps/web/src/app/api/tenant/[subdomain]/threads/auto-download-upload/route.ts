@@ -97,8 +97,8 @@ export async function GET(
     console.error(`ADU hub stats failed: code=${statsError.code ?? 'unknown'}`);
   }
   // RPC names match the old in-memory stats exactly: totalFollowers
-  // is the sum of followers_gained, followersGained is the sum of the
-  // net growth (followers_gained minus followers_count, floored at 0).
+  // is the sum of current_followers, followersGained is the sum of the
+  // net growth (current_followers minus starting_followers, floored at 0).
   const statsRow = (statsRows as Array<{
     total_count?: number;
     total_followers_sum?: number;
@@ -169,8 +169,13 @@ async function createOne(
       posting_times: postingTimes,
       status: 'active',
       sync_status: 'pending',
-      followers_count: startingFollowers,
-      followers_gained: startingFollowers,
+      starting_followers: startingFollowers,
+      current_followers: startingFollowers,
+      // Spec 162 (send-back fix): the creation path writes
+      // current_followers, so it stamps the last-updated time too —
+      // the migration header promises the timestamp is set by the
+      // daily worker AND by the ADU creation paths.
+      followers_updated_at: new Date().toISOString(),
     })
     .select('id')
     .single();

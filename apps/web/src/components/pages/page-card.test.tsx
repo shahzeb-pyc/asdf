@@ -123,3 +123,31 @@ describe('PageCard queue counts', () => {
     expect(onSelectPage).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('PageCard follower last-updated (spec 162, round 2)', () => {
+  it('shows when the stored total was last updated, in the page timezone', () => {
+    render(
+      <PageCard
+        page={makePage({
+          timezone: 'Asia/Karachi',
+          followersUpdatedAt: '2026-11-10T22:00:00.000Z',
+        })}
+        onSelectPage={() => {}}
+      />
+    );
+    // 22:00 UTC = 03:00 PKT on 11 Nov.
+    expect(screen.getByTestId('page-followers-updated')).toHaveTextContent(
+      /Updated 11 Nov 2026, 03:00/,
+    );
+  });
+
+  it('renders no Updated line when no check has ever stamped the page', () => {
+    render(
+      <PageCard
+        page={makePage({ followersUpdatedAt: null })}
+        onSelectPage={() => {}}
+      />
+    );
+    expect(screen.queryByTestId('page-followers-updated')).not.toBeInTheDocument();
+  });
+});

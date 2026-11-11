@@ -124,8 +124,9 @@ function configRow(): AduConfigRow {
     posting_times: ['09:00'],
     status: 'active',
     sync_status: 'synced',
-    followers_count: 10,
-    followers_gained: 1,
+    starting_followers: 10,
+    current_followers: 1,
+    followers_updated_at: null,
     display_name: null,
     created_at: '2026-11-01T00:00:00.000Z',
     updated_at: '2026-11-01T00:00:00.000Z',
@@ -259,5 +260,33 @@ describe('buildAduConfigView alert wording follows the destination platform (B5)
       expect(view.alert).toMatch(/more than 50 failed downloads/i);
       expect(view.alert).not.toContain('Change the source in Settings');
     }
+  });
+});
+
+describe('buildAduConfigView follower last-updated (spec 162)', () => {
+  const zeroCounts: CountSetup = {
+    pipeline: 0,
+    published: 0,
+    failed: 0,
+    failedInPipeline: 0,
+    publishedToday: 0,
+    failedToday: 0,
+  };
+
+  it('exposes followers_updated_at on the view when the worker stamped it', async () => {
+    const db = makeFakeSupabase(zeroCounts, 'facebook');
+    const view = await buildAduConfigView(db, {
+      ...configRow(),
+      followers_updated_at: '2026-11-10T22:00:00.000Z',
+    });
+    expect(view.followersUpdatedAt).toBe('2026-11-10T22:00:00.000Z');
+    expect(view.followersCount).toBe(10);
+    expect(view.followersGained).toBe(1);
+  });
+
+  it('reads null, never a faked time, when no check has ever stamped the config', async () => {
+    const db = makeFakeSupabase(zeroCounts, 'facebook');
+    const view = await buildAduConfigView(db, configRow());
+    expect(view.followersUpdatedAt).toBeNull();
   });
 });

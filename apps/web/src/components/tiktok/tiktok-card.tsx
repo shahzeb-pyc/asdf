@@ -223,6 +223,23 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
               </span>
             </span>
           ) : null}
+          {(() => {
+            // Spec 162: when the mirror's stored total was last
+            // updated by the daily worker. Date-only, like the
+            // card's "Added" line — the mirror views carry no page
+            // timezone. Nothing renders before the first worker run.
+            const updated = mirror.followersUpdatedAt
+              ? formatAddedDate(mirror.followersUpdatedAt)
+              : '';
+            return updated ? (
+              <span
+                data-testid="tiktok-mirror-page-followers-updated"
+                className="mt-0.5 block truncate text-metadata text-ink-dim"
+              >
+                Updated {updated}
+              </span>
+            ) : null;
+          })()}
         </div>
         <span
           data-testid="tiktok-mirror-card-arrow"

@@ -669,8 +669,13 @@ export const AduConfigRowSchema = z
     posting_times: z.array(z.string()),
     status: AduConfigStatusSchema,
     sync_status: AduSyncStatusSchema,
-    followers_count: z.number().int(),
-    followers_gained: z.number().int(),
+    // Spec 162: the old names lied — followers_count was the STARTING
+    // total and followers_gained the CURRENT total. Renamed to say so;
+    // followers_updated_at is the last successful follower check
+    // (daily worker or ADU creation), never a failed one.
+    starting_followers: z.number().int(),
+    current_followers: z.number().int(),
+    followers_updated_at: z.string().nullable(),
     display_name: z.string().nullable(),
     created_at: z.string(),
     updated_at: z.string(),

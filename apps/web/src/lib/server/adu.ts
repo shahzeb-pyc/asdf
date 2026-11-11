@@ -514,6 +514,10 @@ export async function ensureAduDestination(
     tasks: page.tasks,
     starting_followers: startingFollowers,
     current_followers: page.followers,
+    // Spec 162: the import writes the current total, so it stamps
+    // the last-updated time too — the Pages "last updated" display
+    // reads this key.
+    followers_updated_at: new Date().toISOString(),
   };
   if (!paused) {
     delete nextMetadata.fb_status;
@@ -571,6 +575,8 @@ export interface AduConfigView {
   alert: string | null;
   followersCount: number;
   followersGained: number;
+  /** Last successful follower check (daily worker or ADU creation); null when never checked. Spec 162. */
+  followersUpdatedAt: string | null;
   displayName: string | null;
   createdAt: string;
   updatedAt: string;
@@ -746,8 +752,15 @@ export async function buildAduConfigView(
         : dest?.platform === 'threads'
           ? threadsAduStatusAlert(config.status, config.sync_status)
           : aduStatusAlert(config.status, config.sync_status),
-    followersCount: config.followers_count,
-    followersGained: config.followers_gained,
+    followersCount: config.starting_followers,
+    followersGained: config.current_followers,
+    // Spec 162: the last successful follower check. A caller that
+    // selects explicit columns without followers_updated_at passes
+    // undefined here — that reads as null, never a faked time.
+    followersUpdatedAt:
+      typeof config.followers_updated_at === 'string'
+        ? config.followers_updated_at
+        : null,
     displayName: config.display_name,
     createdAt: config.created_at,
     updatedAt: config.updated_at,

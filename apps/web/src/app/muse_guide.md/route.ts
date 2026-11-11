@@ -243,7 +243,7 @@ If Facebook App credentials are missing, the add-page flow does not send the req
 
 Page detail tabs, exactly: Dashboard, Insights, Queue, Calendar View, Posting Times. There is no Overview tab, no Reels tab, no Failed tab, and no Settings tab on a Page detail page. Those tab names belong to Auto Download/Upload detail pages, not to Pages. The tab is carried in the page address; an unknown tab falls back to Dashboard, never to an error page.
 
-Dashboard shows Total Followers (stored at import — "At last import", not live), Queued Content, Next Publication (the first queued item with an estimate, in the Page timezone; otherwise "Waiting for a posting time" or "No posts in queue"), and Auto-publishing (Running, Paused, or Disconnected).
+Dashboard shows Total Followers (stored — refreshed daily by the insights worker, with an "Updated …" time under it, not live), Queued Content, Next Publication (the first queued item with an estimate, in the Page timezone; otherwise "Waiting for a posting time" or "No posts in queue"), and Auto-publishing (Running, Paused, or Disconnected).
 
 Page statuses: Active, Paused, Rate limited, Identity Checkpoint, Invalid token, Page not accessible, Missing page access, Missing permission, Check developer app, Account suspended, BM 2FA required, Disconnected, and Needs Attention as a display label for any unexpected status. Read the banner on the detail page before doing anything else:
 

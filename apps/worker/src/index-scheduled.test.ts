@@ -256,7 +256,16 @@ describe('handleScheduled downgrade-activation tick wiring (C3)', () => {
     errSpy.mockRestore();
   });
 
-  it.each(['*/15 * * * *', '0 2 * * *', '*/10 * * * *'])(
+  it('insights cron runs the follower cycle, not the downgrade tick (spec 162)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { db, fromTables } = minuteDb();
+    await expect(runCron('0 22 * * *', db)).resolves.toBeUndefined();
+    expect(fromTables).toContain('destinations');
+    expect(fromTables).not.toContain('subscription_payments');
+    errSpy.mockRestore();
+  });
+
+  it.each(['*/15 * * * *', '0 2 * * *', '*/10 * * * *', '0 22 * * *'])(
     'cron %s does not run the downgrade tick',
     async (cron) => {
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

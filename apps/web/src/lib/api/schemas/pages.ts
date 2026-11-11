@@ -49,6 +49,8 @@ export const FacebookPageViewSchema = z.object({
   currentFollowers: z.number().int().nonnegative(),
   followersGained: z.number().int(),
   followersCount: z.number().int().nonnegative(),
+  /** Last successful follower check (daily worker or page import); null when never checked. */
+  followersUpdatedAt: z.string().nullable().optional(),
   status: FacebookPageStatusSchema,
   tasks: z.array(z.string()),
   createdAt: z.string(),

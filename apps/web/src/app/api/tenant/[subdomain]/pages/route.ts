@@ -53,8 +53,9 @@ interface PageListRow {
   startingFollowers?: unknown;
   current_followers?: unknown;
   currentFollowers?: unknown;
-  followers_count?: unknown;
   followersCount?: unknown;
+  followers_updated_at?: unknown;
+  followersUpdatedAt?: unknown;
   status?: FacebookPageStatus | null;
   tasks?: unknown;
   unmatched_post_types?: unknown;
@@ -71,9 +72,24 @@ interface PageListRow {
 function extractCurrentFollowers(row: PageListRow): number {
   if (typeof row.current_followers === 'number') return row.current_followers;
   if (typeof row.currentFollowers === 'number') return row.currentFollowers;
-  if (typeof row.followers_count === 'number') return row.followers_count;
   if (typeof row.followersCount === 'number') return row.followersCount;
   return 0;
+}
+
+/**
+ * Spec 162: the last successful follower check, stored by pages/import
+ * and the daily insights worker as metadata.followers_updated_at (ISO
+ * string). Null when no check has ever stamped it — the dashboard
+ * shows a dash then, never a faked time.
+ */
+function extractFollowersUpdatedAt(row: PageListRow): string | null {
+  if (typeof row.followers_updated_at === 'string' && row.followers_updated_at) {
+    return row.followers_updated_at;
+  }
+  if (typeof row.followersUpdatedAt === 'string' && row.followersUpdatedAt) {
+    return row.followersUpdatedAt;
+  }
+  return null;
 }
 
 function extractStartingFollowers(row: PageListRow, currentFollowers: number): number {
@@ -321,6 +337,7 @@ async function fetchSqlPagesPage(
       d.metadata->>'category' AS category,
       (d.metadata->>'starting_followers')::int AS starting_followers,
       (d.metadata->>'current_followers')::int AS current_followers,
+      d.metadata->>'followers_updated_at' AS followers_updated_at,
       ${DESTINATION_STATUS_TO_WIRE_SQL} AS status,
       d.metadata->'tasks' AS tasks,
       d.metadata->'unmatched_post_types' AS unmatched_post_types,
@@ -569,6 +586,10 @@ function mapSupabaseDestinationRows(
     current_followers:
       typeof p.metadata?.current_followers === 'number'
         ? p.metadata.current_followers
+        : null,
+    followers_updated_at:
+      typeof p.metadata?.followers_updated_at === 'string'
+        ? p.metadata.followers_updated_at
         : null,
     status: unifiedDestinationStatusToWire(p.status, p.metadata),
     tasks: p.metadata?.tasks ?? [],
@@ -1151,6 +1172,7 @@ function mapPageRows(rows: PageListRow[]) {
       currentFollowers,
       followersGained,
       followersCount: currentFollowers,
+      followersUpdatedAt: extractFollowersUpdatedAt(row),
       status: effectiveStatus,
       tasks: parsePageTasks(row.tasks),
       unmatchedPostTypes: parsePageTasks(

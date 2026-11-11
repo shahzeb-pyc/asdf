@@ -16,12 +16,14 @@ ENVIRONMENT = "production"
 # it claims due rows from the mirror_check_jobs database queue);
 # "*/15 * * * *" = token-refresh job (spec 121 D6);
 # "0 2 * * *" = daily 30-day retention cleanup for publish_logs / queue_items (spec 139 residue);
+# "0 22 * * *" = daily insights-followers refresh (spec 162): live
+# follower totals per Facebook page from Graph, 03:00 PKT;
 # "*/10 * * * *" = mirror-check dispatcher (scaled TikTok mirrors: inserts
 # one job per due mirror into the mirror_check_jobs table; the old
 # "0 * * * *" full loop tick is gone — a single run cannot cover
 # 10,000 mirrors). Mirror checks use NO Cloudflare Queues, so there
 # is no queue-creation deploy step for them.
-crons = ["* * * * *", "*/15 * * * *", "0 2 * * *", "*/10 * * * *"]
+crons = ["* * * * *", "*/15 * * * *", "0 2 * * *", "0 22 * * *", "*/10 * * * *"]
 
 # Spec 121: publish pipeline queues. The queues themselves are provisioned
 # with wrangler before the deploy that binds them (see PR ops steps):

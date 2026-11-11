@@ -693,6 +693,10 @@ describe('Import with timezone + posting times', () => {
       "WHEN destinations.status = 'disconnected' AND destinations.metadata->>'fb_status' = 'paused'"
     );
     expect(upserts[0][0]).toContain("jsonb_build_object('fb_status', 'paused')");
+    // Spec 162: both metadata writes (fresh insert + conflict
+    // update) stamp the last-updated time alongside the current
+    // total, so the Pages "last updated" display reads a real time.
+    expect(upserts[0][0]).toContain("'followers_updated_at', now()::text");
   });
 
   it('when Graph returns fewer pages than selected, a no-schedule import also fails loud instead of silently succeeding (BG8)', async () => {
@@ -1413,6 +1417,11 @@ describe('Import with timezone + posting times', () => {
     // of a page that was never truly disconnected.
     expect(metadata.starting_followers).toBe(777);
     expect(metadata.current_followers).toBe(52000);
+    // Spec 162: the import writes the current total, so it stamps
+    // the last-updated time too — a parseable ISO timestamp, never
+    // a missing key.
+    expect(typeof metadata.followers_updated_at).toBe('string');
+    expect(Number.isNaN(Date.parse(metadata.followers_updated_at as string))).toBe(false);
   });
 
   it('Supabase: a paused page gets no schedule on re-import', async () => {

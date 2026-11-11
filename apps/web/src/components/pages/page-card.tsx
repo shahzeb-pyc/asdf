@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 
 import { getUserInitials } from '@/lib/user-initials';
+import { formatFollowersUpdatedAt } from '@/lib/format-followers-updated-at';
 import { cn } from '@/lib/utils';
 import { StatusMark } from '@/components/shared/ui/status-mark';
 
@@ -80,6 +81,15 @@ export interface FacebookPageItem {
    * slice (R6): the card shows dashes, not zeros, for the counts.
    */
   queueCountsError?: boolean | undefined;
+  /**
+   * Spec 162: last successful follower check (ISO string), from
+   * destinations.metadata.followers_updated_at. Absent when no
+   * check has ever stamped it — the dashboard shows a dash then,
+   * never a faked time. The list card renders "Updated …" from it
+   * (round-2 fix: the prop is live, the dashboard metric card
+   * already reads it — dropping it broke the build).
+   */
+  followersUpdatedAt?: string | null | undefined;
   createdAt: string;
   updatedAt?: string | undefined;
 }
@@ -384,6 +394,26 @@ export function PageCard({
               · {page.category || 'Facebook Page'}
             </span>
           </span>
+          {(() => {
+            // Spec 162 (round 2): when the stored total was last
+            // updated (daily worker or page import), in the page
+            // timezone. Nothing renders when no check has ever
+            // stamped it — never a faked time. Same shared
+            // formatter as the dashboard metric card and the ADU
+            // hub card.
+            const updated = formatFollowersUpdatedAt(
+              page.followersUpdatedAt,
+              page.timezone ?? 'UTC'
+            );
+            return updated ? (
+              <span
+                data-testid="page-followers-updated"
+                className="mt-0.5 block truncate text-metadata text-ink-dim"
+              >
+                Updated {updated}
+              </span>
+            ) : null;
+          })()}
         </div>
 
         {/* Professional circled arrow affordance (muted, gold on hover) */}

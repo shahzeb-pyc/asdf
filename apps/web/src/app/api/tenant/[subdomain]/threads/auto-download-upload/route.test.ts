@@ -404,6 +404,18 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
     const body = (await res.json()) as { id?: string };
     expect(typeof body.id).toBe('string');
     expect(tables['adu_configs']).toHaveLength(1);
+    // Spec 162 (send-back fix): the creation path writes
+    // current_followers, so it stamps followers_updated_at too —
+    // the timestamp must mean "last successful follower check"
+    // from the moment the config exists, not only after the first
+    // daily worker run.
+    const config = tables['adu_configs'][0] as Record<string, unknown>;
+    expect(config['starting_followers']).toBe(0);
+    expect(config['current_followers']).toBe(0);
+    expect(typeof config['followers_updated_at']).toBe('string');
+    expect(
+      Number.isNaN(Date.parse(config['followers_updated_at'] as string))
+    ).toBe(false);
     expect(tables['subscription_usage']).toHaveLength(1);
     expect(tables['subscription_usage'][0]).toMatchObject({
       user_id: 'user-1',
