@@ -842,7 +842,7 @@ export default {
           { status: 409, headers: corsHeaders }
         );
       }
-      const manualDb = initWorkerDb(env);
+      const manualDb = initWorkerDb(env, env.__TEST_DB__);
       const manualMasterKey = env.TOKEN_ENCRYPTION_KEY;
       if (!manualDb || !manualMasterKey) {
         console.warn(

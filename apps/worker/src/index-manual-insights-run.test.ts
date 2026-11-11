@@ -216,7 +216,7 @@ function authHeaders(token = TEST_TOKEN): Record<string, string> {
 
 function postRun(
   env: Env,
-  headers?: Record<string, string>,
+  headers: Record<string, string> = {},
   method = 'POST'
 ): Promise<Response> {
   return worker.fetch(

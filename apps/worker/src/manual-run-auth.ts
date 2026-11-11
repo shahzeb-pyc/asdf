@@ -15,9 +15,10 @@
 
 /** SHA-256 digest of a UTF-8 string, or null when subtle is unavailable. */
 async function sha256(value: string): Promise<Uint8Array | null> {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle) return null;
-  const data = await subtle.digest(
+  // Bare `crypto` is the typed global in the worker (see refresh.ts
+  // `crypto.randomUUID()`); `globalThis.crypto` is not in the lib.
+  if (typeof crypto === 'undefined' || !crypto.subtle) return null;
+  const data = await crypto.subtle.digest(
     'SHA-256',
     new TextEncoder().encode(value)
   );
