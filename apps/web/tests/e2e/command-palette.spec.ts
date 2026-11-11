@@ -111,7 +111,7 @@ test.describe('⌘K command palette (spec 130 §5.9)', () => {
     await expect(pageRow).toBeVisible();
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(
-      new RegExp(`/tenant/${TENANT.subdomain}/pages/${FACEBOOK_PAGE.id}$`)
+      new RegExp(`/tenant/${TENANT.subdomain}/inapp-schedule/${FACEBOOK_PAGE.id}$`)
     );
 
     // ⌘K (meta) reopens from the destination; the chosen page is a recent.

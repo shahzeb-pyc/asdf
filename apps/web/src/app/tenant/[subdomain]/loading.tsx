@@ -12,7 +12,7 @@
  * for. Routes with materially different geometry ship their own loading.tsx
  * (accounts, pages, page detail, media, settings, downloader, fdola-studio).
  * Restoring the home route's own geometry-matched skeleton is a follow-up
- * (in-page Suspense fallback, the pattern accounts/pages/settings already
+ * (in-page Suspense fallback, the pattern accounts/inapp-schedule/settings already
  * use). It renders inside the tenant layout — sidebar and header stay in
  * place.
  */

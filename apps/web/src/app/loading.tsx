@@ -13,7 +13,7 @@
  * The neutral shape is a centred stack of generic bars — no bordered
  * panel, no page measure, no card grid, nothing any route could be
  * mistaken for. Routes wanting geometry-matched loaders ship their own
- * loading.tsx (the pattern accounts/pages/settings already use).
+ * loading.tsx (the pattern accounts/inapp-schedule/settings already use).
  */
 import * as React from "react";
 

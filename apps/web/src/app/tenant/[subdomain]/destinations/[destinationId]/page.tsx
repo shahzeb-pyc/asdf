@@ -1,12 +1,12 @@
 /**
- * Destinations pages were removed: the dedicated Pages section is the only
+ * Destinations pages were removed: the dedicated In-App Schedule section is the only
  * home for a Facebook Page, and there is no longer a separate
  * destination view. This route survives ONLY as a redirector so previously
  * reachable links never land on a bare 404:
  * - a destination that maps to a Facebook Page (its external id matches a
  *   page's Facebook page id) redirects to that page's dedicated view;
  * - anything else (unknown destination, non-Facebook destination, any
- *   lookup failure) redirects to the Pages list.
+ *   lookup failure) redirects to the In-App Schedule list.
  * The destination data model, its APIs, queue links, slots, and the shared
  * composer are untouched — only the user-facing destination views went.
  */
@@ -25,8 +25,8 @@ export default async function DestinationRedirectPage({
   params,
 }: Readonly<DestinationRedirectPageProps>) {
   const { subdomain, destinationId } = await params;
-  const pagesList = `/tenant/${subdomain}/pages`;
-  let target = pagesList;
+  const inAppScheduleList = `/tenant/${subdomain}/inapp-schedule`;
+  let target = inAppScheduleList;
   try {
     const detail = await serverApiFetch(
       buildTenantApiPath(subdomain, `/accounts/social/${destinationId}`),
@@ -51,7 +51,7 @@ export default async function DestinationRedirectPage({
           (candidate) => candidate.fbPageId === wantedFbPageId
         );
         if (match) {
-          target = `/tenant/${subdomain}/pages/${match.id}`;
+          target = `/tenant/${subdomain}/inapp-schedule/${match.id}`;
           break;
         }
         if (res.totalPages !== undefined && res.totalPages > 0) {
@@ -64,9 +64,9 @@ export default async function DestinationRedirectPage({
       }
     }
   } catch {
-    // Any lookup failure falls through to the Pages list — never a 404
+    // Any lookup failure falls through to the In-App Schedule list — never a 404
     // and never an error page for a previously reachable link.
-    target = pagesList;
+    target = inAppScheduleList;
   }
   redirect(target);
 }

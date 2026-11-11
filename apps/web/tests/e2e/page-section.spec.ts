@@ -32,7 +32,7 @@ async function expectNoHorizontalOverflow(page: Page) {
 }
 
 async function openSection(page: Page) {
-  await page.goto(`/tenant/${SUB}/pages/${FACEBOOK_PAGE.id}`);
+  await page.goto(`/tenant/${SUB}/inapp-schedule/${FACEBOOK_PAGE.id}`);
   await expect(page.getByTestId('dedicated-page-workspace')).toBeVisible({
     timeout: 15_000,
   });
@@ -57,9 +57,9 @@ test.describe('dedicated page section — click-through (spec 131 §8.7)', () =>
     await expect(page.getByText('E2E Connected Account').first()).toBeVisible();
 
     // Pages list → click the Page card into its dedicated section.
-    await page.goto(`/tenant/${SUB}/pages`);
+    await page.goto(`/tenant/${SUB}/inapp-schedule`);
     await page.getByTestId(`page-card-${FACEBOOK_PAGE.id}`).click();
-    await expect(page).toHaveURL(new RegExp(`/pages/${FACEBOOK_PAGE.id}$`));
+    await expect(page).toHaveURL(new RegExp(`/inapp-schedule/${FACEBOOK_PAGE.id}$`));
     await expect(page.getByTestId('dedicated-page-workspace')).toBeVisible({
       timeout: 15_000,
     });

@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Pages empty state (spec 131 PR-131-2) — rebuilt as a typed
+ * In-App Schedule empty state (spec 131 PR-131-2) — rebuilt as a typed
  * shared/ui `EmptyState` (type `first-use`: one primary action, per
  * UI Rule 23 / UX Rule 6) inside the same panel geometry. Copy,
  * testids, and the point-of-need Facebook-app guidance (shown only
@@ -19,7 +19,7 @@ import {
   type FeatureCap,
 } from '@/components/billing/feature-cap';
 
-export interface PagesEmptyStateProps {
+export interface InAppScheduleEmptyStateProps {
   onAddPage: () => void;
   /** Disables the Add Page button when the plan cap is fully used. */
   addDisabled?: boolean | undefined;
@@ -38,7 +38,7 @@ export interface PagesEmptyStateProps {
   byocError?: boolean | undefined;
 }
 
-export function PagesEmptyState({
+export function InAppScheduleEmptyState({
   onAddPage,
   addDisabled = false,
   cap = null,
@@ -46,14 +46,14 @@ export function PagesEmptyState({
   facebookAppConfigured,
   byocPending = false,
   byocError = false,
-}: Readonly<PagesEmptyStateProps>) {
+}: Readonly<InAppScheduleEmptyStateProps>) {
   const showMissingAppGuidance =
     facebookAppConfigured === false && Boolean(subdomain);
   return (
     <div className="mx-auto my-10 w-full max-w-140 rounded-md border border-line bg-panel shadow-card">
       <EmptyState
         type="first-use"
-        data-testid="pages-empty-state"
+        data-testid="inapp-schedule-empty-state"
         className="px-6 pt-16 pb-2"
         icon={
           <div
@@ -71,7 +71,7 @@ export function PagesEmptyState({
             the empty state never silently implies missing setup. */}
         {byocPending && (
           <div
-            data-testid="pages-empty-byoc-checking"
+            data-testid="inapp-schedule-empty-byoc-checking"
             className="mb-6 w-full max-w-105 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-center text-body leading-body text-ink"
           >
             Checking your Facebook app setup…
@@ -79,7 +79,7 @@ export function PagesEmptyState({
         )}
         {!byocPending && byocError && (
           <div
-            data-testid="pages-empty-byoc-check-failed"
+            data-testid="inapp-schedule-empty-byoc-check-failed"
             className="mb-6 w-full max-w-105 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-center text-body leading-body text-ink"
           >
             Couldn’t check your Facebook app setup. Open Facebook Accounts
@@ -88,7 +88,7 @@ export function PagesEmptyState({
         )}
         {showMissingAppGuidance && (
           <div
-            data-testid="pages-empty-facebook-app-guidance"
+            data-testid="inapp-schedule-empty-facebook-app-guidance"
             className="mb-6 w-full max-w-105 rounded-sm border border-link/25 bg-link/10 px-3 py-2.5 text-center text-body leading-body text-ink"
           >
             <p className="mb-1">
@@ -98,7 +98,7 @@ export function PagesEmptyState({
             </p>
             <Link
               href={`/tenant/${subdomain}/settings?tab=byoc`}
-              data-testid="pages-empty-settings-facebook-link"
+              data-testid="inapp-schedule-empty-settings-facebook-link"
               className="font-semibold text-link underline"
             >
               Add App ID and Secret in Settings

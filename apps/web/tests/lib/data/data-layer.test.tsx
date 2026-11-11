@@ -210,7 +210,7 @@ describe('DataProvider 401-handler registration', () => {
 
     let handled = false;
     await act(async () => {
-      handled = await handleSessionExpired('/tenant/acme/pages');
+      handled = await handleSessionExpired('/tenant/acme/inapp-schedule');
     });
     expect(handled).toBe(true);
     expect(client?.getQueryData(tenant.pages.list)).toBeUndefined();
@@ -219,7 +219,7 @@ describe('DataProvider 401-handler registration', () => {
     client?.setQueryData(tenant.pages.list, ['cached-again']);
     let handledAgain = true;
     await act(async () => {
-      handledAgain = await handleSessionExpired('/tenant/acme/pages');
+      handledAgain = await handleSessionExpired('/tenant/acme/inapp-schedule');
     });
     expect(handledAgain).toBe(false);
     expect(client?.getQueryData(tenant.pages.list)).toEqual(['cached-again']);
@@ -237,7 +237,7 @@ describe('DataProvider 401-handler registration', () => {
 
     client?.setQueryData(tenant.pages.list, ['still-here']);
     await act(async () => {
-      await handleSessionExpired('/tenant/acme/pages');
+      await handleSessionExpired('/tenant/acme/inapp-schedule');
     });
     expect(client?.getQueryData(tenant.pages.list)).toEqual(['still-here']);
   });

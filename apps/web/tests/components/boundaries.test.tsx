@@ -23,8 +23,8 @@ import TenantError from "@/app/tenant/[subdomain]/error";
 import TenantNotFound from "@/app/tenant/[subdomain]/not-found";
 import TenantLoading from "@/app/tenant/[subdomain]/loading";
 import AccountsLoading from "@/app/tenant/[subdomain]/accounts/loading";
-import PagesLoading from "@/app/tenant/[subdomain]/pages/loading";
-import PageDetailLoading from "@/app/tenant/[subdomain]/pages/[pageId]/loading";
+import InAppScheduleLoading from "@/app/tenant/[subdomain]/inapp-schedule/loading";
+import PageDetailLoading from "@/app/tenant/[subdomain]/inapp-schedule/[pageId]/loading";
 import MediaLoading from "@/app/tenant/[subdomain]/media/loading";
 import SettingsLoading from "@/app/tenant/[subdomain]/settings/loading";
 import { tenantHomeHrefFromPathname } from "@/app/_boundaries/route-boundary";
@@ -123,7 +123,7 @@ describe("not-found boundaries", () => {
   });
 
   it("tenantHomeHrefFromPathname handles tenant, clean and empty paths", () => {
-    expect(tenantHomeHrefFromPathname("/tenant/acme/pages")).toBe("/tenant/acme");
+    expect(tenantHomeHrefFromPathname("/tenant/acme/inapp-schedule")).toBe("/tenant/acme");
     expect(tenantHomeHrefFromPathname("/accounts")).toBe("/");
     expect(tenantHomeHrefFromPathname(null)).toBe("/");
   });
@@ -134,7 +134,7 @@ describe("loading boundaries", () => {
     ["root", RootLoading],
     ["tenant (shared neutral fallback)", TenantLoading],
     ["accounts", AccountsLoading],
-    ["pages list", PagesLoading],
+    ["pages list", InAppScheduleLoading],
     ["page detail", PageDetailLoading],
     ["media", MediaLoading],
     ["settings", SettingsLoading],

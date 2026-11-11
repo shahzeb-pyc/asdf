@@ -113,7 +113,7 @@ describe('muse_guide.md route', () => {
     expect(text).toContain('No deauthorize or data-deletion addresses are given anywhere');
   });
 
-  it('states Muse works in its own browser, and that Facebook Schedule is the in-app schedule', async () => {
+  it('states Muse works in its own browser, and that Facebook In-App Schedule is the in-app schedule', async () => {
     const res = await GET();
     const text = await res.text();
     // Own-browser correction: never the user's/device browser.
@@ -121,16 +121,16 @@ describe('muse_guide.md route', () => {
     expect(text).toContain('Use FBUploadPro for the user, in your own browser');
     expect(text).toContain('in your own browser yourself');
     expect(text).not.toContain('in their browser');
-    // Facebook Schedule is the in-app schedule, formerly named Pages.
-    expect(text).toContain("Facebook's in-app schedule is the Schedule section");
+    // Facebook In-App Schedule is the in-app schedule, formerly named Pages.
+    expect(text).toContain("Facebook's in-app schedule is the In-App Schedule section");
     expect(text).toContain("for Facebook it was previously named Pages");
-    expect(text).toContain("ARE Facebook's in-app schedule, in the Schedule section");
-    expect(text).toContain('### Facebook — Schedule');
-    // Leaves: Schedule (Facebook, formerly Pages), Schedule (Instagram), In-app Schedule (Threads).
-    expect(text).toContain('Facebook leaves, in order: Accounts, Schedule, Publish Now');
+    expect(text).toContain("ARE Facebook's in-app schedule, in the In-App Schedule section");
+    expect(text).toContain('### Facebook — In-App Schedule');
+    // Leaves: In-App Schedule (Facebook, formerly Pages), Schedule (Instagram), In-app Schedule (Threads).
+    expect(text).toContain('Facebook leaves, in order: Accounts, In-App Schedule, Publish Now');
     // Home quick links use the renamed label too (PR #162 renames the
-    // app's Home link to Facebook Schedule, not Facebook Pages).
-    expect(text).toContain('Facebook Accounts, Facebook Schedule, Billing');
+    // app's Home link to Facebook In-App Schedule, not Facebook Pages).
+    expect(text).toContain('Facebook Accounts, Facebook In-App Schedule, Billing');
     expect(text).not.toContain('Facebook Accounts, Facebook Pages, Billing');
   });
 });

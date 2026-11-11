@@ -1,11 +1,11 @@
 /**
- * Pages list — pure helpers (spec 131 PR-131-2, spec §8.4 decomposition).
+ * In-App Schedule list — pure helpers (spec 131 PR-131-2, spec §8.4 decomposition).
  *
- * Extracted verbatim from the former 844-line pages route: the
+ * Extracted verbatim from the former 844-line in-app-schedule route: the
  * attention-first sorting, the search/status/account filtering, and
  * the situational subtitle computation. Names and behaviour are
- * preserved exactly — the parity suites (tests/ui/pages.test.tsx)
- * import them from here, and the Pages shell consumes the same
+ * preserved exactly — the parity suites (tests/ui/inapp-schedule.test.tsx)
+ * import them from here, and the In-App Schedule shell consumes the same
  * functions, so ordering, filtering, and subtitle copy can never
  * drift between the route and its tests.
  */

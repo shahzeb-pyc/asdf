@@ -15,7 +15,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { queryKeys } from '@/lib/data/query-keys';
 import { computeAccountsSubtitleFromCounts } from '@/components/accounts/accounts-helpers';
-import { PagesShell } from '@/app/tenant/[subdomain]/pages/pages-shell';
+import { InAppScheduleShell } from '@/app/tenant/[subdomain]/inapp-schedule/inapp-schedule-shell';
 import { AccountsShell } from '@/app/tenant/[subdomain]/accounts/accounts-shell';
 import type { FacebookPageItem } from '@/components/pages/page-card';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
@@ -149,11 +149,11 @@ describe('paginated subtitles report full-set counts', () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <PagesShell subdomain="acme" />
+        <InAppScheduleShell subdomain="acme" />
       </QueryClientProvider>
     );
 
-    const subtitle = screen.getByTestId('pages-page-subtitle');
+    const subtitle = screen.getByTestId('inapp-schedule-page-subtitle');
     expect(subtitle.textContent).toContain('65 connected pages');
     expect(subtitle.textContent).toContain('3 require reconnecting');
   });

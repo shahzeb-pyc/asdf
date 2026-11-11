@@ -40,7 +40,7 @@ vi.mock('posthog-js', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/pages',
+  usePathname: () => '/inapp-schedule',
   useSearchParams: () => new URLSearchParams(''),
 }));
 
@@ -59,7 +59,7 @@ describe('PostHog mount (real client module)', () => {
     // first) and must be delivered once the load resolves.
     await waitFor(() => {
       expect(fake.capture).toHaveBeenCalledWith('$pageview', {
-        $current_url: 'http://localhost:3000/pages',
+        $current_url: 'http://localhost:3000/inapp-schedule',
       });
     });
     await waitFor(() => {

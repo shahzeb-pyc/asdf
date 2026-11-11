@@ -47,7 +47,7 @@ test.describe('posting times — mobile gate (spec 142)', () => {
       await installApiFixtures(page, state);
       await page.setViewportSize(viewport);
 
-      await page.goto(`/tenant/${TENANT.subdomain}/pages/${FACEBOOK_PAGE.id}`);
+      await page.goto(`/tenant/${TENANT.subdomain}/inapp-schedule/${FACEBOOK_PAGE.id}`);
       await page.getByTestId('tab-calendar-btn').click();
 
       // The fixture's one 09:00 UTC slot renders as a row.

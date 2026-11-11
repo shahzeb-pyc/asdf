@@ -222,6 +222,71 @@ describe('Tenant-host URL normalization', () => {
     expect(res.headers.get('location')).toBeNull();
     expect(res.headers.get('x-middleware-rewrite')).toContain('/tenant/acme/settings');
   });
+
+  // Spec 167: the old Pages address redirects permanently (301) to
+  // the In-App Schedule address.
+  it('redirects a bare old address on the tenant host with a 301', async () => {
+    const res = await middleware(
+      request('http://acme.localhost:3000/pages', 'acme.localhost:3000', acmeToken)
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get('location')).toBe('http://acme.localhost:3000/inapp-schedule');
+  });
+
+  it('redirects an old detail address preserving the query string', async () => {
+    const res = await middleware(
+      request(
+        'http://acme.localhost:3000/pages/11111111-1111-4111-8111-111111111111?tab=queue',
+        'acme.localhost:3000',
+        acmeToken
+      )
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get('location')).toBe(
+      'http://acme.localhost:3000/inapp-schedule/11111111-1111-4111-8111-111111111111?tab=queue'
+    );
+  });
+
+  it('redirects a prefixed old address on the apex host, keeping the prefix', async () => {
+    const res = await middleware(
+      request('http://localhost:3000/tenant/acme/pages', 'localhost:3000', acmeToken)
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get('location')).toBe(
+      'http://localhost:3000/tenant/acme/inapp-schedule'
+    );
+  });
+
+  it('redirects the old address before role routing (admin gets the 301, not the admin section)', async () => {
+    const res = await middleware(
+      request('http://acme.localhost:3000/pages', 'acme.localhost:3000', adminToken)
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get('location')).toBe('http://acme.localhost:3000/inapp-schedule');
+  });
+
+  it('redirects the old address before login (logged-out bookmarks get the 301, not login)', async () => {
+    const res = await middleware(request('http://acme.localhost:3000/pages', 'acme.localhost:3000'));
+    expect(res.status).toBe(301);
+    expect(res.headers.get('location')).toBe('http://acme.localhost:3000/inapp-schedule');
+  });
+
+  it('never redirects the API pages routes', async () => {
+    const res = await middleware(
+      request('http://acme.localhost:3000/api/tenant/acme/pages', 'acme.localhost:3000', acmeToken)
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('does not redirect the new address (it rewrites and serves)', async () => {
+    const res = await middleware(
+      request('http://acme.localhost:3000/inapp-schedule', 'acme.localhost:3000', acmeToken)
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+    expect(res.headers.get('x-middleware-rewrite')).toContain('/tenant/acme/inapp-schedule');
+  });
 });
 
 describe('tenant-href host helpers', () => {

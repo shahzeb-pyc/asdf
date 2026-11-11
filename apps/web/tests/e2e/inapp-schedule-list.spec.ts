@@ -152,54 +152,54 @@ async function installPagesFixtures(
   );
 }
 
-test.describe('pages list + add page (spec 131 PR-131-2)', () => {
+test.describe('in-app schedule list + add page (spec 131 PR-131-2)', () => {
   test.beforeEach(async ({ context }) => {
     await context.addCookies([SESSION_COOKIE]);
   });
 
   test('populated list renders attention-first with the scale toolbar', async ({ page }) => {
     await installPagesFixtures(page, FIVE_PAGES);
-    await page.goto(`/tenant/${SUB}/pages`);
+    await page.goto(`/tenant/${SUB}/inapp-schedule`);
 
-    await expect(page.getByTestId('pages-grid')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId('pages-scale-toolbar')).toBeVisible();
-    await expect(page.getByTestId('pages-page-subtitle')).toContainText(
+    await expect(page.getByTestId('inapp-schedule-grid')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('inapp-schedule-scale-toolbar')).toBeVisible();
+    await expect(page.getByTestId('inapp-schedule-page-subtitle')).toContainText(
       '5 connected pages'
     );
-    await expect(page.getByTestId('pages-page-subtitle')).toContainText(
+    await expect(page.getByTestId('inapp-schedule-page-subtitle')).toContainText(
       '1 requires reconnecting'
     );
     // Attention-first: the invalid-token card leads the grid.
-    const firstCard = page.getByTestId('pages-grid').locator('[data-testid^="page-card-"]').first();
+    const firstCard = page.getByTestId('inapp-schedule-grid').locator('[data-testid^="page-card-"]').first();
     await expect(firstCard).toContainText('Gamma Expired');
   });
 
   test('empty state renders with its one primary action and the always-visible toolbar', async ({ page }) => {
     await installPagesFixtures(page, []);
-    await page.goto(`/tenant/${SUB}/pages`);
+    await page.goto(`/tenant/${SUB}/inapp-schedule`);
 
-    await expect(page.getByTestId('pages-empty-state')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('inapp-schedule-empty-state')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('empty-state-add-page-btn')).toBeVisible();
     // Pages list redesign + pagination: the scale toolbar is no longer
     // gated on page count — always visible once loaded, including the
     // empty state, so a filtered-to-zero view always offers a way back.
-    await expect(page.getByTestId('pages-scale-toolbar')).toBeVisible();
+    await expect(page.getByTestId('inapp-schedule-scale-toolbar')).toBeVisible();
   });
 
   test('filtered-to-zero echoes filters and Clear filters restores the list', async ({ page }) => {
     await installPagesFixtures(page, FIVE_PAGES);
-    await page.goto(`/tenant/${SUB}/pages`);
+    await page.goto(`/tenant/${SUB}/inapp-schedule`);
 
-    await expect(page.getByTestId('pages-grid')).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId('pages-search-input').fill('no-such-page');
-    await expect(page.getByTestId('pages-filter-empty')).toBeVisible();
-    await page.getByTestId('pages-clear-filters-btn').click();
-    await expect(page.getByTestId('pages-grid')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('inapp-schedule-grid')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('inapp-schedule-search-input').fill('no-such-page');
+    await expect(page.getByTestId('inapp-schedule-filter-empty')).toBeVisible();
+    await page.getByTestId('inapp-schedule-clear-filters-btn').click();
+    await expect(page.getByTestId('inapp-schedule-grid')).toBeVisible({ timeout: 15_000 });
   });
 
   test('add page flow: pick account, discover, select, import, toast confirmation', async ({ page }) => {
     await installPagesFixtures(page, FIVE_PAGES);
-    await page.goto(`/tenant/${SUB}/pages`);
+    await page.goto(`/tenant/${SUB}/inapp-schedule`);
 
     await page.getByTestId('header-add-page-btn').click();
     await expect(page.getByTestId('add-page-modal')).toBeVisible({ timeout: 15_000 });
@@ -230,8 +230,8 @@ test.describe('pages list + add page (spec 131 PR-131-2)', () => {
 
     for (const width of [320, 390, 768]) {
       await page.setViewportSize({ width, height: 800 });
-      await page.goto(`/tenant/${SUB}/pages`);
-      await expect(page.getByTestId('pages-grid')).toBeVisible({ timeout: 15_000 });
+      await page.goto(`/tenant/${SUB}/inapp-schedule`);
+      await expect(page.getByTestId('inapp-schedule-grid')).toBeVisible({ timeout: 15_000 });
       await expectNoDocumentOverflow(page);
 
       const addBtn = page.getByTestId('header-add-page-btn');

@@ -7,7 +7,7 @@
  * markup probes. Panels that fetch do so through the typed API
  * client, so fetch is mocked by queue status (queued / failed /
  * published) or, for the calendar, by the month window — the same
- * pattern as tests/ui/pages-behaviour.test.tsx. No timers and no
+ * pattern as tests/ui/inapp-schedule-behaviour.test.tsx. No timers and no
  * network: the calendar derives its expected month from the same
  * current UTC date the panel reads, so no fake clock is needed.
  */

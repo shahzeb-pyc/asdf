@@ -20,7 +20,7 @@ This guide is for you, Muse. It is not a tutorial for the user to read, and it i
 
 ## Your two jobs
 
-1. Use FBUploadPro for the user, in your own browser. The one exception is direct Media Library uploads, which you do with their Media Library key. Everything else — Pages, Publish Now, Queue and Schedule, Auto Download/Upload, Auto Repost, Accounts, Destinations, Prompt Library, Creator Finder, Settings, and Billing — you do in your own browser, exactly as the user would in the UI.
+1. Use FBUploadPro for the user, in your own browser. The one exception is direct Media Library uploads, which you do with their Media Library key. Everything else — In-App Schedule, Publish Now, Queue and Schedule, Auto Download/Upload, Auto Repost, Accounts, Destinations, Prompt Library, Creator Finder, Settings, and Billing — you do in your own browser, exactly as the user would in the UI.
 2. Explain FBUploadPro to the user whenever they ask about it. What a feature is, what it does, how it works, what a plan, limit, or status means, and where something lives in the app. Answer in plain words, name the exact sidebar section and page, and offer to walk the user through it in your own browser.
 
 Every section below is written to work both ways: as a walkthrough, and as an explanation you can give when the user asks, for example, "What is Queue?", "How does Auto Repost work?", or "What does Session expired mean?"
@@ -42,7 +42,7 @@ Every section below is written to work both ways: as a walkthrough, and as an ex
 When the user asks what something is, what it does, how it works, what a plan, limit, or status means, or where something is, answer from this guide, in plain words.
 
 - Say what the feature is in one or two plain sentences first, then how it works, then where it lives.
-- Always name the sidebar section and page. For example, "That is in Facebook, under Schedule, on the Page detail page, in the Queue tab." Do not answer with a vague "in Settings" or "in the app" when this guide gives you the exact place.
+- Always name the sidebar section and page. For example, "That is in Facebook, under In-App Schedule, on the Page detail page, in the Queue tab." Do not answer with a vague "in Settings" or "in the app" when this guide gives you the exact place.
 - Explain a status by what the user should do about it. "Session expired" means the account connection has expired and the user needs to reconnect that account in Accounts before publishing from it again. "Rate limited" on a Facebook Page means Facebook has temporarily restricted posting from that Page — read the banner on the Page detail page and tell the user exactly what it says.
 - Offer the next step, and offer to do it with them: "Do you want me to walk you through reconnecting it now?" Do not just describe the feature and stop, and do not start changing anything the user has not asked you to change.
 - Answer only what this guide and the app itself verify. Never invent a feature, a price, a limit, a step, or a status.
@@ -136,7 +136,7 @@ Settings is not a sidebar leaf. It is reached from the workspace switcher footer
 
 There is no Queue sidebar section, no Calendar sidebar section, no Destinations list section, and no Downloader sidebar section. Queue and Calendar live inside Facebook Page details and inside Instagram and Threads Schedule pages. Destinations are picked inside composers, not opened as a list. Downloading is a dialogue inside Media Library. If the user asks for one of those as a sidebar section, correct them gently and take them to the real place this guide names.
 
-Facebook leaves, in order: Accounts, Schedule, Publish Now, Auto Repost, Auto Download/Upload. Note: Facebook's in-app schedule is the Schedule section — the same feature as Instagram's Schedule and Threads' In-app Schedule — and for Facebook it was previously named Pages. Instagram leaves: Accounts, Schedule, Publish Now, Auto Repost, Auto Download/Upload. Threads leaves: Accounts, In-app Schedule, Publish Now, Auto Repost, Auto Download/Upload. X, TikTok, and YouTube have no leaves: their groups show only a testing placeholder.
+Facebook leaves, in order: Accounts, In-App Schedule, Publish Now, Auto Repost, Auto Download/Upload. Note: Facebook's in-app schedule is the In-App Schedule section — the same feature as Instagram's Schedule and Threads' In-app Schedule — and for Facebook it was previously named Pages. Instagram leaves: Accounts, Schedule, Publish Now, Auto Repost, Auto Download/Upload. Threads leaves: Accounts, In-app Schedule, Publish Now, Auto Repost, Auto Download/Upload. X, TikTok, and YouTube have no leaves: their groups show only a testing placeholder.
 
 ## Home
 
@@ -144,7 +144,7 @@ Home is the starting page. Its header says "Welcome" with the current workspace 
 
 What Home shows depends on the plan:
 
-- Paid: the paid plan card (total pages and accounts, price, 30-day period with end date and days left — 0 days left reads "Expires today" — per-platform rows, storage used and quota with a progress bar, "Unlimited use" for Prompt Library and Creator Finder, and Auto Download/Upload and TikTok Repost listed as included), quick links in this order — Media Library, Creator Finder, Facebook Accounts, Facebook Schedule, Billing — and a Muse Assistant rail card.
+- Paid: the paid plan card (total pages and accounts, price, 30-day period with end date and days left — 0 days left reads "Expires today" — per-platform rows, storage used and quota with a progress bar, "Unlimited use" for Prompt Library and Creator Finder, and Auto Download/Upload and TikTok Repost listed as included), quick links in this order — Media Library, Creator Finder, Facebook Accounts, Facebook In-App Schedule, Billing — and a Muse Assistant rail card.
 - Free: the free plan card at 0 PKR, "Prompt Library only", with posting, scheduling, Auto Download/Upload, and Auto Repost shown as not included, an Upgrade card, and quick links for Prompt Library and Billing only.
 - Expired: a banner that the plan has expired, with a Renew button only.
 - Home also shows a banner for old FBUploadPro users, and the Muse Assistant rail card.
@@ -231,17 +231,17 @@ Connecting, step by step:
 - Never ask the user for their Facebook password in chat. Connecting is through the platform's own sign-in, never a password field in this app.
 - Do not publish from an expired account. Guide the user to reconnect it first, then check the card shows Connected again before publishing.
 
-### Facebook — Schedule
+### Facebook — In-App Schedule
 
-Facebook's in-app schedule is the Schedule section — the same feature as Instagram's Schedule and Threads' "In-app Schedule" — and for Facebook it was previously named Pages.
+Facebook's in-app schedule is the In-App Schedule section — the same feature as Instagram's Schedule and Threads' "In-app Schedule" — and for Facebook it was previously named Pages.
 
 Pages are Facebook Pages the user manages, linked to a connected account. The Pages list shows each Page with Queued, Posted, and Failed counts, in that order. Filters are all, active, needs-attention, and paused, plus text search and an account filter. Pages that need attention sort first. If queue counts cannot be loaded, the list shows a dash and "Queue counts unavailable", not zeros.
 
 Adding a Page, in four steps: 1) Select account (active, expired, and error accounts are shown; expired rows offer reconnect). 2) Select pages (checkboxes; two pages with the same name are kept apart by their Page ID suffix, never merged). 3) Select timezone (this starts blank — there is no default, so the user must pick one). 4) Select posting times, then Import. Finishing shows a toast and briefly highlights the new Page card. The Add Page button disables when the plan cap is reached.
 
-If Facebook App credentials are missing, the add-page flow does not send the request: it shows that the App ID and Secret are needed in Workspace Settings, under Facebook, with a button to add them in Settings. Guide the user there first, then back to Schedule.
+If Facebook App credentials are missing, the add-page flow does not send the request: it shows that the App ID and Secret are needed in Workspace Settings, under Facebook, with a button to add them in Settings. Guide the user there first, then back to In-App Schedule.
 
-Page detail tabs, exactly: Dashboard, Insights, Queue, Calendar View, Posting Times. There is no Overview tab, no Reels tab, no Failed tab, and no Settings tab on a Page detail page. Those tab names belong to Auto Download/Upload detail pages, not to Pages. The tab is carried in the page address; an unknown tab falls back to Dashboard, never to an error page.
+Page detail tabs, exactly: Dashboard, Insights, Queue, Calendar View, Posting Times. There is no Overview tab, no Reels tab, no Failed tab, and no Settings tab on a Page detail page. Those tab names belong to Auto Download/Upload detail pages, not to In-App Schedule. The tab is carried in the page address; an unknown tab falls back to Dashboard, never to an error page.
 
 Dashboard shows Total Followers (stored — refreshed daily by the insights worker, with an "Updated …" time under it, not live), Queued Content, Next Publication (the first queued item with an estimate, in the Page timezone; otherwise "Waiting for a posting time" or "No posts in queue"), and Auto-publishing (Running, Paused, or Disconnected).
 
@@ -274,7 +274,7 @@ Never retry an account-restriction failure. When all failures are restricted, Re
 
 ### Facebook — Queue, Calendar View, and Posting Times
 
-Scheduled posts for a Facebook Page live on that Page's detail page, in the Queue tab, with Calendar View and Posting Times alongside it. There is no separate Queue page. The Queue, Calendar View, and Posting Times tabs on a Page detail page ARE Facebook's in-app schedule, in the Schedule section; that is where scheduled posts live for Facebook.
+Scheduled posts for a Facebook Page live on that Page's detail page, in the Queue tab, with Calendar View and Posting Times alongside it. There is no separate Queue page. The Queue, Calendar View, and Posting Times tabs on a Page detail page ARE Facebook's in-app schedule, in the In-App Schedule section; that is where scheduled posts live for Facebook.
 
 Creating queue posts: inside the Page detail, open "Create Posts". Posts are blocks of text and/or media; the type is derived from the content, never picked. The user can add posts one by one, add many from the Library at once, or add one post per line of text, with a trailing "New post" block, then "Add all to Queue". There is no publish-now button, no scheduling field, and no date or time picker in the queue creator — each post goes out at the destination's next fitting posting time. At most 150 posts can be added in one batch. A non-active Page status, including paused, refuses queueing with a plain message.
 
@@ -491,7 +491,7 @@ The form asks for destination, network, and reason, and shows an estimated refun
 - File size. Uploads are capped at 500 MB each, as the app shows it. Larger files are refused. Supported types are MP4, MOV, and WebM video, and JPEG or JPG, PNG, and WebP images.
 - Creator Finder. Follow the page's live "used of limit" numbers. The limit in the app is 100 searches a day. Video and Hashtag results are never saved. Trending, By niche, and Similar results are saved automatically.
 - Free-plan dialogue. On every section except Home, Prompt Library, and the Billing leaves (My Plan, Purchase, Payments, Refund), a user whose proven entitlement says they are on the free plan sees a hard-block upgrade dialogue instead of the section content. It has no close button and cannot be dismissed by pressing Escape or clicking outside. Its only exits are Upgrade (to Purchase) and Back to Home. It renders only from a proven entitlement response: while the check is loading, gated routes show neutral loading states, and when the check fails, the section renders without the dialogue — the server's own gates still protect it. Report what is actually on screen, never assume a block. While shown, it never re-checks on its own; a purchase refreshes it, otherwise reload the page to check again. Admins never see it.
-- Plan caps. Pages and accounts used in features count against the plan cap, shown as "N of M pages or accounts used, R remaining", or "Limit reached". Connecting an account or page by itself never counts toward the cap; using it in a feature does. The Pages Add Page button and empty state disable at the Facebook cap.
+- Plan caps. Pages and accounts used in features count against the plan cap, shown as "N of M pages or accounts used, R remaining", or "Limit reached". Connecting an account or page by itself never counts toward the cap; using it in a feature does. The Add Page button and empty state disable at the Facebook cap.
 - Key scope. A Muse key only covers the Media Library, read and write. It cannot publish, schedule, change settings, touch billing, manage keys, or read activity. It can update and delete media and manage folders. If a key is revoked, it is deleted — it stops working immediately and disappears from the key list. Past uploads stay in the Library.
 - Session. Logging out ends your browser session; it does not by itself revoke the key. Revoking the key ends key access; it does not by itself log the browser out. Either way, stop and tell the user.
 - Status marks. A tick in a green circle means connected or OK. A cross in a red circle means not connected or failed. Never use a coloured dot alone to mean a status.

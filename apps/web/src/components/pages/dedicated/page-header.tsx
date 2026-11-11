@@ -264,12 +264,12 @@ export function DedicatedPageHeader({
       <div className="mb-4">
         <button
           type="button"
-          data-testid="back-to-pages-link"
-          onClick={() => router.push(buildTenantHref(subdomain, `/pages`, isTenantSubdomainHost(window.location.hostname, subdomain)))}
+          data-testid="back-to-inapp-schedule-link"
+          onClick={() => router.push(buildTenantHref(subdomain, `/inapp-schedule`, isTenantSubdomainHost(window.location.hostname, subdomain)))}
           className="inline-flex min-h-11 items-center gap-1 px-1 text-body font-medium text-ink-sub transition-colors hover:text-ink"
         >
           <ChevronLeftIcon className="size-4" aria-hidden />
-          <span>Schedule</span>
+          <span>In-App Schedule</span>
         </button>
       </div>
 

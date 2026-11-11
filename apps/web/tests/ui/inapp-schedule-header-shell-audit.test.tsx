@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, waitFor, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import TenantDedicatedPageView from '@/app/tenant/[subdomain]/pages/[pageId]/page-section-shell';
+import TenantDedicatedPageView from '@/app/tenant/[subdomain]/inapp-schedule/[pageId]/page-section-shell';
 import { DedicatedPageHeader } from '@/components/pages/dedicated';
 import type { FacebookPageItem } from '@/components/pages/page-card';
 import {

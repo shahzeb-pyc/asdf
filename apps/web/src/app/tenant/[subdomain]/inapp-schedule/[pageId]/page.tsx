@@ -50,13 +50,13 @@ export type {
   TenantDedicatedPageViewProps,
 } from './page-section-shell';
 
-interface TenantPageSectionPageProps {
+interface TenantInAppScheduleDetailPageProps {
   params: Promise<{ subdomain: string; pageId: string }>;
 }
 
-export default async function TenantPageSectionPage({
+export default async function TenantInAppScheduleDetailPage({
   params,
-}: Readonly<TenantPageSectionPageProps>) {
+}: Readonly<TenantInAppScheduleDetailPageProps>) {
   const { subdomain, pageId } = await params;
   const tenant = queryKeys.tenant(subdomain);
 

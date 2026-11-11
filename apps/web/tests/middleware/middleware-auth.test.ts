@@ -196,7 +196,7 @@ describe('Next.js Edge Middleware Session Authentication & Tenant Isolation (Use
     // Complete separation: admins have no tenant sections to
     // inspect, so an admin on any tenant path goes to the admin
     // section instead of rewriting through to the user page.
-    const req = new NextRequest('http://acme.localhost:3000/pages', {
+    const req = new NextRequest('http://acme.localhost:3000/inapp-schedule', {
       headers: {
         host: 'acme.localhost:3000',
         cookie: `fbup_session=${adminToken}`,

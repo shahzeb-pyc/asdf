@@ -79,13 +79,13 @@ describe('Middleware admin routing (shell isolation)', () => {
       expect(location(res)).not.toMatch(/\/billing$/);
     });
 
-    it('admin on own host /tenant/acme/pages → /admin/subscriptions, NOT normalized /pages', async () => {
+    it('admin on own host /tenant/acme/inapp-schedule → /admin/subscriptions, NOT normalized /inapp-schedule', async () => {
       const res = await middleware(
-        await request('http://acme.localhost:3000/tenant/acme/pages', 'acme.localhost:3000', 'admin')
+        await request('http://acme.localhost:3000/tenant/acme/inapp-schedule', 'acme.localhost:3000', 'admin')
       );
       expect(res.status).toBe(307);
       expect(location(res)).toMatch(/\/admin\/subscriptions$/);
-      expect(location(res)).not.toMatch(/\/pages$/);
+      expect(location(res)).not.toMatch(/\/inapp-schedule$/);
     });
   });
 
@@ -94,7 +94,7 @@ describe('Middleware admin routing (shell isolation)', () => {
       ['/billing', '/admin/subscriptions'],
       ['/sellers', '/admin/sellers'],
       ['/sellers/xyz', '/admin/sellers/xyz'],
-      ['/pages', '/admin/subscriptions'],
+      ['/inapp-schedule', '/admin/subscriptions'],
     ])('%s → %s', async (path, target) => {
       const res = await middleware(
         await request(`http://acme.localhost:3000${path}`, 'acme.localhost:3000', 'admin')
@@ -168,26 +168,26 @@ describe('Middleware admin routing (shell isolation)', () => {
   });
 
   describe('user tenant handling unchanged', () => {
-    it('user on own host /tenant/acme/pages triple match → normalizes to /pages', async () => {
+    it('user on own host /tenant/acme/inapp-schedule triple match → normalizes to /inapp-schedule', async () => {
       const res = await middleware(
-        await request('http://acme.localhost:3000/tenant/acme/pages', 'acme.localhost:3000', 'user')
+        await request('http://acme.localhost:3000/tenant/acme/inapp-schedule', 'acme.localhost:3000', 'user')
       );
       expect(res.status).toBe(307);
-      expect(location(res)).toBe('http://acme.localhost:3000/pages');
+      expect(location(res)).toBe('http://acme.localhost:3000/inapp-schedule');
     });
 
     it('user on another tenant host → own home + notice marker', async () => {
       const res = await middleware(
-        await request('http://beta.localhost:3000/pages', 'beta.localhost:3000', 'user')
+        await request('http://beta.localhost:3000/inapp-schedule', 'beta.localhost:3000', 'user')
       );
       expect(res.status).toBe(307);
       expect(location(res)).toContain('acme.localhost:3000');
       expect(location(res)).toContain('notice=tenant_redirect');
     });
 
-    it('seller on tenant host /pages → app host /seller', async () => {
+    it('seller on tenant host /inapp-schedule → app host /seller', async () => {
       const res = await middleware(
-        await request('http://acme.localhost:3000/pages', 'acme.localhost:3000', 'seller')
+        await request('http://acme.localhost:3000/inapp-schedule', 'acme.localhost:3000', 'seller')
       );
       expect(res.status).toBe(307);
       expect(location(res)).toMatch(/^http:\/\/app\.localhost:3000\/seller$/);

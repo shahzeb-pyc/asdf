@@ -684,7 +684,7 @@ export function CreatePostsDialog({
         const nextParams = new URLSearchParams(searchParams.toString());
         nextParams.set('tab', 'calendar');
         router.push(
-          buildTenantHref(subdomain, `/pages/${page.id}?${nextParams.toString()}`, isTenantSubdomainHost(window.location.hostname, subdomain)),
+          buildTenantHref(subdomain, `/inapp-schedule/${page.id}?${nextParams.toString()}`, isTenantSubdomainHost(window.location.hostname, subdomain)),
           { scroll: false }
         );
       },
@@ -692,7 +692,7 @@ export function CreatePostsDialog({
     const slotsRequest = startTimedRequest();
     try {
       const slotsResponse = await api.get(
-        buildTenantApiPath(subdomain, `/pages/${page.id}/slots`),
+        buildTenantApiPath(subdomain, `/inapp-schedule/${page.id}/slots`),
         { schema: ListQueueSlotsResponseSchema, signal: slotsRequest.signal }
       );
       slotsRequest.done();

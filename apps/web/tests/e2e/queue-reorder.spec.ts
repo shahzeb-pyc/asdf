@@ -55,7 +55,7 @@ function seedQueue() {
 }
 
 async function openQueueTab(page: import('@playwright/test').Page) {
-  await page.goto(`/tenant/${TENANT.subdomain}/pages/${FACEBOOK_PAGE.id}`);
+  await page.goto(`/tenant/${TENANT.subdomain}/inapp-schedule/${FACEBOOK_PAGE.id}`);
   await page.getByTestId('tab-queue-btn').click();
   await expect(page.getByTestId('queue-panel')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId(`queue-row-${ID_A}`)).toBeVisible({ timeout: 15_000 });
@@ -192,7 +192,7 @@ test.describe('queue section (dedicated page)', () => {
 
     for (const width of [320, 390, 768]) {
       await page.setViewportSize({ width, height: 844 });
-      await page.goto(`/tenant/${TENANT.subdomain}/pages/${FACEBOOK_PAGE.id}`);
+      await page.goto(`/tenant/${TENANT.subdomain}/inapp-schedule/${FACEBOOK_PAGE.id}`);
       await page.getByTestId('tab-queue-btn').click();
       await expect(page.getByTestId('queue-panel')).toBeVisible({ timeout: 15_000 });
       const overflow = await page.evaluate(() => {

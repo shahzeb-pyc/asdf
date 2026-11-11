@@ -1,8 +1,8 @@
 'use client';
 
 /**
- * Pages scale toolbar (spec 131 PR-131-2, spec §8.4 decomposition) —
- * extracted from the former pages route and rebuilt on the shared/ui
+ * In-App Schedule scale toolbar (spec 131 PR-131-2, spec §8.4 decomposition) —
+ * extracted from the former in-app-schedule route and rebuilt on the shared/ui
  * primitives: the search field is the `Input` primitive (44px touch
  * height, 16px phone font per the mobile gate) with the same ghost
  * treatment, Escape-to-clear behaviour, and clear affordance; the
@@ -29,7 +29,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { cn } from '@/lib/utils';
 
-import type { PageStatusFilter } from './pages-helpers';
+import type { PageStatusFilter } from './inapp-schedule-helpers';
 
 /**
  * One account filter option (R16): the VALUE is the account id, so
@@ -43,7 +43,7 @@ export interface PageAccountFilterOption {
   label: string;
 }
 
-export interface PagesScaleToolbarProps {
+export interface InAppScheduleScaleToolbarProps {
   searchQuery: string;
   onSearchChange: (value: string) => void;
   statusFilter: PageStatusFilter;
@@ -67,17 +67,17 @@ const PAGE_FILTER_TABS: Array<{
   label: string;
   testId: string;
 }> = [
-  { value: 'all', label: 'All', testId: 'pages-filter-all' },
-  { value: 'active', label: 'Active', testId: 'pages-filter-active' },
+  { value: 'all', label: 'All', testId: 'inapp-schedule-filter-all' },
+  { value: 'active', label: 'Active', testId: 'inapp-schedule-filter-active' },
   {
     value: 'needs_attention',
     label: 'Needs Attention',
-    testId: 'pages-filter-needs-attention',
+    testId: 'inapp-schedule-filter-needs-attention',
   },
-  { value: 'paused', label: 'Paused', testId: 'pages-filter-paused' },
+  { value: 'paused', label: 'Paused', testId: 'inapp-schedule-filter-paused' },
 ];
 
-export function PagesScaleToolbar({
+export function InAppScheduleScaleToolbar({
   searchQuery,
   onSearchChange,
   statusFilter,
@@ -88,7 +88,7 @@ export function PagesScaleToolbar({
   attentionCount = 0,
   statusDetail = '',
   onStatusDetailChange,
-}: Readonly<PagesScaleToolbarProps>) {
+}: Readonly<InAppScheduleScaleToolbarProps>) {
   // The Select speaks filter labels; the shell speaks wire statuses.
   // The label for the current wire status is the reverse lookup.
   const statusDetailLabel: FbPageStatusFilterOption =
@@ -100,7 +100,7 @@ export function PagesScaleToolbar({
       'All Statuses') as FbPageStatusFilterOption;
   return (
     <div
-      data-testid="pages-scale-toolbar"
+      data-testid="inapp-schedule-scale-toolbar"
       className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-line pb-4"
     >
       {/* Ghost Search Input with Inset Icon & Clear Affordance */}
@@ -111,7 +111,7 @@ export function PagesScaleToolbar({
         />
         <Input
           type="search"
-          data-testid="pages-search-input"
+          data-testid="inapp-schedule-search-input"
           placeholder="Filter by name or category..."
           aria-label="Filter pages by name or category"
           value={searchQuery}
@@ -185,7 +185,7 @@ export function PagesScaleToolbar({
             }
           >
             <SelectTrigger
-              data-testid="pages-status-detail-filter"
+              data-testid="inapp-schedule-status-detail-filter"
               aria-label="Filter pages by exact status"
               className="min-h-11"
             >
@@ -204,7 +204,7 @@ export function PagesScaleToolbar({
         {/* Account Selector */}
         <Select value={accountFilter} onValueChange={onAccountFilterChange}>
           <SelectTrigger
-            data-testid="pages-account-filter"
+            data-testid="inapp-schedule-account-filter"
             aria-label="Filter pages by Facebook account"
             className="min-h-11"
           >

@@ -1,5 +1,5 @@
 /**
- * @file pages-account-filter.test.tsx
+ * @file inapp-schedule-account-filter.test.tsx
  * @description ?account= contract for the Pages list (Accounts card
  * "pages linked" link): the shell initialises its account filter
  * from the URL param on arrival and syncs toolbar changes back to
@@ -14,7 +14,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { queryKeys } from '@/lib/data/query-keys';
-import { PagesShell } from '@/app/tenant/[subdomain]/pages/pages-shell';
+import { InAppScheduleShell } from '@/app/tenant/[subdomain]/inapp-schedule/inapp-schedule-shell';
 import type { FacebookPageItem } from '@/components/pages/page-card';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 
@@ -160,7 +160,7 @@ function renderShell(search: string) {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <PagesShell subdomain="acme" />
+      <InAppScheduleShell subdomain="acme" />
     </QueryClientProvider>
   );
 }
@@ -234,14 +234,14 @@ describe('Pages ?account= filter contract', () => {
     await waitFor(() => {
       expect(screen.getByTestId('page-card-page-alpha')).toBeTruthy();
     });
-    await user.click(screen.getByTestId('pages-account-filter'));
+    await user.click(screen.getByTestId('inapp-schedule-account-filter'));
     const option = await screen.findByRole('option', { name: 'John Doe' });
     await user.click(option);
     await waitFor(() => {
       // R16: the toolbar writes the account id, not the name —
       // two accounts sharing a name must not collapse.
       expect(mockReplace).toHaveBeenCalledWith(
-        '/tenant/acme/pages?account=acc-john'
+        '/tenant/acme/inapp-schedule?account=acc-john'
       );
     });
     // And the list itself is filtered to John's pages.
@@ -255,13 +255,13 @@ describe('Pages ?account= filter contract', () => {
     await waitFor(() => {
       expect(screen.getByTestId('page-card-page-alpha')).toBeTruthy();
     });
-    await user.click(screen.getByTestId('pages-account-filter'));
+    await user.click(screen.getByTestId('inapp-schedule-account-filter'));
     const option = await screen.findByRole('option', {
       name: 'All accounts',
     });
     await user.click(option);
     await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith('/tenant/acme/pages');
+      expect(mockReplace).toHaveBeenCalledWith('/tenant/acme/inapp-schedule');
     });
     expect(screen.getByTestId('page-card-page-gamma')).toBeTruthy();
   });

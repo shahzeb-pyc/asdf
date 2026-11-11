@@ -1,7 +1,7 @@
 /**
  * @file dedicated-page.test.tsx
  * @description Comprehensive UI & behavioral tests for Spec 036:
- * Dedicated Facebook Page Workspace (/tenant/[subdomain]/pages/[pageId]).
+ * Dedicated Facebook Page Workspace (/tenant/[subdomain]/inapp-schedule/[pageId]).
  */
 
 import React from 'react';
@@ -18,7 +18,7 @@ import {
 // Spec 131 PR-131-3 (named update, §8.1 server-first): the route file is
 // now a server component; the client frame lives in page-section-shell
 // with the same default-export props contract this suite always used.
-import TenantDedicatedPageView from '@/app/tenant/[subdomain]/pages/[pageId]/page-section-shell';
+import TenantDedicatedPageView from '@/app/tenant/[subdomain]/inapp-schedule/[pageId]/page-section-shell';
 import { queryKeys } from '@/lib/data/query-keys';
 import { render as rtlRender, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -995,8 +995,8 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       );
 
       expect(hasAttribute('data-testid', 'dedicated-page-placeholder')).toBe(true);
-      expect(hasAttribute('data-testid', 'back-to-pages-btn')).toBe(true);
-      expect(hasText('Back to Schedule')).toBe(true);
+      expect(hasAttribute('data-testid', 'back-to-inapp-schedule-btn')).toBe(true);
+      expect(hasText('Back to In-App Schedule')).toBe(true);
       expect(hasText('Page reference: page-101')).toBe(true);
       expect(hasText('Dedicated Page Management Workspace')).toBe(true);
     });

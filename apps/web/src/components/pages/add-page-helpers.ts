@@ -4,7 +4,7 @@
  * add-page modal: the href builders, the account/page selection
  * computations, and the header/button copy computations. Names and
  * behaviour are preserved exactly — the parity suites
- * (tests/ui/pages.test.tsx) import them (re-exported from
+ * (tests/ui/inapp-schedule.test.tsx) import them (re-exported from
  * `add-page-modal.tsx`), and the flow components consume the same
  * functions.
  */

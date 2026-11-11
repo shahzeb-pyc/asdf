@@ -17,10 +17,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { queryKeys } from '@/lib/data/query-keys';
-import { sortPagesAttentionFirst } from '@/components/pages/pages-helpers';
+import { sortPagesAttentionFirst } from '@/components/pages/inapp-schedule-helpers';
 import { sortAccountsExpiredFirst } from '@/components/accounts/accounts-helpers';
-import { PagesShell } from '@/app/tenant/[subdomain]/pages/pages-shell';
-import { PagesScaleToolbar } from '@/components/pages/pages-toolbar';
+import { InAppScheduleShell } from '@/app/tenant/[subdomain]/inapp-schedule/inapp-schedule-shell';
+import { InAppScheduleScaleToolbar } from '@/components/pages/inapp-schedule-toolbar';
 import {
   PageCard,
   type FacebookPageItem,
@@ -135,7 +135,7 @@ function shellWrapper({
   });
   return (
     <QueryClientProvider client={queryClient}>
-      <PagesShell subdomain="acme" />
+      <InAppScheduleShell subdomain="acme" />
     </QueryClientProvider>
   );
 }
@@ -167,12 +167,12 @@ vi.mock('@/components/billing/entitlement-provider', async (importOriginal) => {
   };
 });
 
-describe('PagesScaleToolbar behaviour', () => {
+describe('InAppScheduleScaleToolbar behaviour', () => {
   it('typing updates the search, Escape clears it, and status tabs report selection', () => {
     const onSearchChange = vi.fn();
     const onStatusFilterChange = vi.fn();
     render(
-      <PagesScaleToolbar
+      <InAppScheduleScaleToolbar
         searchQuery="alp"
         onSearchChange={onSearchChange}
         statusFilter="all"
@@ -186,7 +186,7 @@ describe('PagesScaleToolbar behaviour', () => {
       />
     );
 
-    const input = screen.getByTestId('pages-search-input');
+    const input = screen.getByTestId('inapp-schedule-search-input');
     fireEvent.change(input, { target: { value: 'alpha' } });
     expect(onSearchChange).toHaveBeenCalledWith('alpha');
 
@@ -197,11 +197,11 @@ describe('PagesScaleToolbar behaviour', () => {
     expect(onSearchChange).toHaveBeenCalledWith('');
 
     expect(
-      screen.getByTestId('pages-filter-all').getAttribute('aria-selected')
+      screen.getByTestId('inapp-schedule-filter-all').getAttribute('aria-selected')
     ).toBe('true');
     expect(screen.getByText('(2)')).toBeTruthy();
 
-    fireEvent.click(screen.getByTestId('pages-filter-paused'));
+    fireEvent.click(screen.getByTestId('inapp-schedule-filter-paused'));
     expect(onStatusFilterChange).toHaveBeenCalledWith('paused');
   });
 });
@@ -224,7 +224,7 @@ describe('PageCard behaviour', () => {
   });
 });
 
-describe('PagesShell behaviour', () => {
+describe('InAppScheduleShell behaviour', () => {
   const originalFetch = global.fetch;
   beforeEach(() => {
     mockPush.mockReset();
@@ -344,20 +344,20 @@ describe('PagesShell behaviour', () => {
       })
     );
 
-    expect(screen.getByTestId('pages-grid')).toBeTruthy();
-    fireEvent.change(screen.getByTestId('pages-search-input'), {
+    expect(screen.getByTestId('inapp-schedule-grid')).toBeTruthy();
+    fireEvent.change(screen.getByTestId('inapp-schedule-search-input'), {
       target: { value: 'no-such-page' },
     });
     // Filtering is server-side now: the new page key refetches from
     // the fake server, so the empty state arrives asynchronously.
     await waitFor(() =>
-      expect(screen.getByTestId('pages-filter-empty')).toBeTruthy()
+      expect(screen.getByTestId('inapp-schedule-filter-empty')).toBeTruthy()
     );
     expect(screen.getByText(/Active filters:/)).toBeTruthy();
 
-    fireEvent.click(screen.getByTestId('pages-clear-filters-btn'));
+    fireEvent.click(screen.getByTestId('inapp-schedule-clear-filters-btn'));
     await waitFor(() =>
-      expect(screen.getByTestId('pages-grid')).toBeTruthy()
+      expect(screen.getByTestId('inapp-schedule-grid')).toBeTruthy()
     );
   });
 
@@ -369,7 +369,7 @@ describe('PagesShell behaviour', () => {
         byocConfigured: true,
       })
     );
-    const subtitle = screen.getByTestId('pages-page-subtitle');
+    const subtitle = screen.getByTestId('inapp-schedule-page-subtitle');
     expect(subtitle.textContent).toContain('5 connected pages');
     expect(subtitle.textContent).toContain('1 requires reconnecting');
   });
@@ -524,7 +524,7 @@ describe('Add Page confirmation redesign (toast + gold highlight, no banner)', (
     expect(toastEl!.className).toContain('border-brand-emerald');
     expect(toastEl!.className).toContain('bg-brand-emerald/15');
     expect(screen.queryByTestId('pages-feedback-banner')).toBeNull();
-    expect(screen.getByTestId('pages-grid')).toBeTruthy();
+    expect(screen.getByTestId('inapp-schedule-grid')).toBeTruthy();
 
     const newCard = await screen.findByTestId(`page-card-${newPage.id}`);
     expect(newCard.getAttribute('data-highlighted')).toBe('true');

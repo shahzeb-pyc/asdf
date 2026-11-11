@@ -7,7 +7,7 @@ import * as React from "react";
 
 import { Skeleton } from "@/components/shared/ui/skeleton";
 
-export default function PagesLoading() {
+export default function InAppScheduleLoading() {
   return (
     <div
       aria-busy="true"

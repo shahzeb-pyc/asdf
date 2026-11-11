@@ -5,9 +5,9 @@
  *
  * Spec 131 PR-131-2 named modifications (spec §8.4/§8.7):
  * (1) imports follow the decomposition — the route is now a server
- *     component + `PagesShell` island, helpers live in
- *     `components/pages/pages-helpers`, the toolbar in
- *     `components/pages/pages-toolbar`; shell renders seed the React
+ *     component + `InAppScheduleShell` island, helpers live in
+ *     `components/pages/inapp-schedule-helpers`, the toolbar in
+ *     `components/pages/inapp-schedule-toolbar`; shell renders seed the React
  *     Query cache directly (the server route's dehydration shape).
  * (2) PageCard style assertions that pinned inline styles / PALETTE
  *     hexes now pin the token classes that carry the same values
@@ -34,7 +34,7 @@ import {
   isPageNeedsAttention,
   type FacebookPageItem,
 } from '@/components/pages/page-card';
-import { PagesEmptyState } from '@/components/pages/pages-empty-state';
+import { InAppScheduleEmptyState } from '@/components/pages/inapp-schedule-empty-state';
 import {
   AddPageModal,
   buildAccountsHref,
@@ -46,18 +46,18 @@ import {
   type DiscoveredPageItem,
 } from '@/components/pages/add-page-modal';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { PagesShell } from '@/app/tenant/[subdomain]/pages/pages-shell';
-import { PagesScaleToolbar } from '@/components/pages/pages-toolbar';
+import { InAppScheduleShell } from '@/app/tenant/[subdomain]/inapp-schedule/inapp-schedule-shell';
+import { InAppScheduleScaleToolbar } from '@/components/pages/inapp-schedule-toolbar';
 import {
   filterPagesList,
   sortPagesAttentionFirst,
-} from '@/components/pages/pages-helpers';
+} from '@/components/pages/inapp-schedule-helpers';
 import { queryKeys } from '@/lib/data/query-keys';
 // Spec 131 PR-131-3 (named update, §8.1 server-first): the [pageId]
 // route is now a server component; the client frame it composes lives
 // in page-section-shell.tsx — the same split PR-131-2 used for the
 // pages list (page.tsx server + pages-shell.tsx client).
-import TenantDedicatedPageView from '@/app/tenant/[subdomain]/pages/[pageId]/page-section-shell';
+import TenantDedicatedPageView from '@/app/tenant/[subdomain]/inapp-schedule/[pageId]/page-section-shell';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 import { render } from '../components/setup';
 import {
@@ -76,7 +76,7 @@ vi.mock('next/navigation', () => ({
     subdomain: 'acme',
     pageId: 'page-uuid-1',
   }),
-  // PagesShell reads ?account= via useSearchParams; these suites
+  // InAppScheduleShell reads ?account= via useSearchParams; these suites
   // render without a URL, so the param is empty by default.
   // The shell also reads the initial ?page= from the URL (pagination).
   useSearchParams: () => new URLSearchParams(),
@@ -142,7 +142,7 @@ function renderAndCaptureTree(
  * the factory keys (the dehydrated shape), so the shell renders its
  * loaded state synchronously.
  */
-function renderPagesShell({
+function renderInAppScheduleShell({
   pages,
   accounts,
 }: {
@@ -179,7 +179,7 @@ function renderPagesShell({
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <PagesShell subdomain="acme" />
+      <InAppScheduleShell subdomain="acme" />
     </QueryClientProvider>
   );
 }
@@ -540,17 +540,17 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         PageCard({
           page: baseActivePage,
           subdomain: 'acme',
-          onSelectPage: (p) => selectedPaths.push(`/tenant/acme/pages/${p.id}`),
+          onSelectPage: (p) => selectedPaths.push(`/tenant/acme/inapp-schedule/${p.id}`),
         })
       );
 
       const cardEl = findElementByTestId(tree, 'page-card-page-uuid-1');
       expect(cardEl).not.toBeNull();
-      expect(cardEl?.props['data-href']).toBe('/tenant/acme/pages/page-uuid-1');
+      expect(cardEl?.props['data-href']).toBe('/tenant/acme/inapp-schedule/page-uuid-1');
 
       // Click activation
       cardEl?.props.onClick();
-      expect(selectedPaths).toEqual(['/tenant/acme/pages/page-uuid-1']);
+      expect(selectedPaths).toEqual(['/tenant/acme/inapp-schedule/page-uuid-1']);
 
       // Enter key activation
       const enterPreventDefault = vi.fn();
@@ -885,7 +885,7 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
     });
   });
 
-  describe('TenantPagesPage (/tenant/[subdomain]/pages/page.tsx)', () => {
+  describe('TenantInAppSchedulePage (/tenant/[subdomain]/inapp-schedule/page.tsx)', () => {
     const pageActive1: FacebookPageItem = {
       ...baseActivePage,
       id: 'p-active-1',
@@ -939,14 +939,14 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       createdAt: '2026-10-07T10:00:00.000Z',
     };
 
-    it('renders PagesEmptyState when 0 pages exist, with non-reels-only copy and the toolbar still visible', () => {
-      const { hasAttribute, hasText, html } = renderPagesShell({ pages: [], accounts: [sampleActiveAccount] });
+    it('renders InAppScheduleEmptyState when 0 pages exist, with non-reels-only copy and the toolbar still visible', () => {
+      const { hasAttribute, hasText, html } = renderInAppScheduleShell({ pages: [], accounts: [sampleActiveAccount] });
 
-      expect(hasAttribute('data-testid', 'pages-empty-state')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-empty-state')).toBe(true);
       expect(hasText('No Facebook Pages added yet')).toBe(true);
       expect(hasAttribute('data-testid', 'empty-state-add-page-btn')).toBe(true);
       // Toolbar is always visible once loaded now (the >4 gate is gone).
-      expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-scale-toolbar')).toBe(true);
       // Empty-state copy must not assume reels-only publishing
       expect(html).not.toContain('publish reels to');
       expect(hasText('publish posts to')).toBe(true);
@@ -970,9 +970,9 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       // The old >4 gate is gone: the toolbar is always visible once
       // loaded (approved list-redesign behaviour, carried by
       // pagination). Attention cards still render first in the DOM.
-      const { html, hasAttribute } = renderPagesShell({ pages: inputPages, accounts: [sampleActiveAccount] });
+      const { html, hasAttribute } = renderInAppScheduleShell({ pages: inputPages, accounts: [sampleActiveAccount] });
 
-      expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-scale-toolbar')).toBe(true);
       const checkpointIdx = html.indexOf('Delta Checkpoint Page');
       const invalidIdx = html.indexOf('Gamma Expired Page');
       const pausedIdx = html.indexOf('Beta Paused Page');
@@ -984,7 +984,7 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(activeIdx).toBeGreaterThan(pausedIdx);
     });
 
-    it('renders scale toolbar (pages-scale-toolbar, search input, status filter tabs, and account filter) with 5 pages', () => {
+    it('renders scale toolbar (inapp-schedule-scale-toolbar, search input, status filter tabs, and account filter) with 5 pages', () => {
       const fivePages = [
         pageActive1,
         pagePaused,
@@ -993,17 +993,17 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         pageRateLimited,
       ];
 
-      const { hasAttribute, hasText } = renderPagesShell({ pages: fivePages, accounts: [sampleActiveAccount] });
+      const { hasAttribute, hasText } = renderInAppScheduleShell({ pages: fivePages, accounts: [sampleActiveAccount] });
 
-      expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(true);
-      expect(hasAttribute('data-testid', 'pages-search-input')).toBe(true);
-      expect(hasAttribute('data-testid', 'pages-filter-all')).toBe(true);
-      expect(hasAttribute('data-testid', 'pages-filter-active')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-scale-toolbar')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-search-input')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-filter-all')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-filter-active')).toBe(true);
       expect(
-        hasAttribute('data-testid', 'pages-filter-needs-attention')
+        hasAttribute('data-testid', 'inapp-schedule-filter-needs-attention')
       ).toBe(true);
-      expect(hasAttribute('data-testid', 'pages-filter-paused')).toBe(true);
-      expect(hasAttribute('data-testid', 'pages-account-filter')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-filter-paused')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-account-filter')).toBe(true);
       expect(hasText('Sarah Connor')).toBe(true);
       expect(hasText('Marcus Wright')).toBe(true);
 
@@ -1089,16 +1089,16 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         pageCheckpoint,
         pageRateLimited,
       ];
-      const attentionRender = renderPagesShell({ pages: fivePages, accounts: [sampleActiveAccount] });
+      const attentionRender = renderInAppScheduleShell({ pages: fivePages, accounts: [sampleActiveAccount] });
       expect(
-        attentionRender.hasAttribute('data-testid', 'pages-page-subtitle')
+        attentionRender.hasAttribute('data-testid', 'inapp-schedule-page-subtitle')
       ).toBe(true);
       expect(attentionRender.hasText('5 connected pages')).toBe(true);
       expect(attentionRender.hasText('3 require reconnecting')).toBe(true);
 
       // 2. All connected scenario — no contradictory "All operational" claim (Spec 102)
       const healthyPages = [pageActive1, pagePaused];
-      const healthyRender = renderPagesShell({ pages: healthyPages, accounts: [sampleActiveAccount] });
+      const healthyRender = renderInAppScheduleShell({ pages: healthyPages, accounts: [sampleActiveAccount] });
       expect(
         healthyRender.hasText('2 connected pages')
       ).toBe(true);
@@ -1106,29 +1106,29 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
     });
 
     it('renders scale toolbar with a single page (no >4 gate)', () => {
-      const { hasAttribute } = renderPagesShell({ pages: [pageActive1], accounts: [sampleActiveAccount] });
+      const { hasAttribute } = renderInAppScheduleShell({ pages: [pageActive1], accounts: [sampleActiveAccount] });
 
-      expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(true);
-      expect(hasAttribute('data-testid', 'pages-search-input')).toBe(true);
-      expect(hasAttribute('data-testid', 'pages-filter-all')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-scale-toolbar')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-search-input')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-filter-all')).toBe(true);
     });
 
     it('renders scale toolbar with zero pages (empty state still shows, toolbar is not gated)', () => {
-      const { hasAttribute } = renderPagesShell({ pages: [], accounts: [sampleActiveAccount] });
+      const { hasAttribute } = renderInAppScheduleShell({ pages: [], accounts: [sampleActiveAccount] });
 
-      expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(true);
-      expect(hasAttribute('data-testid', 'pages-search-input')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-scale-toolbar')).toBe(true);
+      expect(hasAttribute('data-testid', 'inapp-schedule-search-input')).toBe(true);
     });
 
     it('never renders an expired-connection banner on the Pages list, even when an account is expired (expired accounts belong in Accounts)', () => {
-      const { hasAttribute } = renderPagesShell({ pages: [pageActive1], accounts: [sampleActiveAccount, sampleExpiredAccount] });
+      const { hasAttribute } = renderInAppScheduleShell({ pages: [pageActive1], accounts: [sampleActiveAccount, sampleExpiredAccount] });
 
       expect(hasAttribute('data-testid', 'pages-expired-connection-banner')).toBe(false);
       expect(hasAttribute('data-testid', 'pages-reconnect-btn')).toBe(false);
     });
 
     it('renders no expired-connection banner when all accounts are connected', () => {
-      const { hasAttribute } = renderPagesShell({ pages: [pageActive1], accounts: [sampleActiveAccount] });
+      const { hasAttribute } = renderInAppScheduleShell({ pages: [pageActive1], accounts: [sampleActiveAccount] });
 
       expect(hasAttribute('data-testid', 'pages-expired-connection-banner')).toBe(false);
     });
@@ -1153,8 +1153,8 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
     });
   });
 
-  describe('TenantDedicatedPageView (/tenant/[subdomain]/pages/[pageId]/page.tsx)', () => {
-    it('renders the dedicated page placeholder (dedicated-page-placeholder) and "Back to Schedule" navigation (back-to-pages-btn)', () => {
+  describe('TenantDedicatedPageView (/tenant/[subdomain]/inapp-schedule/[pageId]/page.tsx)', () => {
+    it('renders the dedicated page placeholder (dedicated-page-placeholder) and "Back to In-App Schedule" navigation (back-to-inapp-schedule-btn)', () => {
       // PR-131-3: the frame reads through React Query — the static
       // render needs a provider (fresh client, queries stay pending).
       const { hasAttribute, hasText } = render(
@@ -1170,13 +1170,13 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(hasAttribute('data-testid', 'dedicated-page-placeholder')).toBe(
         true
       );
-      expect(hasAttribute('data-testid', 'back-to-pages-btn')).toBe(true);
-      expect(hasText('Back to Schedule')).toBe(true);
+      expect(hasAttribute('data-testid', 'back-to-inapp-schedule-btn')).toBe(true);
+      expect(hasText('Back to In-App Schedule')).toBe(true);
       expect(hasText('Cyberdyne Reels')).toBe(true);
       expect(hasText('Page reference: page-uuid-1')).toBe(true);
       expect(hasText('Dedicated Page Management Workspace')).toBe(true);
 
-      // Verify clicking "Back to Schedule" navigates to /tenant/acme/pages
+      // Verify clicking "Back to In-App Schedule" navigates to /tenant/acme/inapp-schedule
       const tree = renderAndCaptureTree(() =>
         TenantDedicatedPageView({
           subdomainProp: 'acme',
@@ -1184,50 +1184,50 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
           pageNameProp: 'Cyberdyne Reels',
         })
       );
-      const backBtn = findElementByTestId(tree, 'back-to-pages-btn');
+      const backBtn = findElementByTestId(tree, 'back-to-inapp-schedule-btn');
       expect(backBtn).not.toBeNull();
-      expect(backBtn?.props.href).toBe('/tenant/acme/pages');
+      expect(backBtn?.props.href).toBe('/tenant/acme/inapp-schedule');
 
       const preventDefault = vi.fn();
       backBtn?.props.onClick({ preventDefault });
       expect(preventDefault).toHaveBeenCalledTimes(1);
-      expect(mockPush).toHaveBeenCalledWith('/tenant/acme/pages');
+      expect(mockPush).toHaveBeenCalledWith('/tenant/acme/inapp-schedule');
     });
   });
 
-  describe('PagesEmptyState Component', () => {
+  describe('InAppScheduleEmptyState Component', () => {
     it('shows missing-app guidance with a Settings → Facebook link only when the details are known to be missing (Spec 109)', () => {
       const missing = render(
-        <PagesEmptyState
+        <InAppScheduleEmptyState
           onAddPage={vi.fn()}
           subdomain="acme"
           facebookAppConfigured={false}
         />
       );
       expect(
-        missing.hasAttribute('data-testid', 'pages-empty-facebook-app-guidance')
+        missing.hasAttribute('data-testid', 'inapp-schedule-empty-facebook-app-guidance')
       ).toBe(true);
       expect(
-        missing.hasAttribute('data-testid', 'pages-empty-settings-facebook-link')
+        missing.hasAttribute('data-testid', 'inapp-schedule-empty-settings-facebook-link')
       ).toBe(true);
       expect(missing.html).toContain('href="/tenant/acme/settings?tab=byoc"');
 
       const configured = render(
-        <PagesEmptyState
+        <InAppScheduleEmptyState
           onAddPage={vi.fn()}
           subdomain="acme"
           facebookAppConfigured={true}
         />
       );
       expect(
-        configured.hasAttribute('data-testid', 'pages-empty-facebook-app-guidance')
+        configured.hasAttribute('data-testid', 'inapp-schedule-empty-facebook-app-guidance')
       ).toBe(false);
     });
 
     it('invokes onAddPage when the empty state Add Page button is clicked', () => {
       const onAddPage = vi.fn();
       const tree = renderAndCaptureTree(() =>
-        PagesEmptyState({ onAddPage })
+        InAppScheduleEmptyState({ onAddPage })
       );
       const btn = findElementByTestId(tree, 'empty-state-add-page-btn');
       expect(btn).not.toBeNull();
