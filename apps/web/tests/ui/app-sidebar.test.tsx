@@ -368,9 +368,10 @@ describe('AppSidebar prefetch (perf round 1)', () => {
   });
 
   // Spec 170 F2: the 10 top-level leaves no longer viewport-prefetch
-  // (same move PR #181 made for collapsible leaves). '/tenant/acme/'
-  // covers both the branding link and the Home leaf — both render with
-  // prefetch off.
+  // (same move PR #181 made for collapsible leaves). The branding link
+  // points at the same Home route as the Home leaf, so it gets the same
+  // treatment — in this render it is '/seller' (renderSidebar's
+  // brandingHref), pinned below alongside the leaves.
   it('top-level leaves render with prefetch off (spec 170 F2)', () => {
     renderSidebar(getUserSections('acme', false));
     for (const href of TOP_LEVEL_LEAF_HREFS) {
@@ -379,6 +380,11 @@ describe('AppSidebar prefetch (perf round 1)', () => {
       for (const link of recorded) {
         expect(link.prefetch).toBe(false);
       }
+    }
+    const branding = recordedLinkProps.filter((link) => link.href === '/seller');
+    expect(branding.length).toBeGreaterThan(0);
+    for (const link of branding) {
+      expect(link.prefetch).toBe(false);
     }
   });
 
