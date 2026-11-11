@@ -48,15 +48,15 @@
 INSERT INTO public.schedule_destinations (
   id, workspace_id, account_id, platform, external_destination_id,
   name, handle, avatar_url, timezone, status,
-  encrypted_destination_token, next_allowed_publish_at, rate_usage_pct,
-  metadata, created_at, updated_at, source_destination_id
+  encrypted_destination_token, rate_usage_pct,
+  metadata, created_at, updated_at, refresh_lease_owner, refresh_lease_expires_at, source_destination_id
 )
 SELECT
   gen_random_uuid(),
   d.workspace_id, d.account_id, d.platform, d.external_destination_id,
   d.name, d.handle, d.avatar_url, d.timezone, d.status,
-  d.encrypted_destination_token, d.next_allowed_publish_at, d.rate_usage_pct,
-  d.metadata, d.created_at, d.updated_at, d.id
+  d.encrypted_destination_token, d.rate_usage_pct,
+  d.metadata, d.created_at, d.updated_at, d.refresh_lease_owner, d.refresh_lease_expires_at, d.id
 FROM public.destinations d
 WHERE EXISTS (SELECT 1 FROM public.posting_slots ps WHERE ps.destination_id = d.id)
    OR EXISTS (SELECT 1 FROM public.queue_items qi WHERE qi.destination_id = d.id)
@@ -83,15 +83,15 @@ ON CONFLICT (account_id, external_destination_id) DO NOTHING;
 INSERT INTO public.adu_destinations (
   id, workspace_id, account_id, platform, external_destination_id,
   name, handle, avatar_url, timezone, status,
-  encrypted_destination_token, next_allowed_publish_at, rate_usage_pct,
-  metadata, created_at, updated_at, source_destination_id
+  encrypted_destination_token, rate_usage_pct,
+  metadata, created_at, updated_at, refresh_lease_owner, refresh_lease_expires_at, source_destination_id
 )
 SELECT
   gen_random_uuid(),
   d.workspace_id, d.account_id, d.platform, d.external_destination_id,
   d.name, d.handle, d.avatar_url, d.timezone, d.status,
-  d.encrypted_destination_token, d.next_allowed_publish_at, d.rate_usage_pct,
-  d.metadata, d.created_at, d.updated_at, d.id
+  d.encrypted_destination_token, d.rate_usage_pct,
+  d.metadata, d.created_at, d.updated_at, d.refresh_lease_owner, d.refresh_lease_expires_at, d.id
 FROM public.destinations d
 WHERE EXISTS (SELECT 1 FROM public.adu_configs ac WHERE ac.destination_id = d.id)
 ON CONFLICT (account_id, external_destination_id) DO NOTHING;
@@ -102,15 +102,15 @@ ON CONFLICT (account_id, external_destination_id) DO NOTHING;
 INSERT INTO public.mirror_destinations (
   id, workspace_id, account_id, platform, external_destination_id,
   name, handle, avatar_url, timezone, status,
-  encrypted_destination_token, next_allowed_publish_at, rate_usage_pct,
-  metadata, created_at, updated_at, source_destination_id
+  encrypted_destination_token, rate_usage_pct,
+  metadata, created_at, updated_at, refresh_lease_owner, refresh_lease_expires_at, source_destination_id
 )
 SELECT
   gen_random_uuid(),
   d.workspace_id, d.account_id, d.platform, d.external_destination_id,
   d.name, d.handle, d.avatar_url, d.timezone, d.status,
-  d.encrypted_destination_token, d.next_allowed_publish_at, d.rate_usage_pct,
-  d.metadata, d.created_at, d.updated_at, d.id
+  d.encrypted_destination_token, d.rate_usage_pct,
+  d.metadata, d.created_at, d.updated_at, d.refresh_lease_owner, d.refresh_lease_expires_at, d.id
 FROM public.destinations d
 WHERE EXISTS (
   SELECT 1 FROM public.mirrors m

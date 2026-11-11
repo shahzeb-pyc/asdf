@@ -201,12 +201,13 @@ export type DatabaseDestinationRow = z.infer<typeof DatabaseDestinationRowSchema
  * `schedule_destinations`, `adu_destinations`, and `mirror_destinations`
  * (spec 166 §4.2, migrations 20261111020000 / 20261111030000). Field for
  * field identical to `DatabaseDestinationRowSchema` above (including the
- * `.passthrough()` boundary correction and the deliberate omission of
- * `next_allowed_publish_at` — the column exists in the table, the row
- * schema does not model it, exactly as for `destinations`), plus the
- * one extra column: `source_destination_id`, the `destinations.id` the
- * copy was backfilled from (provenance, NOT a foreign key; NULL for
- * rows created after the split).
+ * `.passthrough()` boundary correction and the deliberate omissions:
+ * `next_allowed_publish_at` was dropped from `destinations` by
+ * 20261102160000, and the refresh-lease pair is worker-internal
+ * coordination state the row schema does not model — exactly as for
+ * `destinations`), plus the one extra column: `source_destination_id`,
+ * the `destinations.id` the copy was backfilled from (provenance, NOT a
+ * foreign key; NULL for rows created after the split).
  */
 export const DatabaseSectionDestinationRowSchema = z
   .object({

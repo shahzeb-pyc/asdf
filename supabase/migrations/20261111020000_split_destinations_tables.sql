@@ -5,8 +5,12 @@
 -- Design (spec.md §4): one table per section — `schedule_destinations`
 -- (Schedule / In-App Schedule, custom posts), `adu_destinations` (Auto
 -- Download/Upload), `mirror_destinations` (Auto Repost / TikTok mirrors).
--- Each table is byte-identical to `destinations` as defined in
--- 20261022120000_unified_schema_migration.sql §4c, plus ONE extra column
+-- Each table is byte-identical to the CURRENT `destinations` columns —
+-- 20261022120000 §4c as amended since: `next_allowed_publish_at` was
+-- dropped by 20261102160000 (cooldown-pacing removal) and the
+-- token-refresh lease pair `refresh_lease_owner` /
+-- `refresh_lease_expires_at` was added by 20261022130000 (spec 121
+-- Scope 9, per-connection single-flight lease) — plus ONE extra column
 -- `source_destination_id` (UUID NULL, provenance — NOT a foreign key).
 -- All three copies get NEW ids at backfill; the old table is never
 -- re-pointed in this PR.
@@ -37,11 +41,12 @@ CREATE TABLE public.schedule_destinations (
   status VARCHAR(30) NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'rate_limited', 'disconnected', 'error')),
   encrypted_destination_token TEXT NULL,
-  next_allowed_publish_at TIMESTAMPTZ NULL,
   rate_usage_pct SMALLINT NOT NULL DEFAULT 0 CHECK (rate_usage_pct BETWEEN 0 AND 100),
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  refresh_lease_owner TEXT NULL,
+  refresh_lease_expires_at TIMESTAMPTZ NULL,
   source_destination_id UUID NULL,
   CONSTRAINT uq_schedule_destinations_account_external UNIQUE (account_id, external_destination_id)
 );
@@ -64,11 +69,12 @@ CREATE TABLE public.adu_destinations (
   status VARCHAR(30) NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'rate_limited', 'disconnected', 'error')),
   encrypted_destination_token TEXT NULL,
-  next_allowed_publish_at TIMESTAMPTZ NULL,
   rate_usage_pct SMALLINT NOT NULL DEFAULT 0 CHECK (rate_usage_pct BETWEEN 0 AND 100),
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  refresh_lease_owner TEXT NULL,
+  refresh_lease_expires_at TIMESTAMPTZ NULL,
   source_destination_id UUID NULL,
   CONSTRAINT uq_adu_destinations_account_external UNIQUE (account_id, external_destination_id)
 );
@@ -91,11 +97,12 @@ CREATE TABLE public.mirror_destinations (
   status VARCHAR(30) NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'rate_limited', 'disconnected', 'error')),
   encrypted_destination_token TEXT NULL,
-  next_allowed_publish_at TIMESTAMPTZ NULL,
   rate_usage_pct SMALLINT NOT NULL DEFAULT 0 CHECK (rate_usage_pct BETWEEN 0 AND 100),
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  refresh_lease_owner TEXT NULL,
+  refresh_lease_expires_at TIMESTAMPTZ NULL,
   source_destination_id UUID NULL,
   CONSTRAINT uq_mirror_destinations_account_external UNIQUE (account_id, external_destination_id)
 );
