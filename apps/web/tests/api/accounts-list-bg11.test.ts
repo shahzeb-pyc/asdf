@@ -524,7 +524,6 @@ class FakePostgrestQuery {
     for (let i = this.orders.length - 1; i >= 0; i--) {
       const { column, ascending } = this.orders[i];
       rows = [...rows].sort((a, b) => {
-      rows = [...rows].sort((a, b) => {
         const av = fakeValue(a, column);
         const bv = fakeValue(b, column);
         if (av === bv) return 0;
