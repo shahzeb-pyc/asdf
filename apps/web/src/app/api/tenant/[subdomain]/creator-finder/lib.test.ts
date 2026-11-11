@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { listSavedCreators, saveCreatorsToDb } from './lib';
+import { listSavedCreators, listSavedCreatorsPage, saveCreatorsToDb } from './lib';
 
 /**
  * listSavedCreators paged fetch (verification SEND BACK B1).
@@ -38,22 +38,73 @@ type QueryResult = { data: unknown[] | null; error: unknown };
 /** Minimal Supabase query-builder fake honouring .range() slicing. */
 class FakeQuery {
   public ranges: Array<[number, number]> = [];
+  private eqFilters: Record<string, string> = {};
+  private orPattern: string | null = null;
+  private headCount = false;
+  public countError: unknown = null;
 
   public constructor(
     private readonly rows: Record<string, unknown>[],
     private readonly errorOnRangeIndex?: number,
   ) {}
 
-  public select(): this {
+  public select(
+    _columns?: string,
+    options?: { count?: string; head?: boolean },
+  ): this {
+    if (options?.head) this.headCount = true;
     return this;
   }
 
-  public eq(): this {
+  public eq(column: string, value: string): this {
+    this.eqFilters[column] = value;
+    return this;
+  }
+
+  public or(filters: string): this {
+    this.orPattern = filters;
     return this;
   }
 
   public order(): this {
     return this;
+  }
+
+  /** Rows after the recorded filters (eq on source + ilike search). */
+  private filteredRows(): Record<string, unknown>[] {
+    let rows = this.rows;
+    const source = this.eqFilters.source;
+    if (source !== undefined) {
+      rows = rows.filter((row) => row.source === source);
+    }
+    if (this.orPattern) {
+      const match = /"%([^"]*)%"/.exec(this.orPattern);
+      const needle = (match?.[1] ?? '')
+        .replaceAll('\\%', '%')
+        .replaceAll('\\_', '_')
+        .replaceAll('\\\\', '\\')
+        .toLowerCase();
+      rows = rows.filter((row) => {
+        const name = String(row.display_name ?? '').toLowerCase();
+        const handle = String(row.handle ?? '').toLowerCase();
+        return name.includes(needle) || handle.includes(needle);
+      });
+    }
+    return rows;
+  }
+
+  /**
+   * Thenable so `await query` works for the count-head query: it resolves
+   * with the filtered count, never rows.
+   */
+  public then(
+    resolve: (value: { count: number | null; error: unknown }) => void,
+  ): void {
+    if (this.countError) {
+      resolve({ count: null, error: this.countError });
+      return;
+    }
+    resolve({ count: this.filteredRows().length, error: null });
   }
 
   public range(from: number, to: number): Promise<QueryResult> {
@@ -62,8 +113,9 @@ class FakeQuery {
     if (this.errorOnRangeIndex === index) {
       return Promise.resolve({ data: null, error: { code: 'PGRST500' } });
     }
+    const rows = this.filteredRows();
     return Promise.resolve({
-      data: this.rows.slice(from, to + 1),
+      data: rows.slice(from, to + 1),
       error: null,
     });
   }
@@ -250,5 +302,155 @@ describe('saveCreatorsToDb enrichment merge', () => {
     expect(fake.upserted[0]?.bio).toBe('Fresh bio');
     expect(fake.upserted[0]?.following_count).toBe(99);
     expect(fake.upserted[0]?.hashtags).toEqual(['fresh']);
+  });
+});
+
+describe('listSavedCreatorsPage (spec 169)', () => {
+  function pageRow(
+    index: number,
+    source: 'trending' | 'niche' | 'similar' = 'trending',
+  ): Record<string, unknown> {
+    return {
+      ...makeRow(index),
+      display_name: `User ${index}`,
+      source,
+    };
+  }
+
+  it('pages in the database: 65 rows come back 30 / 30 / 5 with the count total', async () => {
+    const rows = Array.from({ length: 65 }, (_, i) => pageRow(i));
+    const fake = new FakeSupabase(rows);
+    const page1 = await listSavedCreatorsPage(
+      asClient(fake),
+      'workspace-1',
+      'user-1',
+      { page: 1 },
+    );
+    expect(page1?.creators).toHaveLength(30);
+    expect(page1?.total).toBe(65);
+    expect(page1?.totalPages).toBe(3);
+    expect(page1?.page).toBe(1);
+    expect(page1?.pageSize).toBe(30);
+    // One range per page — the database does the paging, not memory.
+    expect(fake.query.ranges).toEqual([[0, 29]]);
+    const page3 = await listSavedCreatorsPage(
+      asClient(new FakeSupabase(rows)),
+      'workspace-1',
+      'user-1',
+      { page: 3 },
+    );
+    expect(page3?.creators).toHaveLength(5);
+    expect(page3?.page).toBe(3);
+  });
+
+  it('filters by source in the database', async () => {
+    const rows = [
+      ...Array.from({ length: 4 }, (_, i) => pageRow(i, 'trending')),
+      ...Array.from({ length: 3 }, (_, i) => pageRow(10 + i, 'niche')),
+    ];
+    const fake = new FakeSupabase(rows);
+    const result = await listSavedCreatorsPage(
+      asClient(fake),
+      'workspace-1',
+      'user-1',
+      { source: 'niche', page: 1 },
+    );
+    expect(result?.total).toBe(3);
+    expect(result?.creators).toHaveLength(3);
+    expect(result?.creators.map((c) => c.source)).toEqual([
+      'niche',
+      'niche',
+      'niche',
+    ]);
+  });
+
+  it('searches display name or handle, case-insensitively, ignoring a leading @', async () => {
+    const rows = [
+      { ...pageRow(0), display_name: 'Alice Fit', handle: 'alice' },
+      { ...pageRow(1), display_name: 'Bob Daily', handle: 'bob' },
+      { ...pageRow(2), display_name: 'Carol', handle: 'carol' },
+    ];
+    const byName = await listSavedCreatorsPage(
+      asClient(new FakeSupabase(rows)),
+      'workspace-1',
+      'user-1',
+      { q: 'FIT', page: 1 },
+    );
+    expect(byName?.creators.map((c) => c.handle)).toEqual(['alice']);
+    const byHandle = await listSavedCreatorsPage(
+      asClient(new FakeSupabase(rows)),
+      'workspace-1',
+      'user-1',
+      { q: '@bob', page: 1 },
+    );
+    expect(byHandle?.creators.map((c) => c.handle)).toEqual(['bob']);
+    const noMatch = await listSavedCreatorsPage(
+      asClient(new FakeSupabase(rows)),
+      'workspace-1',
+      'user-1',
+      { q: 'zzz', page: 1 },
+    );
+    expect(noMatch?.creators).toEqual([]);
+    expect(noMatch?.total).toBe(0);
+    expect(noMatch?.totalPages).toBe(0);
+  });
+
+  it('a LIKE wildcard in the search matches literally, not everything', async () => {
+    const rows = [
+      { ...pageRow(0), display_name: 'Percent', handle: '100%real' },
+      { ...pageRow(1), display_name: 'Plain', handle: 'plain' },
+      { ...pageRow(2), display_name: 'Under Score', handle: 'user_1' },
+      { ...pageRow(3), display_name: 'User Zero', handle: 'user0' },
+    ];
+    const percent = await listSavedCreatorsPage(
+      asClient(new FakeSupabase(rows)),
+      'workspace-1',
+      'user-1',
+      { q: '%', page: 1 },
+    );
+    expect(percent?.creators.map((c) => c.handle)).toEqual(['100%real']);
+    const underscore = await listSavedCreatorsPage(
+      asClient(new FakeSupabase(rows)),
+      'workspace-1',
+      'user-1',
+      { q: 'user_', page: 1 },
+    );
+    expect(underscore?.creators.map((c) => c.handle)).toEqual(['user_1']);
+  });
+
+  it('clamps a page past the end to the last page', async () => {
+    const rows = Array.from({ length: 65 }, (_, i) => pageRow(i));
+    const result = await listSavedCreatorsPage(
+      asClient(new FakeSupabase(rows)),
+      'workspace-1',
+      'user-1',
+      { page: 99 },
+    );
+    expect(result?.page).toBe(3);
+    expect(result?.creators).toHaveLength(5);
+  });
+
+  it('fails loud with null on a count failure or a page failure', async () => {
+    const consoleSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+    try {
+      const rows = Array.from({ length: 5 }, (_, i) => pageRow(i));
+      const countFail = new FakeSupabase(rows);
+      countFail.query.countError = { code: 'PGRST500' };
+      expect(
+        await listSavedCreatorsPage(asClient(countFail), 'workspace-1', 'user-1', {
+          page: 1,
+        }),
+      ).toBeNull();
+      const pageFail = new FakeSupabase(rows, 0);
+      expect(
+        await listSavedCreatorsPage(asClient(pageFail), 'workspace-1', 'user-1', {
+          page: 1,
+        }),
+      ).toBeNull();
+    } finally {
+      consoleSpy.mockRestore();
+    }
   });
 });

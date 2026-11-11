@@ -237,54 +237,6 @@ export const SavedCreatorListQuerySchema = z.object({
 });
 export type SavedCreatorListQuery = z.infer<typeof SavedCreatorListQuerySchema>;
 
-/**
- * Server-side Saved filter: both conditions must match. Search is a
- * case-insensitive substring over display name or handle (a leading
- * @ on the query is ignored, so "@alice" matches handle "alice").
- * Source 'all' (or absent) matches every source.
- */
-export function filterSavedCreators(
-  creators: ReadonlyArray<SavedCreator>,
-  query: { q?: string | undefined; source?: string | undefined },
-): SavedCreator[] {
-  const needle = (query.q ?? '').trim().replace(/^@/, '').toLowerCase();
-  const source = query.source ?? 'all';
-  return creators.filter((creator) => {
-    if (source !== 'all' && creator.source !== source) return false;
-    if (!needle) return true;
-    const name = (creator.displayName ?? '').toLowerCase();
-    return (
-      name.includes(needle) || creator.handle.toLowerCase().includes(needle)
-    );
-  });
-}
-
-/** Slice a filtered Saved list into one page (page clamped into range). */
-export function paginateSavedCreators(
-  creators: ReadonlyArray<SavedCreator>,
-  page: number,
-  pageSize: number = SAVED_PAGE_SIZE,
-): {
-  creators: SavedCreator[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-} {
-  const total = creators.length;
-  const totalPages = Math.ceil(total / pageSize);
-  const effectivePage =
-    total === 0 ? 1 : Math.min(Math.max(1, page), totalPages);
-  const start = (effectivePage - 1) * pageSize;
-  return {
-    creators: creators.slice(start, start + pageSize),
-    total,
-    page: effectivePage,
-    pageSize,
-    totalPages,
-  };
-}
-
 export const SavedCreatorListResponseSchema = z.object({
   creators: z.array(SavedCreatorSchema),
   total: z.number().int().nonnegative(),
@@ -320,6 +272,32 @@ export const SimilarResponseSchema = CreatorListResponseSchema.extend({
   displayName: z.string().nullable(),
 });
 export type SimilarResponse = z.infer<typeof SimilarResponseSchema>;
+
+/**
+ * Enrichment cap (spec 169): one enrich call carries at most this many
+ * creators. No search can legitimately return more — Similar caps at ~520
+ * by construction — so anything above this is an abusive or mistaken caller.
+ */
+export const ENRICH_MAX_CREATORS = 600;
+
+/**
+ * Return-first enrichment (spec 169): the page POSTs the creators a search
+ * just returned, with where they came from so the endpoint can save the
+ * enriched versions. The save reuses the search-time merge semantics.
+ */
+export const CreatorEnrichRequestSchema = z.object({
+  source: z.enum(['trending', 'niche', 'similar']),
+  searchTerm: z.string().trim().min(1).max(200),
+  creators: z.array(CreatorSchema).min(1).max(ENRICH_MAX_CREATORS),
+});
+export type CreatorEnrichRequest = z.infer<typeof CreatorEnrichRequestSchema>;
+
+/** Enriched creators in request order, plus whether their save failed. */
+export const CreatorEnrichResponseSchema = z.object({
+  creators: z.array(CreatorSchema),
+  saveFailed: z.boolean().optional(),
+});
+export type CreatorEnrichResponse = z.infer<typeof CreatorEnrichResponseSchema>;
 
 const NullableString = z.string().nullable().optional();
 
@@ -1255,6 +1233,18 @@ export async function fetchSimilarCreators(
  */
 export const COUNTIK_BASE_URL = 'https://countik.com/api';
 const COUNTIK_TIMEOUT_MS = 30_000;
+/**
+ * Enrichment leg timeout (spec 169): one slow `exist` / `analyze` call used to
+ * hold a whole search for 30s. A leg that takes longer than this is treated
+ * as unavailable for that creator instead of holding everyone up.
+ */
+export const COUNTIK_ENRICH_LEG_TIMEOUT_MS = 5_000;
+/**
+ * Enrichment budget (spec 169): one `enrichCreators` call never runs longer
+ * than this overall, however many creators it was given. Creators not
+ * finished inside the budget are marked countikUnavailable.
+ */
+export const COUNTIK_ENRICH_BUDGET_MS = 10_000;
 // Same browser header the secuid Worker sends to this upstream:
 // a minimal-header datacenter request is the profile most likely
 // to be challenged, so this matches the Worker's proven header.
@@ -1351,6 +1341,10 @@ async function fetchCountikJson(
     baseUrl?: string | undefined;
     /** Test override for the proxy secret; production reads env. */
     proxySecret?: string | undefined;
+    /** Per-call leg timeout override; default COUNTIK_TIMEOUT_MS. */
+    timeoutMs?: number | undefined;
+    /** Abort the call when this fires (enrichment budget); combined with the leg timeout. */
+    signal?: AbortSignal | undefined;
   },
 ): Promise<unknown> {
   const baseUrl = options.baseUrl ?? resolveCountikBaseUrl();
@@ -1358,10 +1352,14 @@ async function fetchCountikJson(
   const proxySecret =
     options.proxySecret ?? (isProxy ? countikEnv('COUNTIK_PROXY_SECRET') : undefined);
   const url = `${baseUrl}${path}`;
+  const timeoutMs = options.timeoutMs ?? COUNTIK_TIMEOUT_MS;
+  const signal = options.signal
+    ? AbortSignal.any([AbortSignal.timeout(timeoutMs), options.signal])
+    : AbortSignal.timeout(timeoutMs);
   let res: Response;
   try {
     res = await options.fetchFn(url, {
-      signal: AbortSignal.timeout(COUNTIK_TIMEOUT_MS),
+      signal,
       method: options.method ?? 'GET',
       headers: {
         Accept: 'application/json',
@@ -1478,6 +1476,12 @@ export interface CountikCallOptions {
   baseUrl?: string | undefined;
   /** Test override for the proxy secret; production reads env. */
   proxySecret?: string | undefined;
+  /** Per-leg timeout override; enrichment passes its short leg timeout. */
+  timeoutMs?: number | undefined;
+  /** Abort in-flight calls when this fires (enrichment budget). */
+  signal?: AbortSignal | undefined;
+  /** Overall budget for one enrichCreators call; default COUNTIK_ENRICH_BUDGET_MS. */
+  budgetMs?: number | undefined;
 }
 
 /**
@@ -1499,7 +1503,7 @@ export async function fetchCountikEnrichment(
   }
   const existBody = await fetchCountikJson(
     `/exist/${encodeURIComponent(cleanHandle)}`,
-    { fetchFn, endpoint: 'exist', baseUrl: options.baseUrl, proxySecret: options.proxySecret },
+    { fetchFn, endpoint: 'exist', baseUrl: options.baseUrl, proxySecret: options.proxySecret, timeoutMs: options.timeoutMs, signal: options.signal },
   );
   const exist = countikData(existBody);
   // NOTE: exist.verified is deliberately never read — it is
@@ -1513,7 +1517,7 @@ export async function fetchCountikEnrichment(
   }
   const analyzeBody = await fetchCountikJson(
     `/analyze/?sec_user_id=${encodeURIComponent(secUid)}&username=${encodeURIComponent(cleanHandle)}`,
-    { fetchFn, endpoint: 'analyze', baseUrl: options.baseUrl, proxySecret: options.proxySecret },
+    { fetchFn, endpoint: 'analyze', baseUrl: options.baseUrl, proxySecret: options.proxySecret, timeoutMs: options.timeoutMs, signal: options.signal },
   );
   const data = countikData(analyzeBody);
   if (!data) {
@@ -1625,19 +1629,27 @@ export async function fetchCountikEnrichment(
 }
 
 /**
- * Enrich every creator in a result list, in order. A search
- * shows NO cards until this resolves (wait-for-all): routes await
- * it before responding, so the page's loading state covers the
- * whole enrichment. Each creator's failure is isolated — that
- * creator alone is marked countikUnavailable and the rest keep
- * their enrichment. The original TikWM followerCount/verified
- * stay on the creator, so Similar fallback rendering works.
+ * Enrich every creator in a result list, in order — bounded (spec 169).
+ * A search used to show NO cards until this resolved (wait-for-all with a
+ * 30s leg timeout): one slow creator held a whole search for ~32s. Now each
+ * leg times out after COUNTIK_ENRICH_LEG_TIMEOUT_MS and the whole call is
+ * aborted at COUNTIK_ENRICH_BUDGET_MS, so wall time is ~budget however many
+ * creators were given. Creators not finished inside the budget are marked
+ * countikUnavailable, exactly like a per-creator failure — the caller shows
+ * their basic card instead of waiting. Each creator's failure is isolated —
+ * that creator alone is marked countikUnavailable and the rest keep their
+ * enrichment. The original TikWM followerCount/verified stay on the creator,
+ * so Similar fallback rendering works.
  */
 export async function enrichCreators(
   creators: ReadonlyArray<Creator>,
   options: CountikCallOptions = {},
 ): Promise<Creator[]> {
   const results: Creator[] = new Array(creators.length);
+  const budgetMs = options.budgetMs ?? COUNTIK_ENRICH_BUDGET_MS;
+  const legTimeoutMs = options.timeoutMs ?? COUNTIK_ENRICH_LEG_TIMEOUT_MS;
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), budgetMs);
   let next = 0;
   async function worker(): Promise<void> {
     for (;;) {
@@ -1645,8 +1657,16 @@ export async function enrichCreators(
       next += 1;
       if (index >= creators.length) return;
       const creator = creators[index] as Creator;
+      if (controller.signal.aborted) {
+        results[index] = { ...creator, countikUnavailable: true };
+        continue;
+      }
       try {
-        const enrichment = await fetchCountikEnrichment(creator.handle, options);
+        const enrichment = await fetchCountikEnrichment(creator.handle, {
+          ...options,
+          timeoutMs: legTimeoutMs,
+          signal: controller.signal,
+        });
         results[index] = { ...creator, enrichment };
       } catch (err) {
         // Log the failure CLASS only — endpoint, kind, status.
@@ -1675,7 +1695,11 @@ export async function enrichCreators(
     { length: Math.min(COUNTIK_ENRICH_CONCURRENCY, Math.max(1, creators.length)) },
     () => worker(),
   );
-  await Promise.all(workers);
+  try {
+    await Promise.all(workers);
+  } finally {
+    clearTimeout(deadline);
+  }
   return results;
 }
 

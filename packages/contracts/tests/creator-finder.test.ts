@@ -1,15 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  CreatorEnrichRequestSchema,
+  CreatorEnrichResponseSchema,
   CreatorFinderError,
   CreatorSchema,
   dedupeCreators,
+  ENRICH_MAX_CREATORS,
   fetchCreatorsByKeyword,
   fetchRegionList,
   fetchSimilarCreators,
   fetchTrendingCreators,
-  filterSavedCreators,
   NicheSearchFiltersQuerySchema,
-  paginateSavedCreators,
   parseCreatorFinderKeys,
   savedCreatorFromRow,
   savedCreatorsToCsv,
@@ -758,55 +759,8 @@ describe('saved creators', () => {
   });
 });
 
-describe('filterSavedCreators', () => {
-  const creators: SavedCreator[] = [
-    {
-      handle: 'alice',
-      displayName: 'Alice Fit',
-      avatarUrl: null,
-      latestVideoTitle: null,
-      latestVideoCover: null,
-      profileUrl: 'https://www.tiktok.com/@alice',
-      source: 'niche',
-      searchTerm: 'fitness',
-      savedAt: '2026-10-30T08:00:00.000Z',
-    },
-    {
-      handle: 'bob',
-      displayName: 'Bob Daily',
-      avatarUrl: null,
-      latestVideoTitle: null,
-      latestVideoCover: null,
-      profileUrl: 'https://www.tiktok.com/@bob',
-      source: 'trending',
-      searchTerm: 'PK',
-      savedAt: '2026-10-30T08:01:00.000Z',
-    },
-  ];
-
-  it('matches display name or handle, case-insensitively, ignoring a leading @', () => {
-    expect(filterSavedCreators(creators, { q: 'FIT' }).map((c) => c.handle)).toEqual(['alice']);
-    expect(filterSavedCreators(creators, { q: '@bob' }).map((c) => c.handle)).toEqual(['bob']);
-    expect(filterSavedCreators(creators, { q: 'zzz' })).toEqual([]);
-  });
-
-  it('combines search and source: both must match', () => {
-    // 'fit' matches Alice Fit, but Alice was saved from niche, not trending.
-    expect(
-      filterSavedCreators(creators, { q: 'fit', source: 'trending' }).map((c) => c.handle),
-    ).toEqual([]);
-    expect(
-      filterSavedCreators(creators, { q: '', source: 'trending' }).map((c) => c.handle),
-    ).toEqual(['bob']);
-    expect(filterSavedCreators(creators, { source: 'all' }).map((c) => c.handle)).toEqual([
-      'alice',
-      'bob',
-    ]);
-  });
-});
-
-describe('paginateSavedCreators', () => {
-  function saved(handle: string): SavedCreator {
+describe('CreatorEnrichRequestSchema / CreatorEnrichResponseSchema (spec 169)', () => {
+  function creator(handle: string) {
     return {
       handle,
       displayName: handle,
@@ -814,22 +768,64 @@ describe('paginateSavedCreators', () => {
       latestVideoTitle: null,
       latestVideoCover: null,
       profileUrl: `https://www.tiktok.com/@${handle}`,
-      source: 'trending',
-      searchTerm: 'PK',
-      savedAt: '2026-10-30T08:00:00.000Z',
     };
   }
 
-  it('slices 30 per page and clamps an out-of-range page', () => {
-    const creators = Array.from({ length: 65 }, (_, i) => saved(`user${i}`));
-    const page1 = paginateSavedCreators(creators, 1);
-    expect(page1.creators).toHaveLength(30);
-    expect(page1.total).toBe(65);
-    expect(page1.totalPages).toBe(3);
-    expect(paginateSavedCreators(creators, 3).creators).toHaveLength(5);
-    // A page past the end lands on the last page instead of empty.
-    expect(paginateSavedCreators(creators, 99).page).toBe(3);
-    expect(paginateSavedCreators([], 1).totalPages).toBe(0);
+  it('accepts a valid enrich request and response', () => {
+    const parsed = CreatorEnrichRequestSchema.parse({
+      source: 'trending',
+      searchTerm: 'PK',
+      creators: [creator('alice')],
+    });
+    expect(parsed.source).toBe('trending');
+    expect(parsed.creators).toHaveLength(1);
+    expect(
+      CreatorEnrichResponseSchema.parse({
+        creators: [creator('alice')],
+        saveFailed: false,
+      }).creators,
+    ).toHaveLength(1);
+    expect(CreatorEnrichResponseSchema.parse({ creators: [] }).saveFailed).toBeUndefined();
+  });
+
+  it('rejects an empty creator list, a bad source, and an over-long search term', () => {
+    expect(() =>
+      CreatorEnrichRequestSchema.parse({ source: 'trending', searchTerm: 'PK', creators: [] }),
+    ).toThrow();
+    expect(() =>
+      CreatorEnrichRequestSchema.parse({
+        source: 'saved',
+        searchTerm: 'PK',
+        creators: [creator('alice')],
+      }),
+    ).toThrow();
+    expect(() =>
+      CreatorEnrichRequestSchema.parse({
+        source: 'trending',
+        searchTerm: 'x'.repeat(201),
+        creators: [creator('alice')],
+      }),
+    ).toThrow();
+  });
+
+  it('rejects more creators than the abuse cap', () => {
+    const creators = Array.from({ length: ENRICH_MAX_CREATORS + 1 }, (_, i) =>
+      creator(`user${i}`),
+    );
+    expect(() =>
+      CreatorEnrichRequestSchema.parse({
+        source: 'similar',
+        searchTerm: 'alice',
+        creators,
+      }),
+    ).toThrow();
+    expect(
+      CreatorEnrichRequestSchema.parse({
+        source: 'similar',
+        searchTerm: 'alice',
+        creators: creators.slice(0, ENRICH_MAX_CREATORS),
+      }).creators,
+    ).toHaveLength(ENRICH_MAX_CREATORS);
   });
 });
 

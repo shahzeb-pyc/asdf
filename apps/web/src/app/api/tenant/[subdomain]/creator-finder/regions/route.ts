@@ -10,6 +10,7 @@ import {
   getCreatorFinderKeys,
   getCreatorFinderSession,
   getCreatorFinderSupabase,
+  startServerTiming,
 } from '../lib';
 
 export async function GET(
@@ -17,11 +18,13 @@ export async function GET(
   { params }: { params: Promise<{ subdomain: string }> },
 ) {
   const { subdomain } = await params;
+  const timing = startServerTiming();
   const { session, errorResponse } = await getCreatorFinderSession(
     request,
     subdomain,
   );
   if (errorResponse) return errorResponse;
+  timing.split('session');
   try {
     // Daily cap, checked at request start: the country list is
     // itself an upstream call, so it counts like any other
@@ -33,11 +36,15 @@ export async function GET(
       role: session.role,
     });
     if (gate.blocked) return creatorFinderDailyLimitResponse();
+    timing.split('gate');
     const result = await fetchRegionList({
       apiKeys: getCreatorFinderKeys(),
       onUpstreamCall: gate.onUpstreamCall,
     });
-    return NextResponse.json(RegionListResponseSchema.parse(result));
+    timing.split('tikwm');
+    return NextResponse.json(RegionListResponseSchema.parse(result), {
+      headers: { 'Server-Timing': timing.header() },
+    });
   } catch (err) {
     return (
       creatorFinderUsageErrorResponse(err) ?? creatorFinderErrorResponse(err)

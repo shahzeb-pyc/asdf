@@ -3,6 +3,7 @@ import {
   CreatorFinderError,
   getSessionSecret,
   parseCreatorFinderKeys,
+  SAVED_PAGE_SIZE,
   verifySessionToken,
   canAccessTenant,
   savedCreatorFromRow,
@@ -98,6 +99,34 @@ export function logCreatorFinderDbError(
 /** Admin client for creator-finder database access, or null. */
 export function getCreatorFinderSupabase(): SupabaseClient | null {
   return getRouteSupabase();
+}
+
+/**
+ * Per-phase timing for the `Server-Timing` response header, so a slow
+ * Creator Finder call can be attributed to a phase (session / gate /
+ * TikWM / enrich / save) instead of inferred from payload sizes.
+ * Usage: create once per request, `split()` after each phase, pass
+ * `timing.header()` in the response headers.
+ */
+export function startServerTiming(): {
+  split(label: string): void;
+  header(): string;
+} {
+  const start = performance.now();
+  const splits: Array<{ label: string; ms: number }> = [];
+  let last = start;
+  return {
+    split(label: string): void {
+      const now = performance.now();
+      splits.push({ label, ms: now - last });
+      last = now;
+    },
+    header(): string {
+      return splits
+        .map(({ label, ms }) => `${label};dur=${ms.toFixed(1)}`)
+        .join(', ');
+    },
+  };
 }
 
 /** Workspace id for this tenant subdomain and session user, or null. */
@@ -258,6 +287,105 @@ export async function listSavedCreators(
     return creators;
   } catch (err) {
     logCreatorFinderDbError('listSavedCreators', err);
+    return null;
+  }
+}
+
+/**
+ * LIKE pattern for a Saved search needle, mirroring the media route's
+ * `sanitizePostgrestSearchPattern`: LIKE wildcards and the PostgREST
+ * `.or()` quoting are escaped, and the pattern is double-quoted so a
+ * needle containing a comma cannot split the `.or()` filter.
+ */
+function escapeSavedSearchPattern(needle: string): string {
+  const escaped = needle
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('%', '\\%')
+    .replaceAll('_', '\\_');
+  return `"%${escaped}%"`;
+}
+
+/**
+ * One Saved page, filtered and paged in the database (spec 169).
+ * The old route fetched the full list via listSavedCreators and filtered
+ * in memory, so opening Saved paid for every saved creator to show 30
+ * rows. Search semantics are preserved: case-insensitive substring over
+ * display name or handle (a leading @ is ignored), source filter, newest
+ * first (updated_at desc, handle asc tie-break — same as listSavedCreators,
+ * so pages are stable), page clamped into range. The count query and the
+ * page query must apply identical filters — change both together.
+ * Returns null on any database failure so the route can fail loud instead
+ * of showing an empty or partial list as success.
+ */
+export async function listSavedCreatorsPage(
+  supabase: SupabaseClient | null,
+  workspaceId: string,
+  userId: string,
+  query: { q?: string | undefined; source?: string | undefined; page: number },
+): Promise<{
+  creators: SavedCreator[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+} | null> {
+  if (!supabase) return null;
+  const needle = (query.q ?? '').trim().replace(/^@/, '');
+  const source = query.source ?? 'all';
+  const pattern = needle ? escapeSavedSearchPattern(needle) : null;
+  try {
+    let countQuery = supabase
+      .from(SAVED_CREATORS_TABLE)
+      .select('id', { count: 'exact', head: true })
+      .eq('workspace_id', workspaceId)
+      .eq('user_id', userId);
+    if (source !== 'all') countQuery = countQuery.eq('source', source);
+    if (pattern) {
+      countQuery = countQuery.or(
+        `display_name.ilike.${pattern},handle.ilike.${pattern}`,
+      );
+    }
+    const { count, error: countError } = await countQuery;
+    if (countError || count === null) {
+      logCreatorFinderDbError(
+        'listSavedCreatorsPage count',
+        countError ?? new Error('count query returned no count'),
+      );
+      return null;
+    }
+    const total = count;
+    const totalPages =
+      total === 0 ? 0 : Math.ceil(total / SAVED_PAGE_SIZE);
+    const page =
+      total === 0 ? 1 : Math.min(Math.max(1, query.page), totalPages);
+    let pageQuery = supabase
+      .from(SAVED_CREATORS_TABLE)
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .eq('user_id', userId);
+    if (source !== 'all') pageQuery = pageQuery.eq('source', source);
+    if (pattern) {
+      pageQuery = pageQuery.or(
+        `display_name.ilike.${pattern},handle.ilike.${pattern}`,
+      );
+    }
+    const { data, error } = await pageQuery
+      .order('updated_at', { ascending: false })
+      .order('handle', { ascending: true })
+      .range((page - 1) * SAVED_PAGE_SIZE, page * SAVED_PAGE_SIZE - 1);
+    if (error) {
+      logCreatorFinderDbError('listSavedCreatorsPage', error);
+      return null;
+    }
+    const creators: SavedCreator[] = [];
+    for (const row of data ?? []) {
+      const creator = savedCreatorFromRow(row as Record<string, unknown>);
+      if (creator) creators.push(creator);
+    }
+    return { creators, total, page, pageSize: SAVED_PAGE_SIZE, totalPages };
+  } catch (err) {
+    logCreatorFinderDbError('listSavedCreatorsPage', err);
     return null;
   }
 }

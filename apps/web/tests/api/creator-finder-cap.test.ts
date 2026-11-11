@@ -115,6 +115,13 @@ vi.mock(
       getCreatorFinderKeys: () => ['key-1'],
       saveCreatorsToDb: async () => true,
       listSavedCreators: async () => [],
+      listSavedCreatorsPage: async () => ({
+        creators: [],
+        total: 0,
+        page: 1,
+        pageSize: 30,
+        totalPages: 0,
+      }),
     };
   },
 );
