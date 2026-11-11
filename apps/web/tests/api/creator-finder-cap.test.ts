@@ -89,6 +89,7 @@ let mockRole: 'user' | 'admin' = 'user';
 let mockSupabase: SupabaseClient | null = null;
 let upstreamCallsPerFetch = 1;
 let fetchTrendingCalls = 0;
+let mockCreators: Array<Record<string, unknown>> = [];
 
 vi.mock(
   '../../src/app/api/tenant/[subdomain]/creator-finder/lib',
@@ -139,8 +140,13 @@ vi.mock('@fbuploadpro/contracts', async (importOriginal) => {
       for (let i = 0; i < upstreamCallsPerFetch; i += 1) {
         await options.onUpstreamCall?.();
       }
-      return { region: 'PK', creators: [], videosSeen: 0 };
+      return { region: 'PK', creators: mockCreators, videosSeen: 0 };
     },
+    // Deliberately hanging: the route must never await enrichment.
+    // If a later edit re-adds an enrich await to a search route, the
+    // return-first test below times out and fails instead of passing
+    // with a slow search.
+    enrichCreators: () => new Promise<never>(() => {}),
   };
 });
 
@@ -163,6 +169,7 @@ describe('Creator Finder daily cap (routes)', () => {
     mockRole = 'user';
     upstreamCallsPerFetch = 1;
     fetchTrendingCalls = 0;
+    mockCreators = [];
   });
 
   it('blocks at exactly 100 with 429, no upstream call, no count', async () => {
@@ -250,5 +257,55 @@ describe('Creator Finder daily cap (routes)', () => {
     expect(res.status).toBe(200);
     expect(fake.readCalls).toBe(0);
     expect(fake.rpcCalls).toBe(0);
+  });
+});
+
+describe('Creator Finder return-first (routes, spec 169)', () => {
+  let fake: FakeSupabase;
+
+  beforeEach(() => {
+    fake = new FakeSupabase();
+    mockSupabase = asClient(fake);
+    mockRole = 'user';
+    upstreamCallsPerFetch = 1;
+    fetchTrendingCalls = 0;
+    mockCreators = [
+      {
+        handle: 'alice',
+        displayName: 'Alice Fit',
+        avatarUrl: null,
+        latestVideoTitle: null,
+        latestVideoCover: null,
+        profileUrl: 'https://www.tiktok.com/@alice',
+      },
+    ];
+  });
+
+  it('returns unenriched creators fast even when Countik hangs', async () => {
+    // The mocked enrichCreators never resolves: if the route awaited
+    // enrichment (the 32s bug), this race rejects at 2s and the test
+    // fails instead of passing with a slow search.
+    const result = await Promise.race([
+      getTrending(trendingRequest(), params()),
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(
+          () =>
+            reject(new Error('trending search hung waiting for enrichment')),
+          2000,
+        );
+      }),
+    ]);
+    expect(result.status).toBe(200);
+    const body = (await result.json()) as {
+      creators: Array<{
+        handle: string;
+        enrichment?: unknown;
+        countikUnavailable?: unknown;
+      }>;
+    };
+    expect(body.creators).toHaveLength(1);
+    expect(body.creators[0]?.handle).toBe('alice');
+    expect(body.creators[0]?.enrichment).toBeUndefined();
+    expect(body.creators[0]?.countikUnavailable).toBeUndefined();
   });
 });

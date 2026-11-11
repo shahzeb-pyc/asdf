@@ -368,9 +368,17 @@ export function CreatorFinderPage({
   ): Promise<void> {
     if (creators.length === 0) return;
     try {
+      // The enrich schema caps searchTerm at 200 chars, but the search
+      // inputs have no max: a longer keyword must not throw here and
+      // fake a save failure. Truncate — the term is only save
+      // provenance.
       const enriched = await api.post(
         buildTenantApiPath(subdomain, '/creator-finder/enrich'),
-        CreatorEnrichRequestSchema.parse({ source, searchTerm, creators }),
+        CreatorEnrichRequestSchema.parse({
+          source,
+          searchTerm: searchTerm.slice(0, 200),
+          creators,
+        }),
         { schema: CreatorEnrichResponseSchema },
       );
       if (searchSeqRef.current !== seq) return;

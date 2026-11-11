@@ -291,4 +291,70 @@ describe('CreatorFinderPage lazy loading and return-first enrichment (spec 169)'
       ),
     ).toBe(true);
   });
+
+  it('a niche keyword over 200 chars still enriches without the save-failed banner (spec 169 verification B2)', async () => {
+    const keyword = 'a'.repeat(201);
+    const basicCreator = {
+      handle: 'alice',
+      displayName: 'Alice Fit',
+      avatarUrl: null,
+      latestVideoTitle: null,
+      latestVideoCover: null,
+      profileUrl: 'https://www.tiktok.com/@alice',
+    };
+    const enrichedCreator = {
+      ...basicCreator,
+      enrichment: {
+        bio: 'Fitness creator',
+        followerCount: 12400,
+        verified: true,
+        hashtags: [],
+        mentions: [],
+      },
+    };
+    getMock.mockImplementation((path: string) => {
+      if (path.includes('/creator-finder/niche')) {
+        return Promise.resolve({ keyword, creators: [basicCreator] });
+      }
+      if (path.includes('/creator-finder/regions')) {
+        return Promise.resolve({
+          regions: [{ code: 'PK', name: 'Pakistan' }],
+          defaultRegion: 'PK',
+        });
+      }
+      if (path.includes('/creator-finder/usage')) {
+        return Promise.resolve({ used: 0, limit: 100, date: '2026-11-03' });
+      }
+      if (path.includes('/creator-finder/saved')) {
+        return Promise.resolve({
+          creators: [],
+          total: 0,
+          page: 1,
+          pageSize: 30,
+          totalPages: 0,
+        });
+      }
+      return Promise.resolve({});
+    });
+    postMock.mockResolvedValue({
+      creators: [enrichedCreator],
+      saveFailed: false,
+    });
+    renderPage();
+    await screen.findByText('0 of 100 used today');
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'By niche / words' }));
+    fireEvent.change(screen.getByPlaceholderText('e.g. fitness'), {
+      target: { value: keyword },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Find creators' }));
+    await screen.findByText('Fitness creator');
+    expect(screen.queryByText("Couldn't save creators")).toBeNull();
+    const enrichCall = postMock.mock.calls.find((call) =>
+      String(call[0]).includes('/creator-finder/enrich'),
+    );
+    expect(enrichCall).toBeDefined();
+    expect(
+      (enrichCall?.[1] as { searchTerm: string }).searchTerm,
+    ).toHaveLength(200);
+  });
 });
