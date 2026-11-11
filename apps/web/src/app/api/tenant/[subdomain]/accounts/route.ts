@@ -11,7 +11,6 @@ import {
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import {
-  paginateItems,
   paginateMeta,
   parsePaginationParams,
   type PaginationMeta,
@@ -96,6 +95,12 @@ function mapAccountRowToView(row: AccountRow) {
  * passed), run before the fetch on both paths, so the response
  * always reflects stored state. Propagation to destinations is
  * still best-effort per flipped account and never fails the list.
+ *
+ * F3 (spec 170): the UPDATE is skipped entirely when no row is
+ * lapsed — a cheap existence probe runs first, so the common
+ * no-lapse load issues no UPDATE at all. Lapse semantics are
+ * unchanged: when rows ARE lapsed they are flipped (and propagated)
+ * exactly as before.
  */
 async function syncLapsedAccountStatus(
   workspaceId: string,
@@ -117,6 +122,17 @@ async function syncLapsedAccountStatus(
 
   try {
     if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
+      // F3 (spec 170): skip the UPDATE when nothing is lapsed.
+      const lapsed = (await dbClient.query(
+        `SELECT 1 AS one
+         FROM social_accounts
+         WHERE workspace_id = $1 AND status = 'active' AND token_expires_at < now()
+         LIMIT 1`,
+        [workspaceId]
+      )) as Array<{ one?: unknown }>;
+      if (!Array.isArray(lapsed) || lapsed.length === 0) {
+        return;
+      }
       const flipped = (await dbClient.query(
         `UPDATE social_accounts
          SET status = 'expired', updated_at = now()
@@ -132,6 +148,27 @@ async function syncLapsedAccountStatus(
 
     const supabase = (dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()) as SupabaseClient | null;
     if (!supabase) return;
+    // F3 (spec 170): same skip as the SQL path — a head-only count
+    // proves whether any row is lapsed before the UPDATE is issued.
+    // A failed probe is logged and the list proceeds with stored
+    // state; the sync is best-effort and never fails the list.
+    const nowIso = new Date().toISOString();
+    const lapsedCheck = await supabase
+      .from('social_accounts')
+      .select('id', { count: 'exact', head: true })
+      .eq('workspace_id', workspaceId)
+      .eq('status', 'active')
+      .lt('token_expires_at', nowIso);
+    if (lapsedCheck?.error) {
+      console.error(
+        '[handleListAccounts] Failed to check for lapsed account status via Supabase:',
+        lapsedCheck.error
+      );
+      return;
+    }
+    if (!lapsedCheck?.count) {
+      return;
+    }
     const result = (await supabase
       .from('social_accounts')
       .update({ status: 'expired', updated_at: new Date().toISOString() })
@@ -290,13 +327,17 @@ async function fetchSqlAccountsPage(
       sa.token_expires_at,
       sa.created_at,
       sa.updated_at,
+      // F3 (spec 170): connected_pages carries id + name only — the
+      // disconnect dialog renders names, the card only needs the
+      // count, and the card's expanded list falls back to initials
+      // without a page avatar URL. The avatar URLs were the bulk of
+      // the 59 kB list payload for 14 accounts.
       COUNT(d.id)::int AS connected_pages_count,
       COALESCE(
         json_agg(
           json_build_object(
             'id', d.id,
-            'pageName', d.name,
-            'profilePictureUrl', d.avatar_url
+            'pageName', d.name
           ) ORDER BY d.name ASC
         ) FILTER (WHERE d.id IS NOT NULL),
         '[]'::json
@@ -328,7 +369,124 @@ async function fetchSqlAccountsPage(
   };
 }
 
-interface SupabaseAccountJoinRow {
+/**
+ * Minimal structural type for the PostgREST social_accounts /
+ * destinations query builder, covering only the filter/ordering
+ * methods this file chains, plus the awaited result shape. Same
+ * pattern as the pages route's SupabaseDestinationsQuery: the
+ * contracts Database type carries no Relationships metadata, so the
+ * generated builder type degrades at the select boundary.
+ */
+interface SupabaseAccountsQuery {
+  eq(column: string, value: unknown): SupabaseAccountsQuery;
+  neq(column: string, value: unknown): SupabaseAccountsQuery;
+  gt(column: string, value: unknown): SupabaseAccountsQuery;
+  gte(column: string, value: unknown): SupabaseAccountsQuery;
+  lt(column: string, value: unknown): SupabaseAccountsQuery;
+  lte(column: string, value: unknown): SupabaseAccountsQuery;
+  ilike(column: string, pattern: string): SupabaseAccountsQuery;
+  in(column: string, values: unknown[]): SupabaseAccountsQuery;
+  or(filters: string): SupabaseAccountsQuery;
+  order(
+    column: string,
+    options?: { ascending?: boolean }
+  ): SupabaseAccountsQuery;
+  range(from: number, to: number): SupabaseAccountsQuery;
+  then<TResult1 = SupabaseAccountsQueryResult, TResult2 = never>(
+    onfulfilled?:
+      | ((
+          value: SupabaseAccountsQueryResult
+        ) => TResult1 | PromiseLike<TResult1>)
+      | null,
+    onrejected?:
+      | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+      | null
+  ): PromiseLike<TResult1 | TResult2>;
+}
+
+interface SupabaseAccountsQueryResult {
+  data: unknown;
+  error: { message: string } | null;
+  count: number | null;
+}
+
+/**
+ * Escapes a user search term for LIKE/ILIKE patterns — same
+ * backslash convention as the pages route's escapeLikePattern and
+ * the SQL path's ESCAPE '\': % and _ match literally, and a
+ * literal backslash must not escape the next character.
+ */
+function escapeLikePattern(input: string): string {
+  return input
+    .replaceAll('\\', '\\\\')
+    .replaceAll('%', '\\%')
+    .replaceAll('_', '\\_');
+}
+
+const SUPABASE_ACCOUNT_COLUMNS =
+  'id, external_account_id, display_name, avatar_url, metadata, status, token_expires_at, created_at, updated_at';
+
+/**
+ * F3 (spec 170) — the shared account predicates in PostgREST form.
+ * buildAccountWhere is the SQL form and filterAndSortAccounts the
+ * JS form; all three must stay in step (BG11). The wire status is
+ * a pure function of the stored status column (active → active,
+ * expired → expired, anything else → disconnected), so the
+ * predicates are written against the stored column directly:
+ * - 'active' (connected): stored active AND a live-or-absent token.
+ * - 'expired': stored expired OR any past token.
+ * - 'expiring_soon': stored active AND a token 1–7 days out.
+ * - 'error': the complement of connected and expired — neither
+ *   active nor expired with a live-or-absent token.
+ */
+function applySupabaseAccountStatus(
+  query: SupabaseAccountsQuery,
+  status: string,
+  nowIso: string,
+  soonIso: string
+): SupabaseAccountsQuery {
+  if (status === 'active') {
+    return query
+      .eq('status', 'active')
+      .or(`token_expires_at.is.null,token_expires_at.gte.${nowIso}`);
+  }
+  if (status === 'expired') {
+    return query.or(`status.eq.expired,token_expires_at.lt.${nowIso}`);
+  }
+  if (status === 'expiring_soon') {
+    return query
+      .eq('status', 'active')
+      .gt('token_expires_at', nowIso)
+      .lte('token_expires_at', soonIso);
+  }
+  if (status === 'error') {
+    return query
+      .neq('status', 'active')
+      .neq('status', 'expired')
+      .or(`token_expires_at.is.null,token_expires_at.gte.${nowIso}`);
+  }
+  return query;
+}
+
+/**
+ * The expired rank in PostgREST form: `expired` is the shared BG11
+ * predicate (stored expired OR any past token); `!expired` is its
+ * exact complement (stored not-expired AND a live-or-absent token).
+ */
+function applySupabaseAccountRank(
+  query: SupabaseAccountsQuery,
+  expired: boolean,
+  nowIso: string
+): SupabaseAccountsQuery {
+  if (expired) {
+    return query.or(`status.eq.expired,token_expires_at.lt.${nowIso}`);
+  }
+  return query
+    .neq('status', 'expired')
+    .or(`token_expires_at.is.null,token_expires_at.gte.${nowIso}`);
+}
+
+interface SupabaseAccountRow {
   id: string;
   external_account_id: string;
   display_name: string;
@@ -338,103 +496,262 @@ interface SupabaseAccountJoinRow {
   token_expires_at: string | null;
   created_at: string;
   updated_at: string;
-  destinations: Array<{
-    id: string;
-    name: string;
-    avatar_url: string | null;
-    status: string;
-    workspace_id: string;
-    metadata: Record<string, unknown> | null;
-  }> | null;
 }
 
-async function fetchSupabaseAccounts(
+interface SupabaseLinkedPageRow {
+  id: string;
+  account_id: string;
+  name: string;
+}
+
+const SUPABASE_LINKED_PAGES_PAGE_SIZE = 1000;
+const SUPABASE_LINKED_PAGES_MAX_PAGES = 10;
+
+type SupabaseAccountsPageResult =
+  | {
+      rows: AccountRow[];
+      total: number;
+      page: number;
+      healthCounts: AccountHealthCounts;
+      error?: undefined;
+    }
+  | {
+      error: string;
+      rows?: undefined;
+      total?: undefined;
+      page?: undefined;
+      healthCounts?: undefined;
+    };
+
+/**
+ * F3 (spec 170) — the prod list path, DB-side throughout. The old
+ * fetchSupabaseAccounts pulled EVERY account in the workspace with
+ * its destinations joined (up to 10 × 1,000 rows), then mapped,
+ * filtered, sorted and sliced in JS. This instead:
+ * - counts the filtered set with three head-only COUNTs in parallel
+ *   (total + expired + connected; error is total minus the other
+ *   two — the three buckets partition the filtered set exactly, so
+ *   healthCounts stay full-set while the rows are paged);
+ * - fetches the page as two ranged slices — the expired head and
+ *   the non-expired tail — concatenated in expired-first order,
+ *   because PostgREST cannot ORDER BY the computed expired rank;
+ * - counts linked pages with one bounded destinations query over
+ *   the page's account ids only (no join, no avatar URLs).
+ * Any DB error fails the list loudly (500) instead of returning a
+ * partial or wrong page.
+ */
+async function fetchSupabaseAccountsPage(
   supabase: SupabaseClient<Database>,
-  workspaceId: string
-): Promise<{ rows?: AccountRow[]; error?: string }> {
-  // Audit N1: the old single select silently truncated past
-  // PostgREST's 1,000-row limit, giving wrong totals, wrong
-  // healthCounts, and missing accounts with no error. Page
-  // through with .range() instead; past 10 full pages the list
-  // fails loudly rather than returning wrong data.
-  const SUPABASE_PAGE_SIZE = 1000;
-  const SUPABASE_MAX_PAGES = 10;
-  const accountsData: unknown[] = [];
-  for (let page = 0; page < SUPABASE_MAX_PAGES; page++) {
-    const from = page * SUPABASE_PAGE_SIZE;
-    const { data, error } = await supabase
-      .from('social_accounts')
-      .select(`
-      id,
-      external_account_id,
-      display_name,
-      avatar_url,
-      metadata,
-      status,
-      token_expires_at,
-      created_at,
-      updated_at,
-      destinations (
-        id,
-        name,
-        avatar_url,
-        status,
-        workspace_id,
-        metadata
-      )
-    `)
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'facebook')
+  workspaceId: string,
+  filters: AccountListFilters,
+  requestedPage: number,
+  limit: number
+): Promise<SupabaseAccountsPageResult> {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const soonIso = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const baseFilters = (query: SupabaseAccountsQuery): SupabaseAccountsQuery => {
+    let next = query.eq('workspace_id', workspaceId).eq('platform', 'facebook');
+    if (filters.search) {
+      next = next.ilike(
+        'display_name',
+        `%${escapeLikePattern(filters.search)}%`
+      );
+    }
+    return applySupabaseAccountStatus(next, filters.status, nowIso, soonIso);
+  };
+  const countQuery = (): SupabaseAccountsQuery =>
+    baseFilters(
+      supabase
+        .from('social_accounts')
+        .select('id', { count: 'exact', head: true }) as unknown as SupabaseAccountsQuery
+    );
+
+  const [totalRes, expiredRes, connectedRes] = await Promise.all([
+    countQuery(),
+    applySupabaseAccountRank(countQuery(), true, nowIso),
+    applySupabaseAccountStatus(countQuery(), 'active', nowIso, soonIso),
+  ]);
+  if (totalRes.error) {
+    console.error(
+      '[handleListAccounts] Failed to count accounts (total):',
+      totalRes.error
+    );
+    return { error: totalRes.error.message };
+  }
+  if (expiredRes.error) {
+    console.error(
+      '[handleListAccounts] Failed to count accounts (expired):',
+      expiredRes.error
+    );
+    return { error: expiredRes.error.message };
+  }
+  if (connectedRes.error) {
+    console.error(
+      '[handleListAccounts] Failed to count accounts (connected):',
+      connectedRes.error
+    );
+    return { error: connectedRes.error.message };
+  }
+  const total = totalRes.count;
+  const expiredTotal = expiredRes.count;
+  const connectedTotal = connectedRes.count;
+  if (total === null || expiredTotal === null || connectedTotal === null) {
+    console.error(
+      '[handleListAccounts] Account counts came back without a count.'
+    );
+    return { error: 'Failed to count accounts' };
+  }
+  const healthCounts: AccountHealthCounts = {
+    connected: connectedTotal,
+    expired: expiredTotal,
+    error: total - connectedTotal - expiredTotal,
+  };
+  const meta = paginateMeta(total, requestedPage, limit);
+  const page = meta.page;
+  if (total === 0) {
+    return { rows: [], total, page, healthCounts };
+  }
+
+  const offset = (page - 1) * limit;
+  const expiredFrom = offset;
+  const expiredTo = Math.min(offset + limit, expiredTotal) - 1;
+  const expiredNeed = expiredTotal > offset ? expiredTo - expiredFrom + 1 : 0;
+  const nonExpiredNeed = limit - expiredNeed;
+  const nonExpiredFrom = Math.max(0, offset - expiredTotal);
+
+  const dataQuery = (
+    expired: boolean,
+    from: number,
+    to: number
+  ): SupabaseAccountsQuery =>
+    applySupabaseAccountRank(
+      baseFilters(
+        supabase
+          .from('social_accounts')
+          .select(SUPABASE_ACCOUNT_COLUMNS) as unknown as SupabaseAccountsQuery
+      ),
+      expired,
+      nowIso
+    )
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
-      .range(from, from + SUPABASE_PAGE_SIZE - 1);
+      .range(from, to);
 
-    if (error) {
-      return { error: error.message };
-    }
-    const pageRows = (data || []) as unknown[];
-    accountsData.push(...pageRows);
-    if (pageRows.length < SUPABASE_PAGE_SIZE) {
-      break;
-    }
-    if (page === SUPABASE_MAX_PAGES - 1) {
-      return { error: 'Too many accounts to list reliably; please contact support.' };
+  const [expiredSlice, nonExpiredSlice] = await Promise.all([
+    expiredNeed > 0
+      ? dataQuery(true, expiredFrom, expiredTo)
+      : Promise.resolve({
+          data: [],
+          error: null,
+          count: null,
+        } as SupabaseAccountsQueryResult),
+    nonExpiredNeed > 0
+      ? dataQuery(false, nonExpiredFrom, nonExpiredFrom + nonExpiredNeed - 1)
+      : Promise.resolve({
+          data: [],
+          error: null,
+          count: null,
+        } as SupabaseAccountsQueryResult),
+  ]);
+  if (expiredSlice.error) {
+    console.error(
+      '[handleListAccounts] Failed to fetch accounts page (expired slice):',
+      expiredSlice.error
+    );
+    return { error: expiredSlice.error.message };
+  }
+  if (nonExpiredSlice.error) {
+    console.error(
+      '[handleListAccounts] Failed to fetch accounts page (non-expired slice):',
+      nonExpiredSlice.error
+    );
+    return { error: nonExpiredSlice.error.message };
+  }
+  const accountRows = [
+    ...((expiredSlice.data as SupabaseAccountRow[] | null) ?? []),
+    ...((nonExpiredSlice.data as SupabaseAccountRow[] | null) ?? []),
+  ];
+
+  // Linked pages for the page's accounts only — the old path joined
+  // destinations for the whole workspace. Page through with
+  // .range(); past 10 full pages the list fails loudly rather than
+  // silently under-counting (same N1 guard as the old full-set
+  // fetch).
+  const pagesByAccount = new Map<string, SupabaseLinkedPageRow[]>();
+  const accountIds = accountRows.map((row) => row.id);
+  if (accountIds.length > 0) {
+    for (
+      let pageIndex = 0;
+      pageIndex < SUPABASE_LINKED_PAGES_MAX_PAGES;
+      pageIndex++
+    ) {
+      const from = pageIndex * SUPABASE_LINKED_PAGES_PAGE_SIZE;
+      const { data, error } = await (supabase
+        .from('destinations')
+        .select('id, account_id, name')
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'facebook')
+        .in('account_id', accountIds)
+        .or('status.neq.disconnected,metadata->>fb_status.eq.paused')
+        .order('name', { ascending: true })
+        .range(
+          from,
+          from + SUPABASE_LINKED_PAGES_PAGE_SIZE - 1
+        ) as unknown as SupabaseAccountsQuery);
+      if (error) {
+        console.error(
+          '[handleListAccounts] Failed to fetch linked pages:',
+          error
+        );
+        return { error: error.message };
+      }
+      const pageRows = (data as SupabaseLinkedPageRow[] | null) ?? [];
+      for (const row of pageRows) {
+        const list = pagesByAccount.get(row.account_id) ?? [];
+        list.push(row);
+        pagesByAccount.set(row.account_id, list);
+      }
+      if (pageRows.length < SUPABASE_LINKED_PAGES_PAGE_SIZE) {
+        break;
+      }
+      if (pageIndex === SUPABASE_LINKED_PAGES_MAX_PAGES - 1) {
+        return {
+          error: 'Too many linked pages to list reliably; please contact support.',
+        };
+      }
     }
   }
 
-  // The contracts Database type resolves this joined select to never[]
-  // (its table entries carry no Relationships metadata for supabase-js),
+  // The contracts Database type resolves this select to never[] (its
+  // table entries carry no Relationships metadata for supabase-js),
   // so the result is asserted once, here at the boundary, to the row
   // shape the select actually returns.
-  const accountRows = accountsData as unknown as SupabaseAccountJoinRow[];
   const rows: AccountRow[] = accountRows.map((acc) => {
-    const activePages = (acc.destinations || []).filter(
-      (p) =>
-        (p.status !== 'disconnected' || p.metadata?.fb_status === 'paused') &&
-        p.workspace_id === workspaceId
-    );
+    const linked = pagesByAccount.get(acc.id) ?? [];
     return {
       id: acc.id,
       fb_account_id: acc.external_account_id,
       display_name: acc.display_name,
       profile_picture_url: acc.avatar_url,
-      gender: typeof acc.metadata?.gender === 'string' ? acc.metadata.gender : null,
+      gender:
+        typeof acc.metadata?.gender === 'string' ? acc.metadata.gender : null,
       account_link:
-        typeof acc.metadata?.account_link === 'string' ? acc.metadata.account_link : null,
+        typeof acc.metadata?.account_link === 'string'
+          ? acc.metadata.account_link
+          : null,
       status: unifiedAccountStatusToWire(acc.status),
       token_expires_at: acc.token_expires_at,
       created_at: acc.created_at,
       updated_at: acc.updated_at,
-      connected_pages_count: activePages.length,
-      connected_pages: activePages.map((p) => ({
-        id: p.id,
-        pageName: p.name,
-        profilePictureUrl: p.avatar_url,
-      })),
+      connected_pages_count: linked.length,
+      // F3: id + name only — see the json_agg note in the SQL path.
+      connected_pages: linked.map((p) => ({ id: p.id, pageName: p.name })),
     };
   });
 
-  return { rows };
+  return { rows, total, page, healthCounts };
 }
 
 export async function handleListAccounts(
@@ -541,34 +858,42 @@ export async function handleListAccounts(
     // Audit N3: same awaited workspace-wide lapse-sync as the SQL
     // path, before the fetch, so both paths report stored state.
     await syncLapsedAccountStatus(workspaceId, dbClient);
-    const res = await fetchSupabaseAccounts(supabase, workspaceId);
+    // F3 (spec 170): the prod path is DB-side now — counts, filters
+    // and the page range all run in PostgREST (see
+    // fetchSupabaseAccountsPage). No full-set fetch, no JS
+    // filter/sort/slice.
+    const res = await fetchSupabaseAccountsPage(
+      supabase,
+      workspaceId,
+      filters,
+      requestedPage,
+      limit
+    );
     if (res.error) {
       return NextResponse.json({ error: res.error }, { status: 500 });
     }
-    // Supabase path limitation, as in the pages route: PostgREST
-    // cannot order by the computed-expired rank, so the filtered rows
-    // are mapped, filtered and sorted here and only the page slice is
-    // returned to the client.
-    const mapped = (res.rows || []).map((row) => mapAccountRowToView(row));
-    const filtered = filterAndSortAccounts(mapped, filters);
-    // Full-set health counts, counted BEFORE slicing, using the
-    // same health model as the shell subtitle (getAccountHealth)
-    // via the shared BG11 predicate: expired wire status or a
-    // past token is expired, disconnected with a live-or-absent
-    // token is an error, otherwise connected.
-    healthCounts = { connected: 0, expired: 0, error: 0 };
-    for (const account of filtered) {
-      if (isAccountExpiredForList(account.status, account.tokenExpiresAt)) {
-        healthCounts.expired += 1;
-      } else if (account.status === 'disconnected') {
-        healthCounts.error += 1;
-      } else {
-        healthCounts.connected += 1;
-      }
-    }
-    const sliced = paginateItems(filtered, requestedPage, limit);
-    accounts = sliced.items;
-    meta = sliced.meta;
+    accounts = (res.rows || []).map((row) => mapAccountRowToView(row));
+    healthCounts = res.healthCounts;
+    // Stable re-sort of the page slice into the documented
+    // expired-first order, by the same BG11 predicate the slices
+    // were fetched with. The slices already arrive in this order;
+    // the re-sort only guards against a data source that ignores
+    // ORDER BY. Array.sort is stable, so it never reorders rows
+    // the database already ranked.
+    accounts = [...accounts].sort((a, b) => {
+      const aExpired = isAccountExpiredForList(a.status, a.tokenExpiresAt)
+        ? 1
+        : 0;
+      const bExpired = isAccountExpiredForList(b.status, b.tokenExpiresAt)
+        ? 1
+        : 0;
+      if (aExpired !== bExpired) return bExpired - aExpired;
+      return (
+        new Date(String(b.createdAt)).getTime() -
+        new Date(String(a.createdAt)).getTime()
+      );
+    });
+    meta = paginateMeta(res.total ?? 0, res.page ?? requestedPage, limit);
   }
 
   const parsed = ListFacebookAccountsResponseSchema.safeParse({
@@ -592,10 +917,15 @@ export async function handleListAccounts(
 
 /**
  * The shell's filter + expired-first sort (accounts-helpers
- * filterAccountsList / sortAccountsExpiredFirst), mirrored here for
- * the Supabase path. Same search field (display name), same status
- * buckets (including expiring_soon: token expires in 1–7 days), same
- * expired-first then newest order.
+ * filterAccountsList / sortAccountsExpiredFirst). F3 (spec 170):
+ * the prod Supabase path no longer calls this — its filters and
+ * rank are pushed to PostgREST (applySupabaseAccountStatus /
+ * applySupabaseAccountRank) — but it stays as the shared predicate
+ * model all three paths must agree with (BG11) and as the oracle
+ * the API tests compare the DB-side path against. Same search
+ * field (display name), same status buckets (including
+ * expiring_soon: token expires in 1–7 days), same expired-first
+ * then newest order.
  */
 type MappedAccount = ReturnType<typeof mapAccountRowToView>;
 
