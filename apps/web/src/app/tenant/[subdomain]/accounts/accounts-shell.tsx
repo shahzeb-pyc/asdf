@@ -25,6 +25,7 @@
  */
 import * as React from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon } from 'lucide-react';
@@ -63,8 +64,31 @@ import {
   type AccountStatusFilter,
 } from '@/components/accounts/accounts-helpers';
 import { getAccountHealth } from '@/components/accounts/account-health';
-import { ConnectAccountModal } from '@/components/accounts/connect-account-modal';
-import { DisconnectAccountDialog } from '@/components/accounts/disconnect-account-dialog';
+
+/**
+ * Spec 170 F6: the connect + disconnect dialogs are closed-by-default
+ * UI — they load on demand via `next/dynamic`, not in the first-load
+ * bundle. They render only once opened (see the `*Mounted` flags
+ * below), and once mounted they stay mounted with their Dialog closed,
+ * so a second open is instant and close animations / focus return
+ * complete — the same mounted-once pattern as the command palette
+ * host. No flow behaviour changes: open, close, magic-link view and
+ * mismatch handling all live inside the dialog components, untouched.
+ */
+const ConnectAccountModal = dynamic(
+  () =>
+    import('@/components/accounts/connect-account-modal').then(
+      (m) => m.ConnectAccountModal
+    ),
+  { ssr: false }
+);
+const DisconnectAccountDialog = dynamic(
+  () =>
+    import('@/components/accounts/disconnect-account-dialog').then(
+      (m) => m.DisconnectAccountDialog
+    ),
+  { ssr: false }
+);
 
 /** Id of the Accounts-only toaster: top-right, used solely by connect confirmations. */
 const ACCOUNTS_CONNECT_TOASTER_ID = 'accounts-connect-toaster';
@@ -278,6 +302,10 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
 
   // Modal & filter states
   const [isConnectOpen, setIsConnectOpen] = React.useState(false);
+  // Spec 170 F6: mount gates for the lazy dialogs — false until the
+  // first open, true forever after, so the chunks load on demand.
+  const [isConnectMounted, setIsConnectMounted] = React.useState(false);
+  const [isDisconnectMounted, setIsDisconnectMounted] = React.useState(false);
   const [reconnectingAccount, setReconnectingAccount] =
     React.useState<FacebookAccountItem | null>(null);
   const [disconnectingAccount, setDisconnectingAccount] =
@@ -448,6 +476,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     if (byocStatus.isLoading) return;
     routeConnectClick(() => {
       setReconnectingAccount(null);
+      setIsConnectMounted(true);
       setIsConnectOpen(true);
     });
   };
@@ -457,6 +486,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     if (byocStatus.isLoading) return;
     routeConnectClick(() => {
       setReconnectingAccount(account);
+      setIsConnectMounted(true);
       setIsConnectOpen(true);
     });
   };
@@ -603,7 +633,10 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
               highlighted={account.id === highlightedAccountId}
               onReconnect={handleReconnect}
               disableReconnect={byocStatus.isLoading}
-              onDisconnect={(acc) => setDisconnectingAccount(acc)}
+              onDisconnect={(acc) => {
+                setIsDisconnectMounted(true);
+                setDisconnectingAccount(acc);
+              }}
             />
           ))}
         </div>
@@ -747,32 +780,36 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       {/* Main Content Area */}
       {contentNode}
 
-      {/* Connect Account Modal */}
-      <ConnectAccountModal
-        subdomain={subdomain}
-        open={isConnectOpen}
-        onOpenChange={handleConnectOpenChange}
-        onAccountConnected={refetchAccounts}
-        onConnectionNotice={handleConnectionNotice}
-        existingAccountIds={existingAccountIds}
-        reconnectingAccount={reconnectingAccount}
-        initialAccounts={accounts}
-      />
+      {/* Connect Account Modal (spec 170 F6: lazy — mounts on first open) */}
+      {isConnectMounted && (
+        <ConnectAccountModal
+          subdomain={subdomain}
+          open={isConnectOpen}
+          onOpenChange={handleConnectOpenChange}
+          onAccountConnected={refetchAccounts}
+          onConnectionNotice={handleConnectionNotice}
+          existingAccountIds={existingAccountIds}
+          reconnectingAccount={reconnectingAccount}
+          initialAccounts={accounts}
+        />
+      )}
 
-      {/* Disconnect Safety Dialog */}
-      <DisconnectAccountDialog
-        account={disconnectingAccount}
-        open={Boolean(disconnectingAccount)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDisconnectingAccount(null);
-            setDisconnectError(null);
-          }
-        }}
-        onConfirm={handleConfirmDisconnect}
-        isDisconnecting={disconnectMutation.isPending}
-        error={disconnectError}
-      />
+      {/* Disconnect Safety Dialog (spec 170 F6: lazy — mounts on first open) */}
+      {isDisconnectMounted && (
+        <DisconnectAccountDialog
+          account={disconnectingAccount}
+          open={Boolean(disconnectingAccount)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setDisconnectingAccount(null);
+              setDisconnectError(null);
+            }
+          }}
+          onConfirm={handleConfirmDisconnect}
+          isDisconnecting={disconnectMutation.isPending}
+          error={disconnectError}
+        />
+      )}
 
       {/* BYOC Configuration Advisory Modal */}
       <ByocConfigPromptModal
