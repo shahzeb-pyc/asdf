@@ -39,6 +39,19 @@ import {
 } from './refresh.js';
 import { captureWorkerError } from './analytics.js';
 import { resolveWorkerMasterKey } from './master-key.js';
+import { verifyBearerToken } from './manual-run-auth.js';
+
+/**
+ * Spec 163 — in-flight guard for the insights-followers cycle, shared
+ * by the scheduled cron and the manual run endpoint. Module-level, so
+ * it is per-isolate: it stops a second run starting on THIS isolate,
+ * but Cloudflare may route the cron and a manual call to different
+ * isolates, so a cross-isolate overlap is still possible (documented
+ * in specs/163-insights-manual-run/spec.md). That overlap is safe —
+ * the cycle is idempotent and concurrent runs write the same live
+ * values; the cost is duplicate Graph calls, not corrupt data.
+ */
+let insightsFollowersCycleInFlight = false;
 
 /**
  * Derive a `waitUntil` callback from an ExecutionContext (spec 139).
@@ -117,6 +130,13 @@ export interface Env {
   /** X global-app client secret (spec 127, D7) — GitHub Secrets → worker env only, never the database. */
   X_CLIENT_SECRET?: string;
   TOKEN_ENCRYPTION_KEY?: string;
+  /**
+   * Spec 163 — bearer token for the manual insights-followers run
+   * (`POST /admin/insights-followers/run`). Worker secret, set via
+   * GitHub Secrets (Doppler `prd` → sync); never committed. Unset =
+   * the endpoint 401s every call (fail closed).
+   */
+  INSIGHTS_MANUAL_RUN_TOKEN?: string;
   /** Retention cleanup kill-switch (spec 139 residue): 'true'/'1' skips the daily run. Unset = enabled. */
   RETENTION_DISABLED?: string;
   /** Retention cleanup dry-run (spec 139 residue): 'true'/'1' counts what would be deleted, deletes nothing. */
@@ -261,7 +281,18 @@ export async function handleScheduled(
   // heartbeat row of its own and reports through its structured
   // counter log line; a scan-level failure is captured and rethrown
   // like the refresh cycle, per-row failures stay per-row.
+  // Spec 163: the cycle shares the in-flight guard with the manual
+  // run endpoint. If a manual run is already in flight on this
+  // isolate the cron skips instead of doubling the work — the manual
+  // run performs the same writes, so nothing is lost.
   if (controller.cron === INSIGHTS_FOLLOWERS_CRON) {
+    if (insightsFollowersCycleInFlight) {
+      console.warn(
+        '[Scheduled] insights followers cycle already in flight (manual run); skipping scheduled run'
+      );
+      return;
+    }
+    insightsFollowersCycleInFlight = true;
     try {
       await runInsightsFollowersCycle({
         db: db as unknown as Parameters<typeof runInsightsFollowersCycle>[0]['db'],
@@ -277,6 +308,8 @@ export async function handleScheduled(
         waitUntil
       );
       throw err;
+    } finally {
+      insightsFollowersCycleInFlight = false;
     }
     return;
   }
@@ -753,7 +786,7 @@ function getAllowedOrigin(request: Request, env: Env): string | null {
 }
 
 export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const allowedOrigin = getAllowedOrigin(request, env);
 
@@ -785,6 +818,73 @@ export default {
         status: result.statusCode,
         headers: { ...corsHeaders, 'Cache-Control': 'no-store' },
       });
+    }
+
+    // 3. Manual insights-followers run (spec 163): runs the EXACT
+    // same daily cycle as the 03:00 PKT cron, on demand. Bearer
+    // token only — no token, wrong token, or unconfigured secret
+    // 401s before any work happens. The token value never appears
+    // in a response or a log line.
+    if (request.method === 'POST' && url.pathname === '/admin/insights-followers/run') {
+      const authorized = await verifyBearerToken(
+        request.headers.get('Authorization'),
+        env.INSIGHTS_MANUAL_RUN_TOKEN
+      );
+      if (!authorized) {
+        return new Response(JSON.stringify({ error: 'unauthorized' }), {
+          status: 401,
+          headers: corsHeaders,
+        });
+      }
+      if (insightsFollowersCycleInFlight) {
+        return new Response(
+          JSON.stringify({ error: 'insights_followers_cycle_in_flight' }),
+          { status: 409, headers: corsHeaders }
+        );
+      }
+      const manualDb = initWorkerDb(env, env.__TEST_DB__);
+      const manualMasterKey = env.TOKEN_ENCRYPTION_KEY;
+      if (!manualDb || !manualMasterKey) {
+        console.warn(
+          '[Manual] insights followers run unavailable: db or master key unconfigured'
+        );
+        return new Response(
+          JSON.stringify({ error: 'insights_followers_unavailable' }),
+          { status: 503, headers: corsHeaders }
+        );
+      }
+      insightsFollowersCycleInFlight = true;
+      const started = Date.now();
+      try {
+        const result = await runInsightsFollowersCycle({
+          db: manualDb as unknown as Parameters<
+            typeof runInsightsFollowersCycle
+          >[0]['db'],
+          masterKey: manualMasterKey,
+          now: new Date(),
+        });
+        return new Response(
+          JSON.stringify({ ...result, durationMs: Date.now() - started }),
+          { status: 200, headers: corsHeaders }
+        );
+      } catch (err) {
+        console.error('[Manual] insights followers cycle failed:', err);
+        captureWorkerError(
+          env,
+          err,
+          {
+            site: 'manual-insights-followers-run',
+            kind: 'insights_followers_cycle_failed',
+          },
+          waitUntilFromCtx(ctx)
+        );
+        return new Response(
+          JSON.stringify({ error: 'insights_followers_cycle_failed' }),
+          { status: 500, headers: corsHeaders }
+        );
+      } finally {
+        insightsFollowersCycleInFlight = false;
+      }
     }
 
     return new Response(
