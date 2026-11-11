@@ -105,8 +105,13 @@ export async function getRequestBaseUrl(): Promise<string> {
       const protocol = forwardedProto ?? (isLocal ? 'http' : 'https');
       return stripTrailingSlashes(`${protocol}://${host}`);
     }
-  } catch (error) {
-    reportError(error, { source: 'data-server-headers' });
+  } catch {
+    // No request context (tests, scripts, static generation): the
+    // env fallback below is the designed default, not an error, so
+    // nothing is reported here. A prefetch that then fails on the
+    // fallback origin is still reported once, with its query key,
+    // by prefetchServerQueries — that is the single report per
+    // failure this module's contract promises.
   }
   return getServerBaseUrl();
 }

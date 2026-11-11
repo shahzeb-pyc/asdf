@@ -170,14 +170,17 @@ describe('getRequestBaseUrl (spec 170 F1)', () => {
     expect(reported).toHaveLength(0);
   });
 
-  it('falls back to getServerBaseUrl when headers() throws, and reports it', async () => {
+  it('falls back to getServerBaseUrl when headers() throws, without reporting', async () => {
     vi.stubEnv('VERCEL_URL', WALLED_VERCEL_URL);
     headerMocks.throwOnHeaders = true;
     await expect(getRequestBaseUrl()).resolves.toBe(
       `https://${WALLED_VERCEL_URL}`
     );
-    expect(reported).toHaveLength(1);
-    expect(reported[0]?.context?.source).toBe('data-server-headers');
+    // The fallback is the designed default for a missing request
+    // context, not an error: no report is emitted. A prefetch that
+    // then fails on the fallback origin is reported once, with its
+    // query key, by prefetchServerQueries.
+    expect(reported).toHaveLength(0);
   });
 });
 
