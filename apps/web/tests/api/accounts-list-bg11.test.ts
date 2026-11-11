@@ -749,8 +749,12 @@ describe('Supabase (prod) path — DB-side paging (F3)', () => {
     const accountSelects = calls.filter(
       (c) => c.table === 'social_accounts' && c.op === 'select'
     );
+    // The data select is the one asking for the account columns
+    // (the lapse-sync UPDATE's `.select('id')` is not a data read).
     const dataSelects = accountSelects.filter(
-      (c) => !((c.args[1] as { head?: boolean } | null) ?? {}).head
+      (c) =>
+        typeof c.args[0] === 'string' &&
+        c.args[0].includes('external_account_id')
     );
     const ranges = calls.filter(
       (c) => c.table === 'social_accounts' && c.op === 'range'
