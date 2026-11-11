@@ -6,9 +6,11 @@ import ResetPasswordPage from '../../src/app/reset-password/page';
 import { POST as resetPasswordHandler } from '../../src/app/api/auth/reset-password/route';
 import {
   _setMockSupabaseClient,
+  _setMockSupabaseAuthClient,
 } from '../../src/lib/auth/clients';
 import {
   resetUserPassword,
+  resetUserPasswordWithOtp,
 } from '../../src/lib/auth/password-reset';
 import {
   _setResetTokenForTesting,
@@ -379,6 +381,13 @@ describe('Password Recovery - Reset Password (US2)', () => {
         });
 
         _setMockSupabaseClient(null);
+      });
+
+      it('throws loudly when the auth client is unavailable (spec 168)', async () => {
+        _setMockSupabaseClient({ auth: {} } as any);
+        _setMockSupabaseAuthClient(null);
+        await expect(resetUserPasswordWithOtp({ email: 'client@gmail.com', otp: '123456', password: 'new-valid-secure-pass-123' })).rejects.toThrow('Supabase auth client is unavailable');
+        await expect(resetUserPassword({ token: 'recovery-token-xyz-789', password: 'new-valid-secure-pass-123' })).rejects.toThrow('Supabase auth client is unavailable');
       });
     });
   });

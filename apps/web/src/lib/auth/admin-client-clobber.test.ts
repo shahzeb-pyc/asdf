@@ -1,11 +1,4 @@
-/**
- * Spec 168 — regression: password login must not poison the admin client.
- * REAL supabase-js clients + stubbed fetch (no live Supabase): canned
- * /auth/v1/token session per login email; PostgREST/RPC calls record their
- * Authorization header. Workspaces stub models RLS auth.uid() = owner_id:
- * B's row is visible to the service key and to B, invisible to A (cross-user
- * poison returns zero rows — the case-1 404).
- */
+// Spec 168 — regression: password login must not poison the admin client (real supabase-js clients + stubbed fetch; workspaces stub models RLS auth.uid() = owner_id).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { _resetMockSupabaseClients, getSupabaseAdminClient, getSupabaseAuthClient } from './clients';
 
@@ -16,10 +9,6 @@ const USER_A_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', USER_B_ID = 'bbbbbbbb-
 const WORKSPACE_B = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', subdomain: 'acme-b', owner_id: USER_B_ID };
 const SESSION = { access_token: JWT_A, token_type: 'Bearer', expires_in: 3600, refresh_token: 'spec168-refresh', user: { id: USER_A_ID, email: 'admin@example.com', user_metadata: {}, app_metadata: {}, aud: 'authenticated', created_at: '2026-11-11T00:00:00Z' } };
 
-function authzOf(init?: RequestInit): string | null {
-  return init?.headers ? new Headers(init.headers).get('Authorization') : null;
-}
-
 function stubFetch(seen: string[]) {
   const json = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -29,7 +18,7 @@ function stubFetch(seen: string[]) {
       const email = (JSON.parse(String(init?.body ?? '{}')) as { email?: string }).email ?? ''; const isA = email.startsWith('admin@');      return json({ ...SESSION, access_token: isA ? JWT_A : JWT_B, user: { ...SESSION.user, id: isA ? USER_A_ID : USER_B_ID, email } });
     }
     if (url.includes('/rest/v1/')) {
-      const a = authzOf(init);
+      const a = init?.headers ? new Headers(init.headers).get('Authorization') : null;
       if (a) seen.push(a);
       if (url.includes('/rest/v1/workspaces')) {
         return json(a === `Bearer ${SERVICE_KEY}` || a === `Bearer ${JWT_B}` ? [WORKSPACE_B] : []);

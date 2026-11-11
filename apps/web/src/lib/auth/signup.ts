@@ -135,7 +135,6 @@ export async function signUpTenantUser(params: {
   let userRecord: AuthUser;
 
   if (supabase) {
-    // Spec 168: signUp stores a session — auth-only client, never the admin singleton. Admin present + auth null = loud throw.
     const authClient = getSupabaseAuthClient();
     if (!authClient) {
       throw new Error('Supabase auth client is unavailable: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required for signup.');
@@ -325,7 +324,6 @@ export async function verifySignupOtpViaSupabase(params: {
   let userRecord: AuthUser | null = await findUserByEmail(canonicalEmail);
 
   if (supabase) {
-    // Spec 168: verifyOtp stores a session — one auth-only client, never the admin singleton.
     const authClient = getSupabaseAuthClient();
     if (!authClient) {
       throw new Error('Supabase auth client is unavailable: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required for signup verification.');

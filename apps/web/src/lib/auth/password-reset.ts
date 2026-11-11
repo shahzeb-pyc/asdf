@@ -91,7 +91,6 @@ export async function resetUserPasswordWithOtp(params: {
 
   const supabase = getSupabaseAdminClient();
   if (supabase) {
-    // Spec 168: verifyOtp + updateUser + getUser are session calls — one auth-only client for the whole flow, never the admin singleton.
     const authClient = getSupabaseAuthClient();
     if (!authClient) {
       throw new Error('Supabase auth client is unavailable: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required for password reset.');
@@ -235,10 +234,7 @@ export async function resetUserPassword(params: {
 
   const supabase = getSupabaseAdminClient();
   if (supabase) {
-    // Spec 168: session calls (exchange/verify/update/getUser) — one auth-only
-    // client for the whole flow, never the admin singleton. Trace note: the
-    // no-code/no-token updateUser branch is unreachable via the only caller
-    // (route always passes otp/token/code); its old session source was the poison.
+    // Spec 168: session calls use one auth-only client for the whole flow; the no-code/no-token branch is unreachable via the route (its old session source was the poison).
     const authClient = getSupabaseAuthClient();
     if (!authClient) {
       throw new Error('Supabase auth client is unavailable: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required for password reset.');

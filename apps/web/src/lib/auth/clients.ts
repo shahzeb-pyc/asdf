@@ -56,8 +56,6 @@ export function assertTestDoubleAllowed(caller: string): void {
   }
 }
 
-// Spec 168: installing a mock Supabase client (either setter below) also points the auth-only
-// client at the same fake — tests fake one Supabase. _setMockSupabaseAuthClient afterwards points auth elsewhere.
 export function _setMockSupabaseClient(client: SupabaseClient | null): void {
   assertTestDoubleAllowed('_setMockSupabaseClient');
   mockSupabaseClientForTesting = client;
@@ -209,16 +207,11 @@ export function getSupabaseAdminClient(): SupabaseClient | null {
 }
 
 /**
- * Auth-only client factory (spec 168). Session-storing/reading Auth calls
- * (signIn, signUp, verifyOtp, exchangeCodeForSession, updateUser, getUser)
- * run here, NEVER on the admin singleton: supabase-js stores the user
- * session in the client it signs in on and prefers it over the key, so a
- * sign-in on the admin client silently downgrades later DB/RPC calls on
- * that warm instance from service_role to `authenticated` (ADU hub 500,
- * code 42501; cross-user, another user's workspace lookup returns zero
- * rows → 404). Fresh per call, never cached; one instance per flow, as
- * the session lives in that instance's in-memory storage. Null without
- * config; call sites fail loud (admin present + auth null = throw).
+ * Auth-only client factory (spec 168). Session calls run here, never on the admin singleton: a
+ * sign-in there poisons later DB/RPC calls on that warm instance (service_role becomes
+ * `authenticated` — ADU hub 500 / cross-user workspace 404). Fresh per call, never cached, one
+ * instance per flow (the session lives in that instance). Null without config; call sites fail
+ * loud (admin present + auth null = throw).
  */
 export function getSupabaseAuthClient(): SupabaseClient | null {
   if (isTestDoubleAllowed() && mockSupabaseAuthClientForTesting) {
@@ -229,9 +222,8 @@ export function getSupabaseAuthClient(): SupabaseClient | null {
   if (!url || !anonKey || url.includes('placeholder') || anonKey.includes('placeholder')) {
     return null;
   }
-  // No try/catch here by design (spec 168, fail loud): a malformed config
-  // throws instead of silently returning null — the regression guardrails
-  // ban bare-catch-return, and call sites fail loud either way.
+  // No try/catch here by design (spec 168, fail loud): malformed config throws instead of
+  // silently returning null — the regression guardrails ban bare-catch-return.
   return createClient(url, anonKey, {
     auth: {
       persistSession: false,

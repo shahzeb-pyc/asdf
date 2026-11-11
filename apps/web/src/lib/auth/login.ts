@@ -37,7 +37,6 @@ export async function loginTenantUser(params: {
 
   const supabase = getSupabaseAdminClient();
   if (supabase) {
-    // Spec 168: sign-in runs on the auth-only client, never the admin singleton (signing in there poisons it). Admin present + auth null = loud throw.
     const authClient = getSupabaseAuthClient();
     if (!authClient) {
       throw new Error('Supabase auth client is unavailable: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required for password login.');
