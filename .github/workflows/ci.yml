@@ -346,7 +346,10 @@ jobs:
     #     magnitude under the bound locally, so the bound is kept in
     #     CI; if hosted-runner variance ever makes it flaky, drop this
     #     one step to report-only rather than loosening the bound in
-    #     the rig itself.
+    #     the rig itself. Report-only since spec 176 (owner-ordered
+    #     2026-11-12): the step uses continue-on-error plus a warning
+    #     annotation, so a breach is logged loudly but does not fail
+    #     the job. The 5 s bound itself is unchanged.
     name: SQL Rigs (real Postgres — RLS + claim parity/scale + settle)
     needs: sql-changes
     if: needs.sql-changes.outputs.sql == 'true'
@@ -448,10 +451,18 @@ jobs:
           CLAIM_RPC_PG_URL: postgres://postgres:postgres@localhost:5432/claim138_scale
         run: pnpm --filter @fbuploadpro/worker exec tsx tests/claim-rpc/db/run-migrations.ts
 
-      - name: Spec 138 claim-RPC scale rig — one claim < 5 s at certification shape
+      - name: Spec 138 claim-RPC scale rig — one claim < 5 s at certification shape (report-only)
         env:
           CLAIM_RPC_PG_URL: postgres://postgres:postgres@localhost:5432/claim138_scale
-        run: pnpm --filter @fbuploadpro/worker exec tsx tests/claim-rpc/scale.ts
+        continue-on-error: true
+        run: |
+          set +e
+          pnpm --filter @fbuploadpro/worker exec tsx tests/claim-rpc/scale.ts
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "::warning title=SQL Rigs scale rig failed::The claim-RPC scale rig failed (report-only since spec 176; see the step log for the cause — a scale-bound breach is the known hosted-runner variance flake)."
+          fi
+          exit 0
 
       - name: ADU RPC-grants rig — apply bootstrap + migrations
         env:
