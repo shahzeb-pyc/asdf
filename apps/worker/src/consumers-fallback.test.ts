@@ -73,6 +73,7 @@ async function makeRows() {
     account_id: ACCT_ID,
     platform: 'facebook',
     external_destination_id: 'page_123',
+    section: 'schedule',
     name: 'Test Page',
     handle: null,
     avatar_url: null,

@@ -74,6 +74,7 @@ function makeDestination(
     account_id: 'acct-1',
     platform: 'x',
     external_destination_id: X_USER_ID,
+    section: 'schedule',
     name: 'Test User',
     handle: 'testuser',
     avatar_url: null,

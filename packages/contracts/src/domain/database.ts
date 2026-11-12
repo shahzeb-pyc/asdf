@@ -164,6 +164,23 @@ export function destinationAccountTypeFromMetadata(
 }
 
 /**
+ * The section (feature) a destination row belongs to (spec 174).
+ * One table, one row per section: a page imported into two features
+ * has two rows carrying different sections. Required on every row from
+ * PR 1A; a row created by old code in the deploy window carries NULL
+ * in the database and fails the row schema loudly (stated trade-off —
+ * caught by the Phase 4 straggler backfill and the daily check).
+ */
+export const DestinationSectionSchema = z.enum([
+  'schedule',
+  'adu',
+  'mirror',
+  'publish_now',
+]);
+
+export type Section = z.infer<typeof DestinationSectionSchema>;
+
+/**
  * Runtime schema for a `destinations` row (migration
  * 20261022120000 §4c). `rate_usage_pct` is SMALLINT with a 0–100 CHECK,
  * `timezone` is VARCHAR(50), and `encrypted_destination_token` is the
@@ -176,6 +193,7 @@ export const DatabaseDestinationRowSchema = z
     account_id: z.string().uuid(),
     platform: PlatformSchema,
     external_destination_id: z.string().min(1).max(255),
+    section: DestinationSectionSchema,
     name: z.string().min(1).max(255),
     handle: z.string().max(255).nullable(),
     avatar_url: z.string().nullable(),
@@ -435,6 +453,7 @@ export interface Database {
           account_id: string;
           platform: Platform;
           external_destination_id: string;
+          section: Section;
           name: string;
         };
         Update: Partial<DatabaseDestinationRow>;

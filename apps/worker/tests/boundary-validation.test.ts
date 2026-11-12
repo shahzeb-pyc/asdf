@@ -173,6 +173,7 @@ async function makeConsumerDb(opts: {
     account_id: ACCT_ID,
     platform: 'facebook',
     external_destination_id: 'page-123',
+    section: 'schedule',
     name: 'Page',
     handle: null,
     avatar_url: null,

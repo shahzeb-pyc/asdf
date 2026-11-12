@@ -47,6 +47,7 @@ describe('ISSUE-46: Multi-Workspace Resource Isolation & Foreign Key Enforcement
       account_id: mockAccount.id,
       platform: 'facebook',
       external_destination_id: 'fb-page-456',
+      section: 'schedule',
       name: 'Test Page',
       handle: null,
       avatar_url: null,

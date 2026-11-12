@@ -62,6 +62,7 @@ function makeDestination(): DatabaseDestinationRow {
     account_id: 'acct-1',
     platform: 'instagram',
     external_destination_id: 'ig-user-123',
+    section: 'schedule',
     name: 'Sunset Bakery',
     handle: 'sunset.bakery',
     avatar_url: null,

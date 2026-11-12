@@ -67,6 +67,7 @@ function makeDestination(
     account_id: 'acct-1',
     platform: 'youtube',
     external_destination_id: 'channel-123',
+    section: 'schedule',
     name: 'Boss Channel',
     handle: '@bosschannel',
     avatar_url: null,

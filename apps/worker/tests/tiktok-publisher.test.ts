@@ -68,6 +68,7 @@ function makeDestination(
     account_id: 'acct-1',
     platform: 'tiktok',
     external_destination_id: 'creator-123',
+    section: 'schedule',
     name: 'The Baby Boss',
     handle: '@babyboss',
     avatar_url: null,

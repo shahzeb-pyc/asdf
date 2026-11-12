@@ -62,6 +62,7 @@ function makeDestination(
     account_id: 'acct-1',
     platform: 'threads',
     external_destination_id: THREADS_ID,
+    section: 'schedule',
     name: 'Test Threads',
     handle: 'testthreads',
     avatar_url: null,

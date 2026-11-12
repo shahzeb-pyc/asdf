@@ -62,6 +62,7 @@ function makeDestination(
     account_id: 'acct-1',
     platform: 'instagram',
     external_destination_id: IG_ID,
+    section: 'schedule',
     name: 'Test IG',
     handle: 'testig',
     avatar_url: null,
