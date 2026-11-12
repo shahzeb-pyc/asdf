@@ -8,13 +8,16 @@
  *   `adu_configs` (linked to a unified `destinations` row);
  * - old `reels` (page_id, reel_id) is now `adu_reels`
  *   (config_id, source_reel_id).
- * Everything else — yt-dlp-first TikTok discovery (plain profile URL
- * through the rotating proxy, up to 5 attempts with a 2s delay between
- * them — each attempt draws a different rotating proxy exit IP; only
- * when all 5 fail does the paid TikWM /user/info fallback resolve the
- * camelCase secUid for one `tiktokuser:` direct attempt — see
+ * Everything else — TikWM-first TikTok discovery (paid TikWM
+ * /user/info resolves the camelCase secUid first, then one
+ * `tiktokuser:` direct attempt; only when that whole paid path fails
+ * do the plain profile-URL attempts run as backup, up to 5 attempts
+ * with a 2s delay between them — each attempt draws a different
+ * rotating proxy exit IP — see discovery/ytdlp.js and
  * discovery/tikwm.js; no Countik / secuid Worker anywhere in
- * discovery), Puppeteer logged-in path for Instagram and TikTok
+ * discovery), TikTok `pending` jobs claimed by a parallel worker pool
+ * (see tiktok-pool.js; the main loop's `pending` rotation excludes
+ * tiktok while the pool runs, `browser_pending` keeps it), Puppeteer logged-in path for Instagram and TikTok
  * (YouTube discovery moved to the official Data API, spec 154 — no
  * browser, no login; Facebook discovery runs its own no-login
  * Patchright headless-shell session per job, spec 158 — no login at
@@ -37,7 +40,9 @@ import { BROWSER_CONFIG, LOGIN_CONFIG, SCRAPER_CONFIG } from './config.js';
 import { supportsYtdlpDiscovery } from './discovery/profile-urls.js';
 import { discoverReelIdsWithYtdlp } from './discovery/ytdlp.js';
 import { discoverYoutubeShorts, quotaParkRetryAt, requeueDueQuotaParkedConfigs } from './discovery/youtube-api.js';
-import { logTikwmFallbackStatus } from './discovery/tikwm.js';
+import { logTikwmPrimaryStatus } from './discovery/tikwm.js';
+import { createTikTokPool } from './tiktok-pool.js';
+import { markSyncStatus, upsertReelsAndMarkSynced } from './jobs.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -150,6 +155,13 @@ const PLATFORM_HANDLERS = {
 
 const PLATFORM_ORDER = ['instagram', 'tiktok', 'youtube', 'facebook'];
 
+// The TikTok worker pool (tiktok-pool.js) owns TikTok `pending`
+// claims, so the main loop's `pending` rotation EXCLUDES tiktok
+// while the pool runs. `browser_pending` keeps the full rotation —
+// the TikTok browser fallback still uses the shared Puppeteer page
+// on the main loop.
+const PENDING_PLATFORM_ORDER = ['instagram', 'youtube', 'facebook'];
+
 const CLAIM_RPC = {
   pending: 'get_next_pending_adu_config',
   browser_pending: 'get_next_browser_pending_adu_config',
@@ -170,38 +182,6 @@ async function applyDetectionHardening(page) {
   });
 }
 
-async function upsertReelsAndMarkSynced(job, platform, ids) {
-  const reelsToInsert = ids.map((id) => ({
-    config_id: job.id,
-    source_reel_id: id,
-    status: 'pending',
-  }));
-
-  const { error: insertError } = await supabase
-    .from('adu_reels')
-    .upsert(reelsToInsert, { onConflict: 'config_id,source_reel_id', ignoreDuplicates: true });
-
-  if (insertError) {
-    throw insertError;
-  }
-
-  const { error: updateError } = await supabase
-    .from('adu_configs')
-    .update({ sync_status: 'synced' })
-    .eq('id', job.id);
-
-  if (updateError) {
-    throw updateError;
-  }
-}
-
-async function markSyncStatus(configId, syncStatus) {
-  const { error } = await supabase.from('adu_configs').update({ sync_status: syncStatus }).eq('id', configId);
-  if (error) {
-    throw error;
-  }
-}
-
 // Park a YouTube source after a quota error (spec 156): it retries
 // automatically after the next midnight Pacific reset, instead of
 // sitting in 'error' until someone re-enables it.
@@ -215,9 +195,9 @@ async function markQuotaParked(configId, retryAtIso) {
   }
 }
 
-async function claimNextJob(claimSource, platformRotationStart) {
-  const orderedPlatforms = PLATFORM_ORDER.map((_, idx) => (
-    PLATFORM_ORDER[(platformRotationStart + idx) % PLATFORM_ORDER.length]
+async function claimNextJob(claimSource, platformRotationStart, platformOrder = PLATFORM_ORDER) {
+  const orderedPlatforms = platformOrder.map((_, idx) => (
+    platformOrder[(platformRotationStart + idx) % platformOrder.length]
   ));
 
   const rpcName = CLAIM_RPC[claimSource];
@@ -397,6 +377,43 @@ async function processJob(page, job, platform, claimSource) {
   await markSyncStatus(job.id, 'error');
 }
 
+// TikTok pool claim (spec scraper-tikwm-first-concurrency §3): the
+// SAME RPC as the main loop, scoped to p_platform='tiktok'
+// (FOR UPDATE SKIP LOCKED) — no RPC change, no migration.
+async function claimTikTokPendingJob() {
+  const { data: pages, error } = await supabase.rpc('get_next_pending_adu_config', { p_platform: 'tiktok' });
+
+  if (error) {
+    console.error('❌ RPC Error [pending/tiktok] (pool):', error);
+    throw error;
+  }
+
+  if (pages && pages.length > 0) {
+    return { job: pages[0], platform: 'tiktok' };
+  }
+
+  return null;
+}
+
+// TikTok pool processor: the TikTok `pending` branch of processJob.
+// page is null — that branch never uses the browser (TikWM-first
+// discovery → upsert + synced, or mark error). A throw (a DB failure
+// inside the upsert/mark step) marks the config error, mirroring the
+// main loop's catch for a TikTok pending job. The pool never
+// increments jobsProcessed (the 500-job browser restart counter).
+async function processTikTokPendingJob(job) {
+  try {
+    await processJob(null, job, 'tiktok', 'pending');
+  } catch (err) {
+    console.error(`❌ Error processing TikTok pool job ${job.source_username}:`, err);
+    try {
+      await markSyncStatus(job.id, 'error');
+    } catch (markErr) {
+      console.error('❌ Failed to mark error after pool failure:', markErr);
+    }
+  }
+}
+
 async function getActivePage(b, existingPage) {
   try {
     if (existingPage && !existingPage.isClosed()) {
@@ -418,10 +435,10 @@ async function getActivePage(b, existingPage) {
 async function main() {
   console.log('🚀 Starting Multi-Platform Scraper Orchestrator (yt-dlp + browser)...');
 
-  // ONE loud warning when TIKWMAPI_KEYS_SCRAPER is unset (TikWM
-  // fallback disabled, yt-dlp-only discovery); the scraper keeps
-  // running either way.
-  logTikwmFallbackStatus();
+  // ONE loud ERROR when TIKWMAPI_KEYS_SCRAPER is unset (TikWM
+  // PRIMARY disabled, backup-only TikTok discovery); the scraper
+  // keeps running either way.
+  logTikwmPrimaryStatus();
 
   let browser = null;
   let page = null;
@@ -524,6 +541,22 @@ async function main() {
 
   await launchOrRestartBrowser();
 
+  // TikTok worker pool (spec scraper-tikwm-first-concurrency §3):
+  // N parallel workers own TikTok `pending` claims. Pool jobs never
+  // touch the browser page or the 500-job restart counter.
+  const tikTokConcurrency = SCRAPER_CONFIG.TIKTOK_CONCURRENCY;
+  console.log(
+    `🎵 TikTok pool: ${tikTokConcurrency} parallel worker(s) for TikTok pending jobs (main loop pending rotation excludes tiktok).`,
+  );
+  const tikTokPool = createTikTokPool({
+    concurrency: tikTokConcurrency,
+    claimTikTokJob: claimTikTokPendingJob,
+    processTikTokJob: processTikTokPendingJob,
+    sleep: interruptibleSleep,
+    isShutdown: () => shutdownRequested,
+  });
+  const tikTokPoolDone = tikTokPool.start();
+
   while (!shutdownRequested) {
     if (jobsProcessed >= maxJobsPerSession) {
       console.log('🚀 Reached session limit. Restarting browser...');
@@ -550,7 +583,7 @@ async function main() {
     nextPlatformIndex = (nextPlatformIndex + 1) % PLATFORM_ORDER.length;
 
     let selection =
-      (await claimNextJob('pending', rotationStart)) ||
+      (await claimNextJob('pending', rotationStart, PENDING_PLATFORM_ORDER)) ||
       (await claimNextJob('browser_pending', rotationStart));
 
     if (!selection) {
@@ -585,6 +618,12 @@ async function main() {
       await sleep(5000);
     }
   }
+
+  // Shutdown: stop the pool claiming and let in-flight jobs finish
+  // their upsert/mark step before the process exits, so no claimed
+  // config is stranded in `processing` on a fast shutdown.
+  tikTokPool.stop();
+  await tikTokPoolDone;
 }
 
 // Awaited with a rejection handler (Sonar S9383): an unhandled

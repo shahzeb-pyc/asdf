@@ -45,20 +45,21 @@ function redactProxyValues(text, argOptions) {
   return out;
 }
 
-// TikTok discovery is yt-dlp FIRST (owner order 2026-11-08): the plain
-// profile-URL attempt, retried up to MAX_PROFILE_ATTEMPTS times per claim
-// with RETRY_DELAY_MS between attempts. Each attempt draws a different
-// rotating proxy exit IP — the exit-IP lottery is what decides success,
-// and a single attempt wastes a claim on one blocked IP.
-//
-// ONLY when all profile attempts fail, the paid TikWM /user/info
-// fallback runs (spec scraper-tikwm-fallback): resolve the camelCase
-// secUid from TIKWMAPI_KEYS_SCRAPER, then one `tiktokuser:{secUid}`
-// DIRECT attempt, exactly as the old Countik path did. Countik itself
-// is gone from discovery (dead from every egress): no secuid Worker
-// call, no direct Countik fallback. When no TikWM keys are configured
-// the fallback is skipped silently (the startup warning in index.js
-// already said so) and the claim fails exactly as before.
+// TikTok discovery is TikWM FIRST (owner order 2026-11-12, spec
+// scraper-tikwm-first-concurrency): the paid TikWM /user/info lookup
+// resolves the camelCase secUid, then ONE `tiktokuser:{secUid}`
+// direct attempt. Only when that whole paid path fails do the plain
+// profile-URL attempts run as backup, retried up to
+// MAX_PROFILE_ATTEMPTS times per claim with RETRY_DELAY_MS between
+// attempts. Each backup attempt draws a different rotating proxy exit
+// IP — the exit-IP lottery is what decides success, and a single
+// attempt wastes a claim on one blocked IP. The old yt-dlp-first
+// order is gone: no adapter, no flag, no env toggle keeps it.
+// Countik is gone from discovery (dead from every egress): no secuid
+// Worker call, no direct Countik fallback. When no TikWM keys are
+// configured the primary is skipped with ONE warning per claim (and a
+// loud ERROR at startup — see discovery/tikwm.js) and the claim runs
+// on the backup alone; that alone never errors the config.
 const MAX_PROFILE_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 2000;
 
@@ -158,7 +159,35 @@ async function runYtDlp(args) {
  * Returns { ok: true, ids } when at least one ID is extracted, otherwise
  * { ok: false, reason } with the failure detail (stderr tail,
  * 'unparseable_json', or 'empty_result'). Never throws.
+ *
+ * Partial results (spec scraper-tikwm-first-concurrency §2): a failed
+ * attempt can still carry usable IDs on stdout — a live attempt exited
+ * 1 yet its stdout JSON held 70 valid IDs. On a non-zero exit, parse
+ * err.stdout the same way as a success and return the IDs when at
+ * least one is valid (the extractor's definition — no second, looser
+ * one). Zero valid IDs, unparseable stdout, or empty stdout take the
+ * existing failure path unchanged.
  */
+
+/**
+ * Parse one yt-dlp JSON stdout blob and extract TikTok IDs with the
+ * single shared extractor (no second, looser definition — the
+ * extractor decides what counts as a valid ID). Returns
+ * { ok: true, ids } when the text parses (ids may be empty) or
+ * { ok: false, parseError } when it is not JSON at all. Shared by
+ * the partial-results recovery path and the success path below so the
+ * parse → extract sequence exists exactly once.
+ */
+function parseDiscoveryIds(text, maxCount) {
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch (parseErr) {
+    return { ok: false, parseError: parseErr instanceof Error ? parseErr.message : String(parseErr) };
+  }
+  return { ok: true, ids: extractIdsFromYtdlpJson(payload, 'tiktok', maxCount) };
+}
+
 async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
   const args = buildTiktokYtdlpArgs(targetUrl, maxCount, argOptions);
   console.log(`📡 TikTok yt-dlp discovery: ${targetUrl}`);
@@ -167,6 +196,25 @@ async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
   try {
     stdout = await runYtDlp(args);
   } catch (err) {
+    // Partial-results recovery: a non-zero exit does not mean the
+    // stdout JSON is useless. Try it before declaring failure.
+    const failedStdout = err.stdout?.toString?.() || '';
+    if (failedStdout.trim()) {
+      const partial = parseDiscoveryIds(failedStdout, maxCount);
+      if (partial.ok && partial.ids.length > 0) {
+        // No targetUrl here (Sonar S5145): the direct attempt's target
+        // is `tiktokuser:{secUid}` where secUid comes from the TikWM
+        // API response — external, unsanitised data must never be
+        // interpolated into a log line. The allowlisted @logUser
+        // identifies the claim.
+        console.log(
+          `✅ TikTok yt-dlp recovered ${partial.ids.length} partial ID(s) for @${logUser} (attempt exited non-zero).`,
+        );
+        return { ok: true, ids: partial.ids };
+      }
+      // Unparseable stdout or zero valid IDs: fall through to the
+      // failure path below.
+    }
     const message = err instanceof Error ? err.message : String(err);
     const stderr = err.stderr?.toString?.() || '';
     // Never fall back to err.message verbatim: with empty stderr it is
@@ -178,16 +226,13 @@ async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
     return { ok: false, reason: detail };
   }
 
-  let payload;
-  try {
-    payload = JSON.parse(stdout);
-  } catch (parseErr) {
-    const message = parseErr instanceof Error ? parseErr.message : String(parseErr);
-    console.warn(`⚠️ TikTok yt-dlp returned invalid JSON for ${targetUrl}: ${message}`);
+  const parsed = parseDiscoveryIds(stdout, maxCount);
+  if (!parsed.ok) {
+    console.warn(`⚠️ TikTok yt-dlp returned invalid JSON for ${targetUrl}: ${parsed.parseError}`);
     return { ok: false, reason: 'unparseable_json' };
   }
 
-  const ids = extractIdsFromYtdlpJson(payload, 'tiktok', maxCount);
+  const ids = parsed.ids;
   if (ids.length > 0) {
     console.log(`✅ TikTok yt-dlp discovered ${ids.length} ID(s) for @${logUser} via ${targetUrl}`);
     return { ok: true, ids };
@@ -198,27 +243,29 @@ async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
 }
 
 /**
- * Discover TikTok video IDs (owner order 2026-11-08, spec
- * scraper-tikwm-fallback):
- * 1. yt-dlp, plain profile URL through the rotating proxy
- *    (COUNTIK_PROXY_URL from env — the name is historical, the value is
- *    the DataImpulse proxy). yt-dlp resolves the sec_uid itself from the
- *    profile page. Listing only (--flat-playlist -J); it never downloads
- *    video bytes. If it yields reel IDs, discovery is done — the TikWM
- *    fallback is never called.
- * 2. The profile attempt is retried up to 5 times total per claim, 2s
- *    between attempts — each attempt draws a different rotating proxy
- *    exit IP. Success on any attempt returns the IDs.
- * 3. ONLY if all 5 fail: paid TikWM /user/info resolves the camelCase
- *    secUid (keys from TIKWMAPI_KEYS_SCRAPER, in order, one request per
- *    key, no proxy), then ONE `tiktokuser:{secUid}` direct attempt —
- *    exactly as the old Countik path did. A failed direct attempt after
- *    a good secUid is a discovery failure like any other.
- * 4. All fail -> { ok: false, reason } recording BOTH failures
- *    (yt-dlp detail + TikWM fallback detail, redacted — never the proxy
- *    value, never key material); the caller marks the config error, as
- *    before. With no TikWM keys configured the fallback is skipped
- *    silently and the reason is the yt-dlp detail alone, as before.
+ * Discover TikTok video IDs (owner order 2026-11-12, spec
+ * scraper-tikwm-first-concurrency):
+ * 1. Paid TikWM /user/info FIRST resolves the camelCase secUid
+ *    (keys from TIKWMAPI_KEYS_SCRAPER, round-robin start, one request
+ *    per key, no proxy), then ONE `tiktokuser:{secUid}` direct attempt
+ *    — exactly as the old Countik path did. Success (≥1 valid ID)
+ *    ends discovery; the backup never runs.
+ * 2. ONLY if the whole paid path fails, the backup: the profile
+ *    attempt retried up to 5 times total per claim, 2s between
+ *    attempts — each attempt draws a different rotating proxy exit IP.
+ *    Success on any attempt returns the IDs.
+ * 3. All fail -> { ok: false, reason } recording BOTH failures
+ *    (paid-path detail + backup detail, redacted — never the proxy
+ *    value, never key material); the caller marks the config error,
+ *    as before. With no TikWM keys configured the primary is skipped
+ *    with one warning per claim and the reason is the backup detail
+ *    alone; that alone never errors the config.
+ *
+ * "Paid path fails" means exactly: the lookup fails (non-200 HTTP,
+ * non-zero code, missing/empty secUid, timeout, all keys exhausted,
+ * or no keys configured) OR the direct attempt fails (non-zero exit
+ * with no usable IDs, unparseable JSON, or zero valid IDs). No other
+ * case triggers the backup.
  *
  * The proxy value is read from env and is never logged. TikWM key
  * values are read from TIKWMAPI_KEYS_SCRAPER only and are never logged.
@@ -261,12 +308,57 @@ export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCoun
     return { ok: false, reason: 'invalid_source_username' };
   }
 
-  // Rotating proxy for the profile-URL attempts (discovery metadata).
-  // Never logged.
+  // Rotating proxy for the profile-URL backup attempts (discovery
+  // metadata). Never logged.
   const resolveProxy = String(process.env.COUNTIK_PROXY_URL || '').trim();
 
+  // 1. Paid TikWM lookup FIRST.
+  const tikwmKeys = options.tikwmKeys ?? getTikwmScraperKeys();
+  if (tikwmKeys.length === 0) {
+    // No-keys rule (spec §1): loud startup ERROR already said so
+    // (see discovery/tikwm.js); one warning per claim here, then
+    // backup-only. Never silent, never a crash, never an errored
+    // config for this reason alone.
+    console.warn(
+      `⚠️ TikWM primary unavailable for @${logUser} (no TIKWMAPI_KEYS_SCRAPER keys) — running the yt-dlp profile-URL backup only.`,
+    );
+  } else {
+    const lookup = await resolveSecUidWithTikwm(cleanUser, {
+      keys: tikwmKeys,
+      fetchFn: options.fetchFn,
+    });
+    if (lookup.ok) {
+      // 2. One `tiktokuser:{secUid}` direct attempt (keep 1, as
+      // before; no proxy, as before). Success ends discovery.
+      const direct = await runDiscoveryTarget(`tiktokuser:${lookup.secUid}`, maxCount, {}, logUser);
+      if (direct.ok) {
+        console.log(`✅ TikTok discovery via TikWM primary for @${logUser}.`);
+        return direct;
+      }
+      console.warn(
+        `⚠️ TikWM primary resolved secUid for @${logUser} but the tiktokuser: direct attempt failed (${direct.reason}); trying the profile-URL backup...`,
+      );
+      return runProfileBackup(profileUrl, maxCount, resolveProxy, logUser, `tikwm direct attempt failed (${direct.reason})`);
+    }
+    console.warn(
+      `⚠️ TikWM primary lookup failed for @${logUser} (${lookup.reason}); trying the profile-URL backup...`,
+    );
+    return runProfileBackup(profileUrl, maxCount, resolveProxy, logUser, `tikwm lookup failed (${lookup.reason})`);
+  }
+
+  // No keys: backup-only.
+  return runProfileBackup(profileUrl, maxCount, resolveProxy, logUser, null);
+}
+
+/**
+ * The profile-URL backup: up to MAX_PROFILE_ATTEMPTS attempts, 2s
+ * apart, rotating proxy. Success on any attempt returns the IDs.
+ * All fail -> { ok: false, reason } — the backup detail alone, or
+ * prefixed with the paid-path failure detail when one is given.
+ */
+async function runProfileBackup(profileUrl, maxCount, resolveProxy, logUser, paidFailure) {
   console.log(
-    `🔍 TikTok yt-dlp: profile URL for @${logUser}${resolveProxy ? ' via proxy' : ' (no proxy configured)'} — up to ${MAX_PROFILE_ATTEMPTS} attempts.`,
+    `🔍 TikTok yt-dlp backup: profile URL for @${logUser}${resolveProxy ? ' via proxy' : ' (no proxy configured)'} — up to ${MAX_PROFILE_ATTEMPTS} attempts.`,
   );
   let lastReason = 'unknown';
   for (let attempt = 1; attempt <= MAX_PROFILE_ATTEMPTS; attempt += 1) {
@@ -277,50 +369,15 @@ export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCoun
     lastReason = result.reason;
     if (attempt < MAX_PROFILE_ATTEMPTS) {
       console.log(
-        `🔁 TikTok yt-dlp attempt ${attempt} of ${MAX_PROFILE_ATTEMPTS} failed for @${logUser}; retrying in ${RETRY_DELAY_MS / 1000}s...`,
+        `🔁 TikTok yt-dlp backup attempt ${attempt} of ${MAX_PROFILE_ATTEMPTS} failed for @${logUser}; retrying in ${RETRY_DELAY_MS / 1000}s...`,
       );
       await sleep(RETRY_DELAY_MS);
     }
   }
 
-  console.warn(`⚠️ All TikTok yt-dlp profile attempts failed for @${logUser} (${lastReason})`);
-
-  // TikWM fallback, ONLY after all 5 profile attempts failed.
-  // No keys configured: skip silently (the startup warning already
-  // said so) and fail exactly as before.
-  const tikwmKeys = options.tikwmKeys ?? getTikwmScraperKeys();
-  if (tikwmKeys.length === 0) {
-    return { ok: false, reason: lastReason };
+  console.warn(`⚠️ All TikTok yt-dlp profile backup attempts failed for @${logUser} (${lastReason})`);
+  if (paidFailure) {
+    return { ok: false, reason: `${paidFailure}; profile backup failed (${lastReason})` };
   }
-
-  console.log(`🔍 TikTok yt-dlp failed for @${logUser}; trying TikWM secUid fallback...`);
-  const lookup = await resolveSecUidWithTikwm(cleanUser, {
-    keys: tikwmKeys,
-    fetchFn: options.fetchFn,
-  });
-  if (!lookup.ok) {
-    console.warn(
-      `⚠️ TikWM secUid fallback failed for @${logUser} (${lookup.reason}); discovery failed.`,
-    );
-    return { ok: false, reason: `${lastReason}; tikwm fallback failed (${lookup.reason})` };
-  }
-
-  // Direct attempt, exactly as the old Countik path did: no proxy
-  // option (the VPS scraper env sets no DATACENTER_PROXY/PROXY_URL/
-  // HTTP(S)_PROXY, so the argv builder adds no --proxy — the mobile
-  // feed API behind `tiktokuser:` is not blocked the way the profile
-  // HTML page is). A failed direct attempt after a good secUid is a
-  // discovery failure like any other.
-  const direct = await runDiscoveryTarget(`tiktokuser:${lookup.secUid}`, maxCount, {}, logUser);
-  if (direct.ok) {
-    console.log(`✅ TikTok discovery recovered via TikWM fallback for @${logUser}.`);
-    return direct;
-  }
-  console.warn(
-    `⚠️ TikWM fallback resolved secUid for @${logUser} but the tiktokuser: direct attempt failed (${direct.reason}); discovery failed.`,
-  );
-  return {
-    ok: false,
-    reason: `${lastReason}; tikwm fallback direct attempt failed (${direct.reason})`,
-  };
+  return { ok: false, reason: lastReason };
 }
