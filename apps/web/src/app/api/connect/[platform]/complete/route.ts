@@ -14,7 +14,6 @@ import {
   extractConnectSession,
   sessionCanAccessTenant,
 } from '@/lib/connect/session';
-import type { ConnectDbClient } from '@/lib/connect/persist';
 
 /**
  * POST /api/connect/[platform]/complete — finishes a connect flow.
@@ -49,8 +48,7 @@ const ConnectCompleteRequestSchema = z.object({
 
 export async function handleConnectComplete(
   request: NextRequest,
-  platformParam: string,
-  dbClient?: ConnectDbClient
+  platformParam: string
 ): Promise<NextResponse> {
   const limited = await enforceIpRateLimit(request, 'connect_complete', 20);
   if (limited) return limited;

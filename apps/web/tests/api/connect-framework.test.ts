@@ -455,7 +455,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       },
       body: JSON.stringify({ destinationIds: ['dest-1001', 'dest-3003', 'not-a-real-id'] }),
     });
-    const res = await handleConnectComplete(req, 'instagram', dbClient);
+    const res = await handleConnectComplete(req, 'instagram');
     expect(res.status).toBe(200);
     const data = (await res.json()) as { accountsUrl: string; addedCount: number };
     // Per-platform landing page: Instagram lands on its own accounts page.
@@ -488,7 +488,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       },
       body: JSON.stringify({ destinationIds: ['dest-1001'] }),
     });
-    const res = await handleConnectComplete(req, 'facebook', dbClient);
+    const res = await handleConnectComplete(req, 'facebook');
     expect(res.status).toBe(200);
     const data = (await res.json()) as { accountsUrl: string; addedCount: number };
     expect(data.accountsUrl).toBe(`/tenant/${subdomain}/accounts`);
@@ -521,7 +521,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       },
       body: JSON.stringify({ destinationIds: ['dest-1001'] }),
     });
-    const res = await handleConnectComplete(req, platform, dbClient);
+    const res = await handleConnectComplete(req, platform);
     expect(res.status).toBe(200);
     const data = (await res.json()) as { accountsUrl: string; addedCount: number };
     expect(data.accountsUrl).toBe(`/tenant/${subdomain}/x/accounts`);
@@ -556,7 +556,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       },
       body: JSON.stringify({ destinationIds: ['th-dest-1'] }),
     });
-    const res = await handleConnectComplete(req, 'threads', dbClient);
+    const res = await handleConnectComplete(req, 'threads');
     const data = (await res.json()) as { accountsUrl: string; addedCount: number };
     return { status: res.status, data };
   }
@@ -806,8 +806,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
         },
         body: JSON.stringify({ destinationIds: ['dest-1001'] }),
       }),
-      'instagram',
-      dbClient
+      'instagram'
     );
     expect(foreignRes.status).toBe(403);
 
@@ -823,8 +822,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
         },
         body: JSON.stringify({ destinationIds: [] }),
       }),
-      'instagram',
-      dbClient
+      'instagram'
     );
     expect(emptyRes.status).toBe(400);
   });
@@ -866,8 +864,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
         },
         body: 'this is not json',
       }),
-      'instagram',
-      dbClient
+      'instagram'
     );
     expect(res.status).toBe(400);
   });
@@ -878,7 +875,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       headers: { cookie: sessionCookie, 'content-type': 'application/json' },
       body: JSON.stringify({ destinationIds: ['dest-1001'] }),
     });
-    const res = await handleConnectComplete(req, 'instagram', dbClient);
+    const res = await handleConnectComplete(req, 'instagram');
     expect(res.status).toBe(410);
   });
 
@@ -947,7 +944,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       },
       body: JSON.stringify({ destinationIds: ['dest-1001'] }),
     });
-    await handleConnectComplete(completeReq, 'instagram', dbClient);
+    await handleConnectComplete(completeReq, 'instagram');
 
     // Spec 174 2A: the connect created the ACCOUNT only — no
     // destinations row. The Instagram destination below is seeded
@@ -1460,8 +1457,7 @@ describe('Connect framework via a Supabase-shaped client', () => {
         },
         body: JSON.stringify({ destinationIds: ['dest-2002'] }),
       }),
-      'instagram',
-      supabase
+      'instagram'
     );
     expect(completeRes.status).toBe(200);
     // Spec 174 2A: the connect created the ACCOUNT only — no

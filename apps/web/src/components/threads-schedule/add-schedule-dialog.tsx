@@ -139,7 +139,7 @@ export function AddThreadsScheduleDialog({
   );
 
   const canFinish =
-    selectedDestinationId !== null &&
+    selectedAccountId !== null &&
     timezone !== null &&
     postingTimes.length >= 1 &&
     !duplicateTimes &&
@@ -359,7 +359,7 @@ export function AddThreadsScheduleDialog({
           {step === 1 ? (
             <Button
               type="button"
-              disabled={selectedDestinationId === null}
+              disabled={selectedAccountId === null}
               onClick={() => setStep(2)}
             >
               Continue

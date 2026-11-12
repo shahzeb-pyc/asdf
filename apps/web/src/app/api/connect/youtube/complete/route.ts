@@ -128,7 +128,7 @@ export async function handleYouTubeComplete(
   // the request body and clears the pending cookie in its response.
   const pick = await readPendingPick(request);
 
-  const response = await handleConnectComplete(request, 'youtube', dbClient);
+  const response = await handleConnectComplete(request, 'youtube');
 
   if (response.status === 200 && pick?.providerAccountId) {
     const client = resolveConnectDbClient(dbClient);
