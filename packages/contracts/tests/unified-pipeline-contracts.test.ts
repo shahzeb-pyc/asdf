@@ -4,6 +4,7 @@ import {
   DatabaseDestinationRowSchema,
   DatabaseSocialAccountRowSchema,
   destinationAccountTypeFromMetadata,
+  DestinationSectionSchema,
   DatabaseUnifiedQueueItemRowSchema,
   PUBLISH_QUEUE_MESSAGE_SCHEMA_VERSION,
   PublishOutcomeSchema,
@@ -20,6 +21,7 @@ import {
   type PublishQueueMessage,
   type PublishQueueMessageInput,
   type RecoverStuckPublishingItemsUnifiedArgs,
+  type Section,
   type SettleQueueItemOutcomeUnifiedArgs,
 } from '../src/index.js';
 
@@ -225,6 +227,7 @@ const validDestinationRow: DatabaseDestinationRow = {
   account_id: IDS.account,
   platform: 'facebook',
   external_destination_id: 'page-123',
+  section: 'schedule',
   name: 'Page',
   handle: null,
   avatar_url: null,
@@ -389,6 +392,41 @@ describe('DatabaseDestinationRowSchema', () => {
       DatabaseDestinationRowSchema.safeParse({ ...validDestinationRow, status: 'fb_rate_limited' })
         .success
     ).toBe(false);
+  });
+});
+
+describe('DestinationSectionSchema (spec 174 PR 1A)', () => {
+  it('accepts every section label', () => {
+    for (const section of ['schedule', 'adu', 'mirror', 'publish_now'] as const) {
+      expect(DestinationSectionSchema.parse(section)).toBe(section);
+      const parsed = DatabaseDestinationRowSchema.parse({ ...validDestinationRow, section });
+      expect(parsed.section).toBe(section);
+    }
+  });
+
+  it('rejects a bad label', () => {
+    expect(DestinationSectionSchema.safeParse('pages').success).toBe(false);
+    expect(DestinationSectionSchema.safeParse('').success).toBe(false);
+    expect(
+      DatabaseDestinationRowSchema.safeParse({ ...validDestinationRow, section: 'pages' })
+        .success
+    ).toBe(false);
+  });
+
+  it('rejects a missing label — section is required from 1A', () => {
+    expect(DestinationSectionSchema.safeParse(undefined).success).toBe(false);
+    const { section: _dropped, ...missingSection } = validDestinationRow;
+    expect(DatabaseDestinationRowSchema.safeParse(missingSection).success).toBe(false);
+    // A NULL section (a row created by old code in the deploy window)
+    // fails loudly instead of parsing as a section-less row.
+    expect(
+      DatabaseDestinationRowSchema.safeParse({ ...validDestinationRow, section: null }).success
+    ).toBe(false);
+  });
+
+  it('types the Section export as the four labels', () => {
+    const section: Section = 'mirror';
+    expectTypeOf(section).toEqualTypeOf<'schedule' | 'adu' | 'mirror' | 'publish_now'>();
   });
 });
 
