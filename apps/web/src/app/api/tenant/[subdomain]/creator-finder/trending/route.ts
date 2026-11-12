@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
   fetchTrendingCreators,
-  enrichCreators,
   TrendingResponseSchema,
 } from '@fbuploadpro/contracts';
 import {
@@ -14,8 +13,7 @@ import {
   getCreatorFinderKeys,
   getCreatorFinderSession,
   getCreatorFinderSupabase,
-  getCreatorFinderWorkspaceId,
-  saveCreatorsToDb,
+  startServerTiming,
 } from '../lib';
 
 export async function GET(
@@ -23,11 +21,13 @@ export async function GET(
   { params }: { params: Promise<{ subdomain: string }> },
 ) {
   const { subdomain } = await params;
+  const timing = startServerTiming();
   const { session, errorResponse } = await getCreatorFinderSession(
     request,
     subdomain,
   );
   if (errorResponse) return errorResponse;
+  timing.split('session');
   const region = request.nextUrl.searchParams.get('region');
   if (!region) {
     return NextResponse.json(
@@ -46,45 +46,19 @@ export async function GET(
       role: session.role,
     });
     if (gate.blocked) return creatorFinderDailyLimitResponse();
+    timing.split('gate');
     const result = await fetchTrendingCreators(region, {
       apiKeys: getCreatorFinderKeys(),
       onUpstreamCall: gate.onUpstreamCall,
     });
-    // Countik enrichment, awaited before responding or saving:
-    // a search shows NO cards until every creator's enrichment
-    // is back (wait-for-all), and Saved stores the enriched data
-    // as it was at search time. Per-creator Countik failures are
-    // isolated inside enrichCreators and never fail the search.
-    const enrichedCreators = await enrichCreators(result.creators);
-    const enrichedResult = { ...result, creators: enrichedCreators };
-    // Auto-save: results still render if the save fails; the
-    // response carries saveFailed so the page warns visibly.
-    let saveFailed = false;
-    try {
-      const supabase = getCreatorFinderSupabase();
-      const workspaceId = await getCreatorFinderWorkspaceId(
-        supabase,
-        subdomain,
-        session,
-      );
-      if (!supabase || !workspaceId) {
-        saveFailed = true;
-      } else {
-        saveFailed = !(await saveCreatorsToDb(
-          supabase,
-          workspaceId,
-          session.userId,
-          enrichedResult.creators,
-          'trending',
-          result.region,
-        ));
-      }
-    } catch {
-      saveFailed = true;
-    }
-    return NextResponse.json(
-      TrendingResponseSchema.parse({ ...enrichedResult, saveFailed }),
-    );
+    timing.split('tikwm');
+    // Return-first (spec 169): the response carries the TikWM
+    // creators immediately, unenriched. The page POSTs them to
+    // /creator-finder/enrich, which enriches and saves them —
+    // a slow Countik lookup no longer holds a whole search.
+    return NextResponse.json(TrendingResponseSchema.parse(result), {
+      headers: { 'Server-Timing': timing.header() },
+    });
   } catch (err) {
     return (
       creatorFinderUsageErrorResponse(err) ?? creatorFinderErrorResponse(err)

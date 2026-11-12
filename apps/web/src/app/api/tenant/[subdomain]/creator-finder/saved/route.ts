@@ -1,7 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
-  filterSavedCreators,
-  paginateSavedCreators,
   SavedCreatorDeleteResponseSchema,
   SavedCreatorListQuerySchema,
   SavedCreatorListResponseSchema,
@@ -13,8 +11,9 @@ import {
   getCreatorFinderSession,
   getCreatorFinderSupabase,
   getCreatorFinderWorkspaceId,
-  listSavedCreators,
+  listSavedCreatorsPage,
   logCreatorFinderDbError,
+  startServerTiming,
 } from '../lib';
 
 type Resolved =
@@ -59,13 +58,15 @@ export async function GET(
   { params }: { params: Promise<{ subdomain: string }> },
 ) {
   const { subdomain } = await params;
+  const timing = startServerTiming();
   const resolved = await resolveWorkspace(request, subdomain);
   if ('errorResponse' in resolved) return resolved.errorResponse;
-  // Server-side search + source filter + pagination. Filtering and
-  // paging happen in this route (not in lib.ts, which this change
-  // deliberately leaves untouched): the full saved list for this
-  // user + workspace is fetched, filtered, then sliced to one page.
-  // Export stays unpaginated — it reads the full list directly.
+  timing.split('session');
+  // Server-side search + source filter + pagination, all in the
+  // database (spec 169): the old route fetched the full saved list
+  // and filtered in memory, so opening Saved paid for every saved
+  // creator to show 30 rows. Export stays unpaginated — it reads
+  // the full list directly.
   const queryParsed = SavedCreatorListQuerySchema.safeParse({
     q: request.nextUrl.searchParams.get('q') ?? undefined,
     source: request.nextUrl.searchParams.get('source') ?? undefined,
@@ -77,12 +78,14 @@ export async function GET(
       { status: 400 },
     );
   }
-  const creators = await listSavedCreators(
+  const page = await listSavedCreatorsPage(
     resolved.supabase,
     resolved.workspaceId,
     resolved.session.userId,
+    queryParsed.data,
   );
-  if (!creators) {
+  timing.split('db');
+  if (!page) {
     return NextResponse.json(
       {
         error: 'SAVED_UNAVAILABLE',
@@ -91,11 +94,9 @@ export async function GET(
       { status: 502 },
     );
   }
-  const filtered = filterSavedCreators(creators, queryParsed.data);
-  const page = paginateSavedCreators(filtered, queryParsed.data.page);
-  return NextResponse.json(
-    SavedCreatorListResponseSchema.parse(page),
-  );
+  return NextResponse.json(SavedCreatorListResponseSchema.parse(page), {
+    headers: { 'Server-Timing': timing.header() },
+  });
 }
 
 export async function DELETE(

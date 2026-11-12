@@ -166,6 +166,98 @@ describe('enrichCreators', () => {
   });
 });
 
+/**
+ * Signal-aware stub: resolves after delayMs, but rejects as soon as the
+ * passed AbortSignal fires — the way real fetch behaves under
+ * AbortSignal.timeout. The plain stubFetch above ignores the signal, so it
+ * cannot prove a timeout at all.
+ */
+function delayedFetch(
+  delayMs: number,
+  handler: (url: string) => { ok: boolean; body: StubBody },
+): typeof fetch {
+  const fn = vi.fn(async (url: string, init?: RequestInit) => {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, delayMs);
+      init?.signal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(timer);
+          reject(new DOMException('The operation timed out.', 'TimeoutError'));
+        },
+        { once: true },
+      );
+    });
+    const result = handler(url);
+    return {
+      ok: result.ok,
+      json: async () => result.body,
+    } as Response;
+  });
+  return fn as unknown as typeof fetch;
+}
+
+describe('enrichCreators deadline (spec 169)', () => {
+  it('returns in ~budget, not ~30s, when every creator hangs', async () => {
+    const fetchFn = delayedFetch(60_000, (url) => {
+      if (url.includes('/exist/')) return { ok: true, body: EXIST_BODY };
+      return { ok: true, body: ANALYZE_BODY };
+    });
+    const start = Date.now();
+    const result = await enrichCreators(
+      [makeCreator(), makeCreator({ handle: 'bob' })],
+      { fetchFn, budgetMs: 100 },
+    );
+    expect(Date.now() - start).toBeLessThan(5_000);
+    expect(result).toHaveLength(2);
+    expect(result[0]?.countikUnavailable).toBe(true);
+    expect(result[1]?.countikUnavailable).toBe(true);
+    expect(result[0]?.enrichment).toBeUndefined();
+  });
+
+  it('a slow leg times out at the leg timeout instead of the old 30s', async () => {
+    const fetchFn = delayedFetch(1_000, (url) => {
+      if (url.includes('/exist/')) return { ok: true, body: EXIST_BODY };
+      return { ok: true, body: ANALYZE_BODY };
+    });
+    const start = Date.now();
+    const result = await enrichCreators([makeCreator()], {
+      fetchFn,
+      timeoutMs: 50,
+      budgetMs: 5_000,
+    });
+    expect(Date.now() - start).toBeLessThan(2_000);
+    expect(result[0]?.countikUnavailable).toBe(true);
+  });
+
+  it('a fast creator still enriches while a slow one hangs', async () => {
+    const fetchFn = delayedFetch(60_000, (url) => {
+      // Only alice answers: bob's calls hang until the budget aborts them.
+      if (url.includes('alice')) return { ok: true, body: url.includes('/exist/') ? EXIST_BODY : ANALYZE_BODY };
+      return { ok: true, body: EXIST_BODY };
+    });
+    // Alice's calls must resolve fast: override the delay for her URLs.
+    const fastForAlice = (async (url: string, init?: RequestInit) => {
+      if (url.includes('alice')) {
+        const result =
+          url.includes('/exist/') ? EXIST_BODY : ANALYZE_BODY;
+        return { ok: true, json: async () => result } as Response;
+      }
+      return fetchFn(url, init);
+    }) as unknown as typeof fetch;
+    const start = Date.now();
+    const result = await enrichCreators(
+      [makeCreator(), makeCreator({ handle: 'bob' })],
+      { fetchFn: fastForAlice, budgetMs: 200 },
+    );
+    expect(Date.now() - start).toBeLessThan(5_000);
+    expect(result[0]?.enrichment?.verified).toBe(true);
+    expect(result[0]?.countikUnavailable).toBeUndefined();
+    expect(result[1]?.countikUnavailable).toBe(true);
+    expect(result[1]?.enrichment).toBeUndefined();
+  });
+});
+
 describe('checkCountikVideo', () => {
   it('posts to video/exist then reads videoinfo, download from download_link', async () => {
     const seen: Array<{ url: string; method?: string | undefined; body?: string | undefined }> = [];

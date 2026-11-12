@@ -2,8 +2,10 @@
 
 import * as React from 'react';
 import Image from 'next/image';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  CreatorEnrichRequestSchema,
+  CreatorEnrichResponseSchema,
   CreatorFinderUsageResponseSchema,
   HashtagGenerateResponseSchema,
   NicheResponseSchema,
@@ -128,6 +130,14 @@ export function CreatorFinderPage({
   const [trending, setTrending] = React.useState<SearchState>(IDLE_STATE);
   const [niche, setNiche] = React.useState<SearchState>(IDLE_STATE);
   const [similar, setSimilar] = React.useState<SearchState>(IDLE_STATE);
+  const queryClient = useQueryClient();
+  /**
+   * Monotonic search token (spec 169): bumped on every search, so an
+   * enrich response merges only into the search it belongs to — a
+   * slow enrich from a superseded search never overwrites the new
+   * results.
+   */
+  const searchSeqRef = React.useRef(0);
   const [removingHandle, setRemovingHandle] = React.useState<string | null>(null);
   const [exporting, setExporting] = React.useState(false);
   const [exportError, setExportError] = React.useState<string | null>(null);
@@ -166,6 +176,10 @@ export function CreatorFinderPage({
       savedSource,
       savedPage,
     ],
+    // Lazy (spec 169): the Saved list is not fetched on mount — only
+    // when the Saved tab opens. It used to read the whole saved
+    // table on every page load just to show 30 rows.
+    enabled: tab === 'saved',
     queryFn: () =>
       api.get(buildTenantApiPath(subdomain, '/creator-finder/saved'), {
         schema: SavedCreatorListResponseSchema,
@@ -262,6 +276,10 @@ export function CreatorFinderPage({
 
   const regionsQuery = useQuery({
     queryKey: ['creator-finder', 'regions', subdomain],
+    // Lazy (spec 169): regions is a live TikWM call that counts
+    // against the daily cap, so it only fires on the tabs that
+    // need a country list — not on Video, Hashtag, or Saved.
+    enabled: tab === 'trending' || tab === 'niche',
     queryFn: () =>
       api.get(buildTenantApiPath(subdomain, '/creator-finder/regions'), {
         schema: RegionListResponseSchema,
@@ -331,8 +349,66 @@ export function CreatorFinderPage({
   );
   const nicheCountryListId = 'creator-finder-niche-country-list';
 
+  /**
+   * Return-first enrichment (spec 169): the search already returned
+   * the basic creators and the cards are showing; this POSTs them to
+   * the enrich endpoint, which enriches and saves them, then merges
+   * the enriched creators back into the search state by handle. A
+   * slow creator comes back as `countikUnavailable` instead of
+   * holding the search up. If the enrich call itself fails, the
+   * basic cards stay and the save-failed banner shows — the save
+   * never happened, so the banner is the honest state.
+   */
+  async function enrichSearchResults(
+    source: 'trending' | 'niche' | 'similar',
+    searchTerm: string,
+    creators: Creator[],
+    seq: number,
+    setState: React.Dispatch<React.SetStateAction<SearchState>>,
+  ): Promise<void> {
+    if (creators.length === 0) return;
+    try {
+      // The enrich schema caps searchTerm at 200 chars, but the search
+      // inputs have no max: a longer keyword must not throw here and
+      // fake a save failure. Truncate — the term is only save
+      // provenance.
+      const enriched = await api.post(
+        buildTenantApiPath(subdomain, '/creator-finder/enrich'),
+        CreatorEnrichRequestSchema.parse({
+          source,
+          searchTerm: searchTerm.slice(0, 200),
+          creators,
+        }),
+        { schema: CreatorEnrichResponseSchema },
+      );
+      if (searchSeqRef.current !== seq) return;
+      const byHandle = new Map(
+        enriched.creators.map((creator) => [creator.handle, creator]),
+      );
+      setState((prev) => ({
+        ...prev,
+        creators: prev.creators.map(
+          (creator) => byHandle.get(creator.handle) ?? creator,
+        ),
+        saveFailed: enriched.saveFailed ?? false,
+      }));
+      // The save just happened: the Saved list is stale wherever it
+      // is cached. Invalidation (not a refetch) is deliberate — if
+      // the Saved tab is not open, its disabled query refetches when
+      // the user opens it.
+      void queryClient.invalidateQueries({
+        queryKey: ['creator-finder', 'saved', subdomain],
+      });
+    } catch {
+      if (searchSeqRef.current !== seq) return;
+      setState((prev) => ({ ...prev, saveFailed: true }));
+    }
+  }
+
   async function searchTrending() {
     if (!effectiveRegion) return;
+    searchSeqRef.current += 1;
+    const seq = searchSeqRef.current;
     setTrending({ status: 'loading', creators: [], message: null, heading: null });
     try {
       const result = await api.get(
@@ -352,7 +428,13 @@ export function CreatorFinderPage({
         heading: `Trending creators in ${effectiveRegion}`,
         saveFailed: result.saveFailed ?? false,
       });
-      void savedQuery.refetch();
+      void enrichSearchResults(
+        'trending',
+        effectiveRegion,
+        result.creators,
+        seq,
+        setTrending,
+      );
     } catch (err) {
       setTrending({
         status: 'error',
@@ -367,6 +449,8 @@ export function CreatorFinderPage({
 
   async function searchNiche(event: React.FormEvent) {
     event.preventDefault();
+    searchSeqRef.current += 1;
+    const seq = searchSeqRef.current;
     setNiche({ status: 'loading', creators: [], message: null, heading: null });
     try {
       const result = await api.get(
@@ -391,7 +475,13 @@ export function CreatorFinderPage({
         heading: `Creators for ${result.keyword}`,
         saveFailed: result.saveFailed ?? false,
       });
-      void savedQuery.refetch();
+      void enrichSearchResults(
+        'niche',
+        result.keyword,
+        result.creators,
+        seq,
+        setNiche,
+      );
     } catch (err) {
       setNiche({ status: 'error', creators: [], message: errorMessage(err), heading: null, dailyLimit: isDailyLimitError(err) });
     }
@@ -400,6 +490,8 @@ export function CreatorFinderPage({
 
   async function searchSimilar(event: React.FormEvent) {
     event.preventDefault();
+    searchSeqRef.current += 1;
+    const seq = searchSeqRef.current;
     setSimilar({ status: 'loading', creators: [], message: null, heading: null });
     try {
       const result = await api.get(
@@ -419,7 +511,13 @@ export function CreatorFinderPage({
         heading: `Similar to @${result.username}`,
         saveFailed: result.saveFailed ?? false,
       });
-      void savedQuery.refetch();
+      void enrichSearchResults(
+        'similar',
+        result.username,
+        result.creators,
+        seq,
+        setSimilar,
+      );
     } catch (err) {
       setSimilar({ status: 'error', creators: [], message: errorMessage(err), heading: null, dailyLimit: isDailyLimitError(err) });
     }
