@@ -3,8 +3,12 @@
 /**
  * Account card (spec 131 PR-131-1) — rebuilt on the design system:
  * token-backed Tailwind utilities only (zero inline styles), avatars
- * on `next/image` (the file's 2 raw img elements are deleted), and status
- * as icon + text via `AccountHealthMark` below (a thin wrapper over the
+ * on `next/image` with `unoptimized` (spec 170 F4: the Vercel image
+ * optimiser 402s — OPTIMIZED_IMAGE_REQUEST_PAYMENT_REQUIRED — on
+ * these Facebook avatar URLs, so the optimiser is bypassed entirely
+ * and the stored URL loads directly; the rendered element is still a
+ * plain img element with the direct URL, never a `/_next/image` request),
+ * and status as icon + text via `AccountHealthMark` below (a thin wrapper over the
  * shared `StatusMark`, no status dot:
  * connected is the tick, expired/error is the cross, expiring-soon is
  * the clock) fed by the single account-health model in `account-health.ts`
@@ -118,11 +122,14 @@ function LinkedPageRow({ page }: Readonly<{ page: FacebookAccountLinkedPageItem 
       className="flex items-center gap-2 py-1 text-body text-ink"
     >
       {showImg ? (
+        // Spec 170 F4: unoptimized — the Vercel image optimiser 402s on
+        // Facebook avatar URLs, so load the stored URL directly.
         <Image
           src={page.profilePictureUrl!}
           alt={page.pageName}
           width={24}
           height={24}
+          unoptimized
           onError={() => setFailedUrl(page.profilePictureUrl ?? '__error__')}
           className="size-6 shrink-0 rounded-full border border-line object-cover"
         />
@@ -168,11 +175,17 @@ function AccountAvatar({
 }>) {
   if (showAvatarImg && profilePictureUrl) {
     return (
+      // Spec 170 F4: unoptimized — the Vercel image optimiser 402s on
+      // Facebook avatar URLs (HAR: all 14 account avatars failed with
+      // OPTIMIZED_IMAGE_REQUEST_PAYMENT_REQUIRED, 1–2.6 s queued each),
+      // so the stored URL loads directly as a plain img element, never via
+      // /_next/image. Size, ring, and initials fallback are unchanged.
       <Image
         src={profilePictureUrl}
         alt={displayName}
         width={44}
         height={44}
+        unoptimized
         data-testid="account-avatar-img"
         onError={onAvatarError}
         className={cn('size-11 shrink-0 rounded-full border-2 object-cover', ringClass)}
