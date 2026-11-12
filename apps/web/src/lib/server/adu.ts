@@ -88,6 +88,12 @@ export async function aduContext(
  * plan-cap gate on ADU adds, loaded in ONE query for the single and
  * bulk paths alike. Unknown ids are skipped here — createOne rejects
  * them per item downstream — so a stale id can never block a valid add.
+ * Deliberately NO section filter (spec 174 1B): the key is the
+ * external id, which is identical on every section copy of the same
+ * page, and the pre-create gate looks the picked row up BEFORE its
+ * adu copy exists — a section filter would return no key and fail
+ * the add. The callers already pass ADU-copy ids (register) or the
+ * picked row whose copy shares the external id (gate).
  * Throws on a database error: the caller turns it into a 500, never a
  * silent pass.
  */
@@ -104,7 +110,6 @@ export async function aduDestinationKeysForCap(
     .select('id, external_destination_id')
     .eq('workspace_id', workspaceId)
     .eq('platform', platform)
-    .eq('section', 'adu')
     .in('id', ids);
   if (error) {
     throw new Error(`ADU cap key lookup failed: ${error.message}`);
