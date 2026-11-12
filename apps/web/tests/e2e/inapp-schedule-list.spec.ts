@@ -116,8 +116,14 @@ async function installPagesFixtures(
       return json(route, { pages: items, total, page, limit, totalPages });
     }
   );
+  // Spec 174 2A: the Schedule dialog now sends ?section=schedule, so
+  // the interception matches on the exact pathname (a bare glob would
+  // not match a URL carrying a query string — same reason as /pages
+  // above).
   await page.route(
-    `**/api/tenant/${SUB}/accounts/${CONNECTED_ACCOUNT.id}/pages/discover`,
+    (url) =>
+      url.pathname ===
+      `/api/tenant/${SUB}/accounts/${CONNECTED_ACCOUNT.id}/pages/discover`,
     (route) =>
       json(route, {
         accountId: CONNECTED_ACCOUNT.id,

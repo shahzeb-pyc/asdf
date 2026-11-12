@@ -29,7 +29,7 @@ describe('ThreadsScheduleFormatSchema', () => {
 describe('AddThreadsScheduleRequestSchema', () => {
   it('accepts a valid add with at least one posting time', () => {
     const parsed = AddThreadsScheduleRequestSchema.safeParse({
-      destinationId: UUID,
+      accountId: UUID,
       timezone: 'Asia/Karachi',
       postingTimes: [{ time: '09:00', formats: ['text', 'image'] }],
     });
@@ -39,7 +39,7 @@ describe('AddThreadsScheduleRequestSchema', () => {
   it('rejects an add with no posting times', () => {
     expect(
       AddThreadsScheduleRequestSchema.safeParse({
-        destinationId: UUID,
+        accountId: UUID,
         timezone: 'Asia/Karachi',
         postingTimes: [],
       }).success
@@ -49,7 +49,7 @@ describe('AddThreadsScheduleRequestSchema', () => {
   it('rejects a posting time with no formats', () => {
     expect(
       AddThreadsScheduleRequestSchema.safeParse({
-        destinationId: UUID,
+        accountId: UUID,
         timezone: 'Asia/Karachi',
         postingTimes: [{ time: '09:00', formats: [] }],
       }).success
@@ -59,7 +59,7 @@ describe('AddThreadsScheduleRequestSchema', () => {
   it('rejects a non-IANA timezone', () => {
     expect(
       AddThreadsScheduleRequestSchema.safeParse({
-        destinationId: UUID,
+        accountId: UUID,
         timezone: 'Not/AZone',
         postingTimes: [{ time: '09:00', formats: ['text'] }],
       }).success
