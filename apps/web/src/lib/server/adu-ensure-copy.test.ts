@@ -10,7 +10,7 @@ import { ensureAduDestinationCopy } from './adu';
  * ADU route tests, but the four failure paths were not: a load error,
  * a refresh error, the 23505 race (including the raced-reload
  * failure), and a non-race insert error. Those 11 lines were the
- * whole Sonar new-code shortfall on PR #228 (64.9% vs the 80% gate).
+ * whole Sonar new-code shortfall on pull request 228 (64.9% vs the 80% gate).
  *
  * Fake pattern follows threads-adu.test.ts: a thenable query builder
  * over an in-memory destinations table, with per-operation error
