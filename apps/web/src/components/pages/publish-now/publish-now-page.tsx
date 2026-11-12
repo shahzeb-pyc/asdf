@@ -6,17 +6,20 @@
  * adapted to the current app and to this flow's approved rules:
  *
  *   Wizard (centred, like old) — Step 1 Select Account card
- *     (search, account rows), Step 2 Select Page card (search,
+ *     (search, account rows), Import step (the selected accounts'
+ *     pages are imported into the publish_now section first — the
+ *     import IS the section's copy, from Accounts, never adopted
+ *     from another section), Step 2 Select Page card (search,
  *     2-column page grid, Back). OLD WAS SINGLE-SELECT — OURS
  *     STAYS MULTI: Step 1 uses checkboxes (expired accounts
  *     shown but NOT selectable, with Reconnect, and NEVER a
- *     "pages linked" count — accounts only); Step 2 shows ALL
- *     discovered pages for ALL selected accounts, grouped by
- *     account, with checkboxes, Select All / Deselect All, and
- *     pages-found count. Already-added pages whose destination
- *     is paused / rate-limited / checkpoint / invalid-token /
- *     disconnected are disabled with a reason; a page under two
- *     accounts is de-duplicated to the first account.
+ *     "pages linked" count — accounts only); Step 2 shows ONLY
+ *     the Publish Now imports for ALL selected accounts, grouped
+ *     by account, with checkboxes, Select All / Deselect All, and
+ *     pages-found count. Imported pages whose copy is paused /
+ *     rate-limited / checkpoint / invalid-token / disconnected
+ *     are disabled with a reason; a page under two accounts is
+ *     de-duplicated to the first account.
  *   Active composer (like old) — sticky header (overlapping
  *     avatars, selected pages, "via" accounts, Selected badge,
  *     Change selection), then a 2-column grid: composer panel
@@ -73,6 +76,7 @@ import {
   deriveDefaultCaptionFromFilename,
   IDEMPOTENCY_KEY_HEADER,
   isFacebookAccountRestricted,
+  PublishNowImportResponseSchema,
   PublishNowResponseSchema,
   PublishNowCopyLibraryMediaResponseSchema,
   PublishNowTempMediaResponseSchema,
@@ -80,10 +84,6 @@ import {
 } from '@fbuploadpro/contracts';
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
 import { ListFacebookAccountsResponseSchema } from '@/lib/api/schemas/accounts';
-import {
-  DiscoverPagesResponseSchema,
-  ListFacebookPagesResponseSchema,
-} from '@/lib/api/schemas/pages';
 import { ByocSettingsResponseSchema } from '@/lib/api/schemas/settings';
 import { Button } from '@/components/shared/ui/button';
 import { Checkbox } from '@/components/shared/ui/checkbox';
@@ -431,60 +431,39 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     setIsDiscovering(true);
     setErrorMessage(null);
     try {
-      // Already-added destination statuses, for the disabled-with-
-      // reason rule. A failed lookup leaves every page selectable,
-      // so a page is never hidden because its status is unknown.
-      let addedStatusByPage = new Map<string, string>();
-      try {
-        const pagesResponse = await api.get(
-          buildTenantApiPath(subdomain, '/pages'),
-          {
-            schema: ListFacebookPagesResponseSchema,
-            query: { page: 1, limit: 500 },
-          }
-        );
-        addedStatusByPage = new Map(
-          (pagesResponse.pages ?? []).map((page) => [page.fbPageId, page.status])
-        );
-      } catch {
-        addedStatusByPage = new Map();
-      }
-
-      const settled = await Promise.allSettled(
-        selectedAccounts.map(async (account) => {
-          const discovered = await api.get(
-            buildTenantApiPath(
-              subdomain,
-              `/accounts/${account.id}/pages/discover`
-            ),
-            { schema: DiscoverPagesResponseSchema }
-          );
-          return { account, pages: discovered.pages ?? [] };
-        })
+      // Import step (spec 174 1B): the selected accounts' pages are
+      // imported into the publish_now section first, and Step 2
+      // lists ONLY those imports. Each page's disabled-with-reason
+      // state comes from its own copy's status — the old GET /pages
+      // cross-section lookup (limit 500, fail-open) is gone.
+      const imported = await api.post(
+        buildTenantApiPath(subdomain, '/publishing/publish-now/import'),
+        { accountIds: selectedAccounts.map((acc) => acc.id) },
+        { schema: PublishNowImportResponseSchema }
       );
 
       const seenPageIds = new Set<string>();
       const nextGroups: PublishNowDiscoveredGroup[] = [];
-      const failures: string[] = [];
-      settled.forEach((entry, index) => {
-        const account = selectedAccounts[index];
-        if (!account) return;
-        if (entry.status === 'rejected') {
-          failures.push(account.displayName);
+      const failures: string[] = [...(imported.failures ?? [])];
+      for (const account of selectedAccounts) {
+        const group = imported.groups.find((g) => g.accountId === account.id);
+        if (!group) {
+          if (!failures.includes(account.displayName)) {
+            failures.push(account.displayName);
+          }
           nextGroups.push({
             accountId: account.id,
             accountName: account.displayName,
             pages: [],
           });
-          return;
+          continue;
         }
         const pages: PublishNowSelectedPage[] = [];
-        for (const page of entry.value.pages) {
+        for (const page of group.pages) {
           // One post per Facebook page per run, even if two
           // accounts expose the same page.
           if (seenPageIds.has(page.fbPageId)) continue;
           seenPageIds.add(page.fbPageId);
-          const status = addedStatusByPage.get(page.fbPageId);
           pages.push({
             accountId: account.id,
             accountName: account.displayName,
@@ -492,9 +471,8 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
             pageName: page.pageName,
             profilePictureUrl: page.profilePictureUrl,
             category: page.category,
-            followers:
-              page.currentFollowers ?? page.followersCount ?? 0,
-            disabledReason: status ? (BLOCKED_PAGE_STATUSES[status] ?? null) : null,
+            followers: page.followers,
+            disabledReason: BLOCKED_PAGE_STATUSES[page.status] ?? null,
           });
         }
         nextGroups.push({
@@ -502,7 +480,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
           accountName: account.displayName,
           pages,
         });
-      });
+      }
       setGroups(nextGroups);
       setSelectedPageKeys([]);
       setPageSearchQuery('');

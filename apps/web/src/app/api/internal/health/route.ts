@@ -117,10 +117,19 @@ async function countByStatus(
   db: SupabaseClient,
   table: string,
   statuses: readonly string[],
-  platform?: string
+  platform?: string,
+  // When given, the count is per section (spec 174 1B): one bucket
+  // per section × status, keyed `section:status`. A null entry
+  // counts rows with no section yet, keyed `unsectioned:status` —
+  // the Phase 4 straggler population, visible here until it is
+  // backfilled to zero.
+  sections?: Array<string | null>
 ): Promise<Record<string, number>> {
+  const buckets = (sections ?? [null]).flatMap((section) =>
+    statuses.map((status) => ({ section, status }))
+  );
   const entries = await Promise.all(
-    statuses.map(async (status) => {
+    buckets.map(async ({ section, status }) => {
       try {
         let query = db
           .from(table)
@@ -129,10 +138,20 @@ async function countByStatus(
         if (platform) {
           query = query.eq('platform', platform);
         }
+        if (sections !== undefined) {
+          query =
+            section === null
+              ? query.is('section', null)
+              : query.eq('section', section);
+        }
         const { count, error } = await query;
-        return [status, error ? 0 : (count ?? 0)] as const;
+        const key =
+          sections === undefined ? status : `${section ?? 'unsectioned'}:${status}`;
+        return [key, error ? 0 : (count ?? 0)] as const;
       } catch {
-        return [status, 0] as const;
+        const key =
+          sections === undefined ? status : `${section ?? 'unsectioned'}:${status}`;
+        return [key, 0] as const;
       }
     })
   );
@@ -318,7 +337,13 @@ export async function probeInternalHealth(
     : await defaultCheckStorage();
 
   const [pagesByStatus, accountsByStatus] = await Promise.all([
-    countByStatus(db, 'destinations', PAGE_STATUSES, 'facebook'),
+    countByStatus(db, 'destinations', PAGE_STATUSES, 'facebook', [
+      'schedule',
+      'adu',
+      'mirror',
+      'publish_now',
+      null,
+    ]),
     countByStatus(db, 'social_accounts', ACCOUNT_STATUSES, 'facebook'),
   ]);
 
