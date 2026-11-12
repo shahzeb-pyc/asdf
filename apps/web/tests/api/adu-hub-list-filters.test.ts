@@ -90,7 +90,8 @@ describe('IG ADU hub list GET (status filter mapping)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     builders = [];
-    store = { destinations: [{ id: 'dest-1', platform: 'instagram', workspace_id: 'ws-1' }] };
+    // Spec 174 1B: the hub list loads only the ADU section's rows.
+    store = { destinations: [{ id: 'dest-1', platform: 'instagram', workspace_id: 'ws-1', section: 'adu' }] };
     const supabase = {
       from: (table: string) => new FakeBuilder(table, store, builders),
     };

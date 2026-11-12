@@ -53,6 +53,10 @@ function createMockDb(options: {
       filters[_col] = val;
       return builder;
     };
+    builder.is = (col: string, val: unknown) => {
+      filters[col] = val;
+      return builder;
+    };
     builder.lte = (col: string, val: unknown) => {
       lte[col] = val;
       return builder;
@@ -125,7 +129,10 @@ describe('Internal Health Probe (/api/internal/health)', () => {
     expect(res.payload.checks.heartbeat.ageSeconds).toBe(30);
     expect(res.payload.checks.heartbeat.claimed).toBe(3);
     expect(res.payload.checks.storage.ok).toBe(true);
-    expect(res.payload.checks.facebook.pagesByStatus.active).toBe(10);
+    // Spec 174 1B: page counts are per-section, keyed
+    // `section:status` (the mock answers the same count per
+    // section; the schedule bucket is the pinned one).
+    expect(res.payload.checks.facebook.pagesByStatus['schedule:active']).toBe(10);
     expect(res.payload.checks.facebook.accountsByStatus.active).toBe(4);
   });
 
@@ -232,7 +239,7 @@ describe('Internal Health Probe (/api/internal/health)', () => {
     const accountQueries = queriesFor(db, 'social_accounts');
     expect(accountQueries.length).toBeGreaterThan(0);
     expect(accountQueries.every((q) => q.filters.platform === 'facebook')).toBe(true);
-    expect(res.payload.checks.facebook.pagesByStatus.active).toBe(3);
+    expect(res.payload.checks.facebook.pagesByStatus['schedule:active']).toBe(3);
     expect(res.payload.checks.facebook.accountsByStatus.active).toBe(1);
   });
 

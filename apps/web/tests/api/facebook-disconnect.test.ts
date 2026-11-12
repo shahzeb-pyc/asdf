@@ -133,6 +133,14 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
               update: queueUpdateMock,
             };
           }
+          if (table === 'posting_slots') {
+            // Spec 174 1B: the disconnect strips posting times too.
+            return {
+              delete: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            };
+          }
           return {};
         }),
       };

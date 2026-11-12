@@ -66,6 +66,8 @@ const page = (id: string): Row => ({
   name: `Page ${id}`,
   avatar_url: null,
   status: 'active',
+  // Spec 174 1B: the options list loads only the ADU section.
+  section: 'adu',
   metadata: null,
   workspace_id: 'ws-1',
   platform: 'facebook',

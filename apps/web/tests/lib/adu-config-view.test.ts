@@ -161,6 +161,8 @@ describe('buildAduConfigView counts', () => {
           external_destination_id: '12345',
           avatar_url: null,
           status: 'active',
+          // Spec 174 1B: the config view loads the ADU copy.
+          section: 'adu',
           account_id: 'acc-1',
           social_accounts: { display_name: 'Owner', avatar_url: null },
         },

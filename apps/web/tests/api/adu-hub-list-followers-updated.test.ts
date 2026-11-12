@@ -203,6 +203,8 @@ describe('Facebook ADU single create (followers_updated_at stamp)', () => {
           external_destination_id: 'alpha-ext',
           avatar_url: null,
           status: 'active',
+          // Spec 174 1B: the Facebook create loads the ADU copy.
+          section: 'adu',
           account_id: '22222222-2222-4222-a222-222222222222',
           handle: null,
           metadata: { current_followers: 900 },
