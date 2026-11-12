@@ -1,9 +1,11 @@
-// TikWM /user/info secUid lookup — the TikTok discovery fallback
-// (spec scraper-tikwm-fallback). Runs ONLY after all 5 yt-dlp profile
-// attempts fail (see discovery/ytdlp.js): the paid TikWM API resolves
-// the profile ID as camelCase `secUid`, and the caller then attempts
-// the `tiktokuser:{secUid}` direct feed, exactly as the old Countik
-// path did. Countik is dead from every egress; this replaces it.
+// TikWM /user/info secUid lookup — the TikTok discovery PRIMARY
+// (spec scraper-tikwm-first-concurrency, owner order 2026-11-12).
+// Runs FIRST on every TikTok claim (see discovery/ytdlp.js): the paid
+// TikWM API resolves the profile ID as camelCase `secUid`, and the
+// caller then attempts the `tiktokuser:{secUid}` direct feed, exactly
+// as the old Countik path did. Only when the whole paid path fails
+// does the caller fall back to the yt-dlp profile-URL attempts.
+// Countik is dead from every egress; this replaces it.
 //
 // Keys: TIKWMAPI_KEYS_SCRAPER ONLY — a comma-separated list, exactly
 // like the shared TIKWMAPI_KEYS (split on commas, trim whitespace,
@@ -11,7 +13,9 @@
 // no retry loop per key). A single key with no comma works too. The
 // shared TIKWMAPI_KEYS is NEVER read here. No hardcoded keys anywhere:
 // keys come only from the env var, read at call time (not import time)
-// so tests can set/unset it freely.
+// so tests can set/unset it freely. Under concurrency the starting
+// key rotates round-robin per lookup (module-level counter below),
+// so parallel lookups do not all start on key 1.
 //
 // No proxy: api.tikwmapi.com works direct from the VPS (live-tested
 // 2026-11-08). Node's global fetch does not honour proxy env vars,
@@ -32,6 +36,18 @@
 export const TIKWMAPI_BASE_URL = 'https://api.tikwmapi.com';
 // Same 30s timeout as the paid-API fetch in packages/contracts.
 export const TIKWM_USER_INFO_TIMEOUT_MS = 30_000;
+
+// Round-robin start index for key selection (spec
+// scraper-tikwm-first-concurrency §3): each lookup starts on the next
+// key in turn, so parallel lookups spread across keys instead of all
+// hammering key 1. A slow lookup blocks only its own worker slot —
+// there is no lock and no serialisation around lookups.
+let tikwmKeyStartIndex = 0;
+
+/** Test-only reset for the round-robin counter above. */
+export function resetTikwmKeyRotationForTests() {
+  tikwmKeyStartIndex = 0;
+}
 
 /**
  * Parse the scraper's TikWM key list from one env-var value:
@@ -141,10 +157,11 @@ async function tryUserInfoWithKey(username, key, fetchFn) {
 
 /**
  * Resolve a TikTok username to its secUid via paid TikWM /user/info.
- * Keys are tried in list order until one succeeds — one request per
- * key, no retry loop per key. Returns { ok: true, secUid } on the
- * first success, otherwise { ok: false, reason } with the last
- * failure's fixed-token reason. Never throws, never logs key material.
+ * Keys are tried in rotated order starting from the round-robin start
+ * index — one request per key, no retry loop per key. Returns
+ * { ok: true, secUid } on the first success, otherwise
+ * { ok: false, reason } with the last failure's fixed-token reason.
+ * Never throws, never logs key material.
  *
  * @param {string} username
  * @param {{ keys?: string[], fetchFn?: typeof fetch }} [options]
@@ -158,11 +175,13 @@ export async function resolveSecUidWithTikwm(username, options = {}) {
   if (keys.length === 0) {
     return { ok: false, reason: 'tikwm_no_keys_configured' };
   }
+  const startIndex = tikwmKeyStartIndex++ % keys.length;
   let lastReason = 'tikwm_no_keys_configured';
   for (let i = 0; i < keys.length; i += 1) {
-    const result = await tryUserInfoWithKey(username, keys[i], fetchFn);
+    const keyIndex = (startIndex + i) % keys.length;
+    const result = await tryUserInfoWithKey(username, keys[keyIndex], fetchFn);
     if (result.ok) {
-      console.log(`✅ TikWM resolved secUid for @${logUser} (key ${i + 1} of ${keys.length}).`);
+      console.log(`✅ TikWM resolved secUid for @${logUser} (key ${keyIndex + 1} of ${keys.length}).`);
       return result;
     }
     lastReason = result.reason;
@@ -172,29 +191,31 @@ export async function resolveSecUidWithTikwm(username, options = {}) {
     // key material.
     const detail = result.detail ? `: ${result.detail}` : '';
     console.warn(
-      `⚠️ TikWM /user/info failed for @${logUser} (key ${i + 1} of ${keys.length}): ${result.reason}${detail}`,
+      `⚠️ TikWM /user/info failed for @${logUser} (key ${keyIndex + 1} of ${keys.length}): ${result.reason}${detail}`,
     );
   }
   return { ok: false, reason: lastReason };
 }
 
 /**
- * Startup check, called ONCE from index.js main(): when no keys are
- * configured, log ONE loud warning that the TikWM fallback is
- * disabled and discovery stays yt-dlp-only — the scraper keeps
- * running. When keys are configured, log a quiet confirmation
- * (key COUNT only, never values). Returns true when the fallback
- * is enabled.
+ * Startup check, called ONCE from index.js main(): TikWM is the
+ * PRIMARY discovery path now, so when no keys are configured this is
+ * a loud ERROR — the primary is disabled and TikTok discovery runs on
+ * the yt-dlp profile-URL backup for every claim. The scraper keeps
+ * running; other platforms are unaffected. When keys are configured,
+ * log a quiet confirmation (key COUNT only, never values). Returns
+ * true when the primary is enabled.
  */
-export function logTikwmFallbackStatus() {
+export function logTikwmPrimaryStatus() {
   const keys = getTikwmScraperKeys();
   if (keys.length === 0) {
-    console.warn(
-      '⚠️ TIKWMAPI_KEYS_SCRAPER is not set — the TikWM secUid fallback is DISABLED; ' +
-        'TikTok discovery is yt-dlp-only. Set TIKWMAPI_KEYS_SCRAPER in the scraper .env to enable it.',
+    console.error(
+      '❌ TIKWMAPI_KEYS_SCRAPER is not set — the TikWM PRIMARY is DISABLED; ' +
+        'TikTok discovery runs on the yt-dlp profile-URL backup for every claim. ' +
+        'Set TIKWMAPI_KEYS_SCRAPER in the scraper .env to enable the primary.',
     );
     return false;
   }
-  console.log(`✅ TikWM secUid fallback enabled (${keys.length} key(s) configured).`);
+  console.log(`✅ TikWM primary enabled (${keys.length} key(s) configured).`);
   return true;
 }
