@@ -54,6 +54,7 @@ function makeDestination(metadata: Record<string, unknown>): DatabaseDestination
     account_id: 'acct-1',
     platform: 'instagram',
     external_destination_id: 'ig-user-123',
+    section: 'schedule',
     name: 'Test IG',
     handle: 'testig',
     avatar_url: null,

@@ -62,6 +62,7 @@ function makeDestination(
     account_id: 'acct-1',
     platform: 'facebook',
     external_destination_id: PAGE_ID,
+    section: 'schedule',
     name: 'Test Page',
     handle: null,
     avatar_url: null,
