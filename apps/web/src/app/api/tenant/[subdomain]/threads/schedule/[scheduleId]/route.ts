@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
   UpdateThreadsScheduleRequestSchema,
-  isThreadsScheduleAdded,
   isThreadsSchedulePaused,
 } from '@fbuploadpro/contracts';
 import { logServerError } from '@/lib/server-analytics';
@@ -10,6 +9,7 @@ import {
   fetchQueueCounts,
   fetchThreadsAccountsById,
   isAccountExpired,
+  isThreadsScheduleListMember,
   threadsFormatsFromKind,
   toScheduleItem,
   type ThreadsScheduleDestinationRow,
@@ -21,8 +21,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  *
  * Detail only serves schedule-added destinations: a connected Threads
  * destination that was never added here is 404 on this route, even
- * though it exists. Removal clears the schedule flag only — the
- * account, the destination and historical queue rows stay — and
+ * though it exists. Removal disconnects + strips the Schedule copy
+ * (spec 174 1B, the removal rule) — token, timezone, tasks and
+ * posting times go; identity, followers and the section stay — and
  * cancels still-queued items so nothing publishes after removal.
  * Pause mirrors Facebook: destination status `disconnected` plus the
  * threads_schedule_status marker, so the claim RPC never picks a
@@ -37,16 +38,19 @@ async function fetchScheduleDestination(
   const { data, error } = await supabase
     .from('destinations')
     .select(
-      'id, account_id, platform, external_destination_id, name, handle, avatar_url, timezone, status, metadata, created_at, updated_at'
+      'id, account_id, platform, section, external_destination_id, name, handle, avatar_url, timezone, status, metadata, created_at, updated_at'
     )
     .eq('id', scheduleId)
     .eq('workspace_id', workspaceId)
     .eq('platform', 'threads')
+    .eq('section', 'schedule')
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return null;
   const row = data as ThreadsScheduleDestinationRow;
-  if (!isThreadsScheduleAdded(row.metadata)) return null;
+  // Membership is the section column now (spec 174 1B): a removed
+  // stub is not a member and reads as not found on this route.
+  if (!isThreadsScheduleListMember(row)) return null;
   return row;
 }
 
@@ -242,11 +246,11 @@ export async function DELETE(
     if (!destination) {
       return NextResponse.json({ error: 'Scheduled account not found' }, { status: 404 });
     }
-    const wasPaused = isThreadsSchedulePaused(destination.metadata);
     const nextMetadata: Record<string, unknown> = { ...(destination.metadata ?? {}) };
     delete nextMetadata['threads_schedule_added_at'];
     delete nextMetadata['threads_schedule_status'];
-    // Cancel FIRST, then clear the flag. If the cancel fails, the
+    delete nextMetadata['tasks'];
+    // Cancel FIRST, then strip the copy. If the cancel fails, the
     // account stays in Schedule with its queued items still live —
     // the old order cleared the flag first, so a cancel failure
     // left a removed account whose queued items could still publish.
@@ -257,14 +261,23 @@ export async function DELETE(
       .eq('destination_id', scheduleId)
       .eq('status', 'queued');
     if (cancelError) throw new Error(cancelError.message);
+    // Removal disconnects + strips the Schedule copy (spec 174 1B,
+    // the removal rule): token, timezone and posting times go;
+    // identity, followers and the section stay. The row disappears
+    // from the Schedule list (a disconnected stub is not a member)
+    // but stays saved, so the account can be re-added later.
+    const { error: slotsError } = await supabase
+      .from('posting_slots')
+      .delete()
+      .eq('destination_id', scheduleId);
+    if (slotsError) throw new Error(slotsError.message);
     const { error: flagError } = await supabase
       .from('destinations')
       .update({
         metadata: nextMetadata,
-        // A schedule-paused destination was stored as disconnected;
-        // removing it from Schedule restores it to active so the
-        // Accounts view is not left showing a Schedule pause.
-        ...(wasPaused ? { status: 'active' } : {}),
+        encrypted_destination_token: null,
+        timezone: 'UTC',
+        status: 'disconnected',
         updated_at: new Date().toISOString(),
       })
       .eq('id', scheduleId)

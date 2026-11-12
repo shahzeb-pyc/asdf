@@ -2,11 +2,11 @@ import { type NextRequest, NextResponse } from 'next/server';
 import {
   getSessionSecret,
   isSessionAuthorizedForSubdomain,
-  isThreadsScheduleAdded,
   verifySessionToken,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
+import { isThreadsScheduleListMember } from '@/lib/server/threads-schedule';
 import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 
 /**
@@ -68,12 +68,14 @@ export async function GET(request: NextRequest, props: { params: Promise<{ subdo
       name: string;
       handle: string | null;
       timezone: string;
+      status: string;
+      section: string | null;
       metadata: Record<string, unknown> | null;
     }> = [];
     for (let from = 0; ; from += 1000) {
       const { data, error } = await supabase
         .from('destinations')
-        .select('id, account_id, name, handle, timezone, metadata')
+        .select('id, account_id, name, handle, timezone, status, section, metadata')
         .eq('workspace_id', workspaceId)
         .eq('platform', 'threads')
         .range(from, from + 999);
@@ -82,9 +84,17 @@ export async function GET(request: NextRequest, props: { params: Promise<{ subdo
       destinations.push(...page);
       if (page.length < 1000) break;
     }
+    // One entry per account (spec 174 1B): the schedule copy when it
+    // exists (its id is what the Add dialog posts, and a removed stub
+    // is re-addable through it), else the unimported connected row
+    // (the Add dialog stamps it to 'schedule'). Rows belonging to
+    // another section are never offered as the Add target.
     const destinationByAccount = new Map<string, (typeof destinations)[number]>();
+    const rank = (d: (typeof destinations)[number]): number =>
+      d.section === 'schedule' ? 0 : d.section === null ? 1 : 2;
     for (const destination of destinations) {
-      if (!destinationByAccount.has(destination.account_id)) {
+      const prev = destinationByAccount.get(destination.account_id);
+      if (!prev || rank(destination) < rank(prev)) {
         destinationByAccount.set(destination.account_id, destination);
       }
     }
@@ -109,7 +119,7 @@ export async function GET(request: NextRequest, props: { params: Promise<{ subdo
         destinationName: destination?.name ?? null,
         destinationTimezone: destination?.timezone ?? null,
         accountStatus,
-        scheduleAdded: destination ? isThreadsScheduleAdded(destination.metadata) : false,
+        scheduleAdded: destination ? isThreadsScheduleListMember(destination) : false,
       };
     });
     return NextResponse.json({ candidates });

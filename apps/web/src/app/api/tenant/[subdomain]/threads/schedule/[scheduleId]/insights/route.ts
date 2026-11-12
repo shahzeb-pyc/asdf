@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { logServerError } from '@/lib/server-analytics';
 import { authenticateThreadsSchedule } from '@/lib/server/threads-schedule-auth';
-import { isThreadsScheduleAdded } from '@/lib/server/threads-schedule';
+import { isThreadsScheduleListMember } from '@/lib/server/threads-schedule';
 
 /**
  * GET derived insights for one Threads Schedule destination.
@@ -29,13 +29,14 @@ export async function GET(
   try {
     const { data: destination, error: destError } = await supabase
       .from('destinations')
-      .select('metadata')
+      .select('section, status, metadata')
       .eq('id', scheduleId)
       .eq('workspace_id', workspaceId)
       .eq('platform', 'threads')
+      .eq('section', 'schedule')
       .maybeSingle();
     if (destError) throw new Error(destError.message);
-    if (!destination || !isThreadsScheduleAdded((destination as { metadata: Record<string, unknown> | null }).metadata)) {
+    if (!destination || !isThreadsScheduleListMember(destination as { section: string | null; status: string; metadata: Record<string, unknown> | null })) {
       return NextResponse.json({ error: 'Scheduled account not found' }, { status: 404 });
     }
     const countFor = async (status: string, kind?: string): Promise<number> => {
