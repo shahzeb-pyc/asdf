@@ -27,7 +27,6 @@ import {
   fetchDestinationDetail,
   markSocialAccountRevoked,
   persistConnectedAccount,
-  persistPickedDestinations,
   resolvePlatformClientCredentials,
 } from '@/lib/connect/persist';
 import { extractExternalAccountId } from '@/lib/connect/platform-callback';
@@ -223,19 +222,6 @@ describe('Persistence edge cases (legacy client)', () => {
         },
       })
     ).rejects.toThrow('Failed to persist connected account');
-  });
-
-  it('persists no destinations for an empty pick without touching the database', async () => {
-    const client = makeLegacyClient(() => {
-      throw new Error('should not be called');
-    });
-    const result = await persistPickedDestinations(client, {
-      workspaceId,
-      accountId: 'acct-1',
-      platform: 'instagram',
-      destinations: [],
-    });
-    expect(result.inserted).toBe(0);
   });
 
   it('reports zero revocations when no account matches', async () => {

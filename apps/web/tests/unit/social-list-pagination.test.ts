@@ -301,4 +301,43 @@ describe('fetchSocialAccountsWithDestinations bounded pagination (B14)', () => {
       `exceeded the ${SOCIAL_LIST_MAX_PAGES}-page safety cap`
     );
   });
+
+  it('groups one account destinations by section, keeping created_at order inside each section (spec 174 2A)', async () => {
+    const account = makeAccountRow(0);
+    // Created in adu, mirror, schedule, NULL order — the loader
+    // re-groups them schedule, adu, mirror, NULL, without
+    // reordering inside a section.
+    const destinations = [
+      makeDestinationRow(0, account.id as string, { section: 'adu' }),
+      makeDestinationRow(1, account.id as string, { section: 'mirror' }),
+      makeDestinationRow(2, account.id as string, { section: 'schedule' }),
+      makeDestinationRow(3, account.id as string, { section: null }),
+      makeDestinationRow(4, account.id as string, { section: 'adu' }),
+    ];
+    const tables = new Map<string, Row[]>([
+      ['social_accounts', [account]],
+      ['destinations', destinations],
+    ]);
+
+    const result = await fetchSocialAccountsWithDestinations(
+      makeFakeClient(tables),
+      workspaceId
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.destinations.map((d) => d.id)).toEqual([
+      'dest-000002',
+      'dest-000000',
+      'dest-000004',
+      'dest-000001',
+      'dest-000003',
+    ]);
+    expect(result[0]?.destinations.map((d) => d.section)).toEqual([
+      'schedule',
+      'adu',
+      'adu',
+      'mirror',
+      null,
+    ]);
+  });
 });

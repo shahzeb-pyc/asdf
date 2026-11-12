@@ -138,18 +138,24 @@ describe('Instagram accounts API', () => {
           if (sql.includes('FROM workspaces')) {
             return Promise.resolve([{ id: 'ws_123' }]);
           }
-          if (sql.includes('FROM destinations')) {
-            return Promise.resolve([{ count: 1 }]);
+          if (sql.includes('UPDATE destinations')) {
+            return Promise.resolve([{ id: 'd1' }]);
           }
-          if (sql.includes('DELETE FROM social_accounts')) {
+          if (sql.includes('UPDATE social_accounts')) {
             return Promise.resolve(deleteRows);
+          }
+          if (sql.includes('FROM social_accounts')) {
+            return Promise.resolve(deleteRows);
+          }
+          if (sql.includes('FROM destinations')) {
+            return Promise.resolve([{ id: 'd1' }]);
           }
           return Promise.resolve([]);
         }),
       } as unknown as DatabaseClient;
     }
 
-    it('deletes only the Instagram account and reports its destination count', async () => {
+    it('retains the Instagram account as disconnected and strips its destinations', async () => {
       const capturedSql: string[] = [];
       const req = new NextRequest(
         `http://localhost:3000/api/tenant/acme/instagram/accounts/${ACCOUNT_ID}`,
@@ -166,10 +172,14 @@ describe('Instagram accounts API', () => {
       expect(json.success).toBe(true);
       expect(json.accountId).toBe(ACCOUNT_ID);
       expect(json.disconnectedDestinationsCount).toBe(1);
-      const deleteSql = capturedSql.find((sql) =>
-        sql.includes('DELETE FROM social_accounts')
+      // Spec 174 2A: the account row is RETAINED as a disconnected
+      // record, never deleted; the strip disconnects its copies.
+      expect(capturedSql.some((sql) => sql.includes('DELETE FROM social_accounts'))).toBe(false);
+      const updateSql = capturedSql.find((sql) =>
+        sql.includes('UPDATE social_accounts')
       );
-      expect(deleteSql).toContain("platform = 'instagram'");
+      expect(updateSql).toContain("platform = 'instagram'");
+      expect(capturedSql.some((sql) => sql.includes('UPDATE destinations'))).toBe(true);
     });
 
     it('returns 404 when no such Instagram account exists in this workspace', async () => {

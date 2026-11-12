@@ -53,6 +53,25 @@ const HUB_BODY = {
 };
 
 const OPTIONS_BODY = {
+  // Spec 174 2A: the dialog lists the CONNECTED ACCOUNTS (and
+  // greys out configuredAccountIds), not the destinations rows.
+  accounts: [
+    {
+      id: 'acct-1',
+      external_account_id: '17841400008460056',
+      display_name: 'My IG Account',
+      avatar_url: null,
+      status: 'active',
+    },
+    {
+      id: 'acct-2',
+      external_account_id: '17841400008460057',
+      display_name: 'Second IG Account',
+      avatar_url: null,
+      status: 'active',
+    },
+  ],
+  configuredAccountIds: ['acct-1'],
   destinations: [
     {
       id: 'dest-1',
@@ -205,7 +224,7 @@ describe('IgAduHubPage', () => {
       const post = fetchMock.mock.calls.find((c) => c[1]?.method === 'POST');
       expect(post).toBeTruthy();
       const body = JSON.parse(post![1].body as string);
-      expect(body.destinationId).toBe('dest-2');
+      expect(body.accountId).toBe('acct-2');
       expect(body.sourcePlatform).toBe('instagram');
       expect(body.sourceUsername).toBe('creator_two');
       expect(body.scheduleType).toBe('dailyrandom');
@@ -218,7 +237,7 @@ describe('IgAduHubPage', () => {
 
   it('bulk add: picks two accounts, maps sources, and POSTs one item per account', async () => {
     // Neither account is configured here, so "Select all" picks both.
-    const unconfiguredOptions = { ...OPTIONS_BODY, configured: [] };
+    const unconfiguredOptions = { ...OPTIONS_BODY, configured: [], configuredAccountIds: [] };
     fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
       if (url.includes('/instagram/auto-download-upload/options')) return jsonResponse(unconfiguredOptions);
       if (init?.method === 'POST') return jsonResponse({ created: [{ id: 'cfg-a' }, { id: 'cfg-b' }], failed: [] });
@@ -245,7 +264,7 @@ describe('IgAduHubPage', () => {
       expect(post).toBeTruthy();
       const body = JSON.parse(post![1].body as string);
       expect(body.items).toHaveLength(2);
-      expect(body.items.map((i: { destinationId: string }) => i.destinationId)).toEqual(['dest-1', 'dest-2']);
+      expect(body.items.map((i: { accountId: string }) => i.accountId)).toEqual(['acct-1', 'acct-2']);
       expect(body.items.map((i: { sourceUsername: string }) => i.sourceUsername)).toEqual(['creator_one', 'creator_two']);
     });
   });

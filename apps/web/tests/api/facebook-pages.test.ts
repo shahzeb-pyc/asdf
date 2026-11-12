@@ -287,6 +287,89 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       expect(destinationsQuery?.sql).toContain('account_id');
       expect(destinationsQuery?.params).toContain(accountId);
     });
+
+    it('scopes isImported per section: a page in Schedule only is not imported for ADU (spec 174 2A)', async () => {
+      // page_1001 lives in the Schedule section only; page_1002
+      // lives in ADU only. The mock answers the destinations
+      // query from the section param the route binds.
+      const mockDb = {
+        query: vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('FROM social_accounts')) {
+            return Promise.resolve([
+              {
+                id: accountId,
+                userId,
+                fbAccountId: 'fb_act_123',
+                displayName: 'Alex Marketing Profile',
+                encryptedAccessToken: sampleEncryptedAccountToken,
+                status: 'active',
+              },
+            ]);
+          }
+          if (sql.includes('FROM destinations')) {
+            if (params?.includes('schedule')) {
+              return Promise.resolve([{ fbPageId: 'page_1001' }]);
+            }
+            if (params?.includes('adu')) {
+              return Promise.resolve([{ fbPageId: 'page_1002' }]);
+            }
+            return Promise.resolve([]);
+          }
+          return Promise.resolve([]);
+        }),
+      } as unknown as DatabaseClient;
+
+      const graphResponse = () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              { id: 'page_1001', name: 'Schedule Page', category: 'Retail Company', followers_count: 100, tasks: ['CREATE_CONTENT'] },
+              { id: 'page_1002', name: 'ADU Page', category: 'Retail Company', followers_count: 200, tasks: ['CREATE_CONTENT'] },
+            ],
+          }),
+          { status: 200 }
+        );
+
+      const discover = async (section: string) => {
+        global.fetch = vi.fn().mockResolvedValueOnce(graphResponse());
+        const req = new NextRequest(
+          `http://localhost:3000/api/tenant/acme/accounts/${accountId}/pages/discover?section=${section}`,
+          { headers: { cookie: validSessionCookie } }
+        );
+        const res = await handleDiscoverPages(req, 'acme', accountId, mockDb);
+        expect(res.status).toBe(200);
+        return res.json() as Promise<{ pages: Array<{ fbPageId: string; isImported: boolean }> }>;
+      };
+
+      const adu = await discover('adu');
+      expect(adu.pages.find((p) => p.fbPageId === 'page_1001')?.isImported).toBe(false);
+      expect(adu.pages.find((p) => p.fbPageId === 'page_1002')?.isImported).toBe(true);
+
+      const schedule = await discover('schedule');
+      expect(schedule.pages.find((p) => p.fbPageId === 'page_1001')?.isImported).toBe(true);
+      expect(schedule.pages.find((p) => p.fbPageId === 'page_1002')?.isImported).toBe(false);
+    });
+
+    it('rejects an unknown ?section= with 400 (spec 174 2A)', async () => {
+      const mockDb = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          return Promise.resolve([]);
+        }),
+      } as unknown as DatabaseClient;
+
+      const req = new NextRequest(
+        `http://localhost:3000/api/tenant/acme/accounts/${accountId}/pages/discover?section=bogus`,
+        { headers: { cookie: validSessionCookie } }
+      );
+      const res = await handleDiscoverPages(req, 'acme', accountId, mockDb);
+      expect(res.status).toBe(400);
+    });
   });
 
   describe('Selective Import (POST /api/tenant/[subdomain]/pages/import)', () => {

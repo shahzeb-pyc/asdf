@@ -200,15 +200,18 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
     });
 
     // Mock Postgres client for the disconnect path. Matcher order
-    // matters: the DELETE statement also contains the substring
-    // 'FROM social_accounts', so it must be matched first.
+    // matters: the strip UPDATE also contains 'destinations', so it
+    // must be matched before the FROM branches.
     const buildAccountMockDb = (status: string, encrypted: string) => {
       const mockDb = {
         query: vi.fn().mockImplementation((sql: string) => {
           if (sql.includes('FROM workspaces')) {
             return Promise.resolve([{ id: 'ws_123' }]);
           }
-          if (sql.includes('DELETE FROM social_accounts')) {
+          if (sql.includes('UPDATE destinations')) {
+            return Promise.resolve([{ id: 'd1' }, { id: 'd2' }]);
+          }
+          if (sql.includes('UPDATE social_accounts')) {
             return Promise.resolve([{ id: accountId }]);
           }
           if (sql.includes('FROM social_accounts')) {
@@ -234,11 +237,19 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
         }
       );
 
-    const deleteStatements = (mockDb: DatabaseClient) =>
+    const accountUpdateStatements = (mockDb: DatabaseClient) =>
+      (mockDb as unknown as { query: { mock: { calls: Array<[string, unknown[]]> } } }).query.mock.calls
+        .filter((call) => (call[0] as string).includes('UPDATE social_accounts'));
+
+    const accountDeleteStatements = (mockDb: DatabaseClient) =>
       (mockDb as unknown as { query: { mock: { calls: Array<[string, unknown[]]> } } }).query.mock.calls
         .filter((call) => (call[0] as string).includes('DELETE FROM social_accounts'));
 
-    it('expired account: skips the Facebook revoke call and deletes the account row', async () => {
+    const destinationStripStatements = (mockDb: DatabaseClient) =>
+      (mockDb as unknown as { query: { mock: { calls: Array<[string, unknown[]]> } } }).query.mock.calls
+        .filter((call) => (call[0] as string).includes('UPDATE destinations'));
+
+    it('expired account: skips the Facebook revoke call and retains the account row as disconnected', async () => {
       // The stored ciphertext must decrypt under the test-env key
       // so that, on the OLD code, the revoke attempt actually runs
       // (and this test fails there on both assertions below).
@@ -267,12 +278,16 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
       expect(json.facebookRevoked).toBe(false);
       expect(fetchMock).not.toHaveBeenCalled();
 
-      const deletes = deleteStatements(mockDb);
-      expect(deletes).toHaveLength(1);
-      expect(deletes[0][1]).toEqual([accountId, 'ws_123']);
+      // Spec 174 2A: the account row is RETAINED as a disconnected
+      // record, never deleted; every section's copy is stripped.
+      expect(accountDeleteStatements(mockDb)).toHaveLength(0);
+      const updates = accountUpdateStatements(mockDb);
+      expect(updates).toHaveLength(1);
+      expect(updates[0][1]).toEqual([accountId, 'ws_123', 'facebook']);
+      expect(destinationStripStatements(mockDb)).toHaveLength(1);
     });
 
-    it('already-disconnected (revoked) account: skips the revoke call and deletes the row', async () => {
+    it('already-disconnected (revoked) account: skips the revoke call and retains the row', async () => {
       const encrypted = await encryptToken(
         'user-token',
         getTokenEncryptionKey()
@@ -293,10 +308,12 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
       expect(json.success).toBe(true);
       expect(json.facebookRevoked).toBe(false);
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(deleteStatements(mockDb)).toHaveLength(1);
+      expect(accountDeleteStatements(mockDb)).toHaveLength(0);
+      expect(accountUpdateStatements(mockDb)).toHaveLength(1);
+      expect(destinationStripStatements(mockDb)).toHaveLength(1);
     });
 
-    it('active account with a successful revoke: deletes the row and reports facebookRevoked=true', async () => {
+    it('active account with a successful revoke: retains the row, strips the copies, and reports facebookRevoked=true', async () => {
       const encrypted = await encryptToken(
         'user-token',
         getTokenEncryptionKey()
@@ -317,10 +334,12 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
       expect(json.success).toBe(true);
       expect(json.facebookRevoked).toBe(true);
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(deleteStatements(mockDb)).toHaveLength(1);
+      expect(accountDeleteStatements(mockDb)).toHaveLength(0);
+      expect(accountUpdateStatements(mockDb)).toHaveLength(1);
+      expect(destinationStripStatements(mockDb)).toHaveLength(1);
     });
 
-    it('active account with a failing revoke: still deletes the row and still succeeds', async () => {
+    it('active account with a failing revoke: still retains the row and still succeeds', async () => {
       const encrypted = await encryptToken(
         'user-token',
         getTokenEncryptionKey()
@@ -339,43 +358,49 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
 
       const json = await res.json();
       expect(json.success).toBe(true);
-      // Revoke failed, but the token dies with the deleted row —
-      // removal is complete and no Facebook-side step is demanded.
+      // Revoke failed, but the token dies with the disconnected
+      // row — removal is complete and no Facebook-side step is
+      // demanded.
       expect(json.facebookRevoked).toBe(false);
-      expect(deleteStatements(mockDb)).toHaveLength(1);
+      expect(accountDeleteStatements(mockDb)).toHaveLength(0);
+      expect(accountUpdateStatements(mockDb)).toHaveLength(1);
+      expect(destinationStripStatements(mockDb)).toHaveLength(1);
     });
 
-    it('Supabase path: expired account deletes via the client without calling Facebook', async () => {
+    it('Supabase path: expired account is retained as disconnected via the client without calling Facebook', async () => {
       const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
       vi.stubGlobal('fetch', fetchMock);
-      const deleteSelectMock = vi.fn().mockResolvedValue({
-        data: [{ id: accountId }],
-        error: null,
-      });
+      // Every chain method returns the chain itself, and the chain
+      // is thenable (resolves to the configured result) — so both
+      // the load chains (select → eq → maybeSingle) and the write
+      // chains (update → eq → select) work through one fake.
+      const makeChain = (result: { data: unknown; error: null }) => {
+        const chain: Record<string, unknown> = {};
+        chain.select = vi.fn().mockImplementation(() => chain);
+        chain.eq = vi.fn().mockImplementation(() => chain);
+        chain.in = vi.fn().mockImplementation(() => chain);
+        chain.order = vi.fn().mockImplementation(() => chain);
+        chain.range = vi.fn().mockImplementation(() => chain);
+        chain.update = vi.fn().mockImplementation(() => chain);
+        chain.delete = vi.fn().mockImplementation(() => chain);
+        chain.maybeSingle = vi.fn().mockResolvedValue(result);
+        chain.then = (resolve: (value: unknown) => unknown) =>
+          Promise.resolve(result).then(resolve);
+        return chain;
+      };
       let socialAccountsCalls = 0;
+      let destinationsUpdates = 0;
+      let socialAccountsUpdates = 0;
       const mockSupabase = {
         from: vi.fn().mockImplementation((table: string) => {
           if (table === 'workspaces') {
-            return {
-              select: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  eq: vi.fn().mockReturnValue({
-                    maybeSingle: vi.fn().mockResolvedValue({
-                      data: { id: 'ws_123' },
-                      error: null,
-                    }),
-                  }),
-                }),
-              }),
-            };
+            return makeChain({ data: { id: 'ws_123' }, error: null });
           }
           if (table === 'social_accounts') {
             socialAccountsCalls += 1;
             if (socialAccountsCalls === 1) {
               // Load chain.
-              const loadChain: any = {};
-              loadChain.eq = vi.fn().mockImplementation(() => loadChain);
-              loadChain.maybeSingle = vi.fn().mockResolvedValue({
+              return makeChain({
                 data: {
                   id: accountId,
                   status: 'expired',
@@ -383,23 +408,19 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
                 },
                 error: null,
               });
-              return { select: vi.fn().mockReturnValue(loadChain) };
             }
-            // Delete chain.
-            const deleteChain: any = {};
-            deleteChain.eq = vi.fn().mockImplementation(() => deleteChain);
-            deleteChain.select = deleteSelectMock;
-            return { delete: vi.fn().mockReturnValue(deleteChain) };
+            // Disconnect chain: update → eq → select('id').
+            socialAccountsUpdates += 1;
+            return makeChain({ data: [{ id: accountId }], error: null });
           }
           if (table === 'destinations') {
-            const countChain: any = {};
-            countChain.eq = vi.fn().mockImplementation(() => countChain);
-            countChain.then = (resolve: any) =>
-              Promise.resolve({
-                data: [{ id: 'd1' }],
-                error: null,
-              }).then(resolve);
-            return { select: vi.fn().mockReturnValue(countChain) };
+            // The strip load and the per-copy strip update both
+            // resolve one row here (one copy).
+            destinationsUpdates += 1;
+            return makeChain({ data: [{ id: 'd1', metadata: {} }], error: null });
+          }
+          if (table === 'queue_items' || table === 'posting_slots') {
+            return makeChain({ data: [], error: null });
           }
           return {};
         }),
@@ -418,7 +439,10 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
       expect(json.disconnectedPagesCount).toBe(1);
       expect(json.facebookRevoked).toBe(false);
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(deleteSelectMock).toHaveBeenCalledWith('id');
+      // Spec 174 2A: the account row was UPDATED to disconnected
+      // (never deleted) and the one copy was stripped.
+      expect(socialAccountsUpdates).toBe(1);
+      expect(destinationsUpdates).toBeGreaterThanOrEqual(1);
     });
 
     it('returns 404 when account does not exist or belongs to another user', async () => {
