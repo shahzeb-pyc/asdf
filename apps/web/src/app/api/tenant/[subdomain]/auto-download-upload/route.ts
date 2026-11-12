@@ -325,6 +325,7 @@ async function createOne(
     .eq('workspace_id', workspaceId)
     .eq('id', input.destinationId)
     .eq('platform', 'facebook')
+    .eq('section', 'adu')
     .maybeSingle();
   if (destError || !destination) {
     return { ok: false, error: 'That Facebook page was not found in this workspace.' };

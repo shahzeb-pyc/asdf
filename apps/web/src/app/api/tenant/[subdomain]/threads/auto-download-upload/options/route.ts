@@ -24,7 +24,9 @@ export async function GET(
     .select('id, account_id, external_destination_id, name, avatar_url, status, metadata')
     .eq('workspace_id', workspaceId)
     .eq('platform', 'threads')
-    .order('name');
+    .eq('section', 'adu')
+    .order('name')
+    .limit(1000);
   if (pageError) {
     return NextResponse.json({ error: pageError.message }, { status: 500 });
   }

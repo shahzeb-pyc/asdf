@@ -113,6 +113,7 @@ export async function GET(
     .select('id')
     .eq('workspace_id', workspaceId)
     .eq('platform', 'instagram')
+    .eq('section', 'adu')
     .limit(1000);
   if (destError) {
     if (aduMissingTable(destError)) {
@@ -192,6 +193,7 @@ export async function GET(
     .select('id')
     .eq('workspace_id', workspaceId)
     .eq('platform', 'instagram')
+    .eq('section', 'adu')
     .or(`name.ilike.%${escaped}%,external_destination_id.ilike.%${escaped}%`)
     .limit(1000);
   const nameMatchedIds = new Set((nameMatched ?? []).map((d) => (d as { id: string }).id));
@@ -263,6 +265,7 @@ async function createOne(
     .eq('workspace_id', workspaceId)
     .eq('id', input.destinationId)
     .eq('platform', 'instagram')
+    .eq('section', 'adu')
     .maybeSingle();
   if (destError || !destination) {
     return { ok: false, error: 'That Instagram account was not found in this workspace.' };

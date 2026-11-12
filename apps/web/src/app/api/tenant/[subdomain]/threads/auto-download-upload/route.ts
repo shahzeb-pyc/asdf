@@ -145,6 +145,7 @@ async function createOne(
     .eq('workspace_id', workspaceId)
     .eq('id', input.destinationId)
     .eq('platform', 'threads')
+    .eq('section', 'adu')
     .maybeSingle();
   if (destError || !destination) {
     return { ok: false, error: 'That Threads account was not found in this workspace.' };
