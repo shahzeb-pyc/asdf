@@ -11,6 +11,7 @@ import {
 import {
   aduContext,
   aduDestinationKeysForCap,
+  ensureAduDestinationCopy,
   registerAduConfigUsage,
   aduMissingTable,
   buildAduConfigView,
@@ -259,17 +260,36 @@ async function createOne(
   const { workspaceId, supabase } = ctx;
   const username = sanitizeSourceIdentity(input.sourcePlatform, input.sourceUsername);
   if (!username) return { ok: false, error: 'Enter a source username.' };
-  const { data: destination, error: destError } = await supabase
+  // The picked row is only the identity source: the config attaches
+  // to this section's own copy, created here when it does not exist
+  // yet (spec 174 1B). A config must never attach to another
+  // section's row.
+  const { data: picked, error: destError } = await supabase
     .from('destinations')
-    .select('id, avatar_url, metadata')
+    .select('id, account_id, external_destination_id, name, avatar_url, metadata')
     .eq('workspace_id', workspaceId)
     .eq('id', input.destinationId)
     .eq('platform', 'instagram')
-    .eq('section', 'adu')
     .maybeSingle();
-  if (destError || !destination) {
+  if (destError || !picked) {
     return { ok: false, error: 'That Instagram account was not found in this workspace.' };
   }
+  const pickedRow = picked as {
+    account_id: string;
+    external_destination_id: string;
+    name: string;
+    avatar_url: string | null;
+    metadata: Record<string, unknown> | null;
+  };
+  const ensured = await ensureAduDestinationCopy(supabase, workspaceId, 'instagram', {
+    account_id: pickedRow.account_id,
+    external_destination_id: pickedRow.external_destination_id,
+    name: pickedRow.name,
+    avatar_url: pickedRow.avatar_url ?? null,
+    metadata: pickedRow.metadata ?? null,
+  });
+  if (!ensured.ok) return { ok: false, error: ensured.error };
+  const destination = { id: ensured.destinationId, metadata: ensured.metadata };
   const postingTimes =
     input.scheduleType === 'fixed'
       ? (input.postingTimes ?? [])
@@ -281,7 +301,7 @@ async function createOne(
     .from('adu_configs')
     .insert({
       workspace_id: workspaceId,
-      destination_id: input.destinationId,
+      destination_id: destination.id,
       source_platform: input.sourcePlatform,
       source_username: username,
       timezone: input.timezone,
