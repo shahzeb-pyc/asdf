@@ -62,7 +62,10 @@ export function AddThreadsScheduleDialog({
   const queryClient = useQueryClient();
   const tenant = queryKeys.tenant(subdomain);
   const [step, setStep] = React.useState(1);
-  const [selectedDestinationId, setSelectedDestinationId] = React.useState<string | null>(null);
+  // Spec 174 2A: the Add selects the ACCOUNT (the import sources the
+  // connected account, never a destinations row — connect creates no
+  // rows anymore, so an account with no destination yet is addable).
+  const [selectedAccountId, setSelectedAccountId] = React.useState<string | null>(null);
   const [timezoneSearch, setTimezoneSearch] = React.useState('');
   const [timezone, setTimezone] = React.useState<string | null>(null);
   const [postingTimes, setPostingTimes] = React.useState<PostingTimeDraft[]>([
@@ -83,7 +86,7 @@ export function AddThreadsScheduleDialog({
 
   const reset = React.useCallback(() => {
     setStep(1);
-    setSelectedDestinationId(null);
+    setSelectedAccountId(null);
     setTimezoneSearch('');
     setTimezone(null);
     setPostingTimes([{ time: '09:00', formats: [...THREADS_SCHEDULE_FORMATS] }]);
@@ -100,13 +103,13 @@ export function AddThreadsScheduleDialog({
 
   const addMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedDestinationId || !timezone) {
+      if (!selectedAccountId || !timezone) {
         throw new Error('Choose an account and a timezone first.');
       }
       return api.post(
         buildTenantApiPath(subdomain, '/threads/schedule'),
         {
-          destinationId: selectedDestinationId,
+          accountId: selectedAccountId,
           timezone,
           postingTimes: postingTimes.map((t) => ({ time: t.time, formats: t.formats })),
         },
@@ -136,7 +139,7 @@ export function AddThreadsScheduleDialog({
   );
 
   const canFinish =
-    selectedDestinationId !== null &&
+    selectedAccountId !== null &&
     timezone !== null &&
     postingTimes.length >= 1 &&
     !duplicateTimes &&
@@ -179,26 +182,21 @@ export function AddThreadsScheduleDialog({
             ) : (
               candidates.map((candidate) => {
                 const disabled =
-                  candidate.destinationId === null ||
                   candidate.scheduleAdded ||
                   candidate.accountStatus === 'expired';
                 const reason = candidate.scheduleAdded
                   ? 'Already in In-app Schedule'
-                  : candidate.destinationId === null
-                    ? 'No Threads profile linked yet'
-                    : candidate.accountStatus === 'expired'
-                      ? 'Connection expired — reconnect in Threads Accounts'
-                      : null;
+                  : candidate.accountStatus === 'expired'
+                    ? 'Connection expired — reconnect in Threads Accounts'
+                    : null;
                 return (
                   <button
                     key={candidate.accountId}
                     type="button"
                     disabled={disabled}
                     onClick={() => {
-                      if (candidate.destinationId) {
-                        setSelectedDestinationId(candidate.destinationId);
-                        setTimezone(candidate.destinationTimezone ?? 'UTC');
-                      }
+                      setSelectedAccountId(candidate.accountId);
+                      setTimezone(candidate.destinationTimezone ?? 'UTC');
                     }}
                     className="flex w-full items-center justify-between gap-3 rounded-md border border-line bg-panel px-4 py-3 text-left hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
                   >
@@ -215,7 +213,7 @@ export function AddThreadsScheduleDialog({
                         <span className="block text-metadata text-ink-dim">{reason}</span>
                       ) : null}
                     </span>
-                    {selectedDestinationId === candidate.destinationId ? (
+                    {selectedAccountId === candidate.accountId ? (
                       <span className="text-body font-medium text-link">Selected</span>
                     ) : null}
                   </button>
@@ -361,7 +359,7 @@ export function AddThreadsScheduleDialog({
           {step === 1 ? (
             <Button
               type="button"
-              disabled={selectedDestinationId === null}
+              disabled={selectedAccountId === null}
               onClick={() => setStep(2)}
             >
               Continue

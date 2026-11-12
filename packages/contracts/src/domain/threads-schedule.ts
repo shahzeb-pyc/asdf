@@ -131,9 +131,9 @@ export type ThreadsSchedulePostingTime = z.infer<
   typeof ThreadsSchedulePostingTimeSchema
 >;
 
-/** Add a connected Threads destination to Schedule. */
+/** Add a connected Threads account to Schedule (spec 174 2A: the import sources the account, never a destinations row). */
 export const AddThreadsScheduleRequestSchema = z.object({
-  destinationId: z.string().uuid(),
+  accountId: z.string().uuid(),
   timezone: ValidatedTimezoneSchema,
   postingTimes: z
     .array(ThreadsSchedulePostingTimeSchema)

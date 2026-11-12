@@ -124,7 +124,7 @@ export async function handleTikTokComplete(
   // the request body and clears the pending cookie in its response.
   const pick = await readPendingPick(request);
 
-  const response = await handleConnectComplete(request, 'tiktok', dbClient);
+  const response = await handleConnectComplete(request, 'tiktok');
 
   if (response.status === 200 && pick?.providerAccountId) {
     const client = resolveConnectDbClient(dbClient);

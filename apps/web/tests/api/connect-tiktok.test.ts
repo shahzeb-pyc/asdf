@@ -301,17 +301,18 @@ async function completeRequest(db: FakeDb, withProviderRef: boolean) {
 }
 
 describe('TikTok complete route', () => {
-  it('persists the confirmed destination through the framework and writes the provider ref into account + destination metadata', async () => {
+  it('creates no destinations row (spec 174 2A) and writes the provider ref into the account metadata', async () => {
     const db = new FakeDb();
     const res = await completeRequest(db, true);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { addedCount?: number };
-    expect(body.addedCount).toBe(1);
+    // Spec 174 §2: connecting an account must never create a
+    // destinations row — the section import creates the copy later.
+    expect(body.addedCount).toBe(0);
 
-    const insert = db.queries.find((q) =>
-      q.sql.includes('INSERT INTO destinations')
-    );
-    expect(insert?.params).toContain('creator-123');
+    expect(
+      db.queries.some((q) => q.sql.includes('INSERT INTO destinations'))
+    ).toBe(false);
 
     const accountUpdate = db.queries.find((q) =>
       q.sql.includes('UPDATE social_accounts')
@@ -321,6 +322,10 @@ describe('TikTok complete route', () => {
     );
     expect(accountUpdate?.params).toContain('acct-row-1');
 
+    // The destinations merge is still attempted (the worker's TikTok
+    // publisher reads the ref from the destination); it matches zero
+    // rows until a section imports the account, and the ref is
+    // preserved on the account row for that import to carry.
     const destinationUpdate = db.queries.find((q) =>
       q.sql.includes('UPDATE destinations')
     );

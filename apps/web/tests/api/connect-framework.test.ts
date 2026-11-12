@@ -441,7 +441,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
     expect(row.status).toBe('active');
   });
 
-  it('complete persists only the picked destinations and returns the Accounts landing URL', async () => {
+  it('complete creates NO destinations rows and returns the Accounts landing URL (spec 174 2A)', async () => {
     const { state } = await initiateInstagram();
     const callbackRes = await runCallback(state);
     const pending = cookieValue(callbackRes, 'fbup_connect_pending');
@@ -455,14 +455,17 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       },
       body: JSON.stringify({ destinationIds: ['dest-1001', 'dest-3003', 'not-a-real-id'] }),
     });
-    const res = await handleConnectComplete(req, 'instagram', dbClient);
+    const res = await handleConnectComplete(req, 'instagram');
     expect(res.status).toBe(200);
     const data = (await res.json()) as { accountsUrl: string; addedCount: number };
     // Per-platform landing page: Instagram lands on its own accounts page.
     expect(data.accountsUrl).toBe(`/tenant/${subdomain}/instagram/accounts`);
-    expect(data.addedCount).toBe(2);
-    const storedIds = [...db.destinations.values()].map((d) => d.external_destination_id);
-    expect(storedIds.sort((a, b) => a.localeCompare(b))).toEqual(['dest-1001', 'dest-3003']);
+    // Connecting an account must never create a destinations row
+    // (spec 174 2A): the account lives only in Accounts, and every
+    // section imports from there. The picked ids are validated
+    // against the signed cookie, not persisted.
+    expect(data.addedCount).toBe(0);
+    expect([...db.destinations.values()]).toHaveLength(0);
   });
 
   it('complete returns the Facebook accounts URL for facebook (unchanged)', async () => {
@@ -485,11 +488,13 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       },
       body: JSON.stringify({ destinationIds: ['dest-1001'] }),
     });
-    const res = await handleConnectComplete(req, 'facebook', dbClient);
+    const res = await handleConnectComplete(req, 'facebook');
     expect(res.status).toBe(200);
     const data = (await res.json()) as { accountsUrl: string; addedCount: number };
     expect(data.accountsUrl).toBe(`/tenant/${subdomain}/accounts`);
-    expect(data.addedCount).toBe(1);
+    // Spec 174 2A: connect creates no destinations rows, for any platform.
+    expect(data.addedCount).toBe(0);
+    expect([...db.destinations.values()]).toHaveLength(0);
   });
 
   // Threads is covered by the notice-param tests below (its complete
@@ -516,7 +521,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       },
       body: JSON.stringify({ destinationIds: ['dest-1001'] }),
     });
-    const res = await handleConnectComplete(req, platform, dbClient);
+    const res = await handleConnectComplete(req, platform);
     expect(res.status).toBe(200);
     const data = (await res.json()) as { accountsUrl: string; addedCount: number };
     expect(data.accountsUrl).toBe(`/tenant/${subdomain}/x/accounts`);
@@ -551,7 +556,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       },
       body: JSON.stringify({ destinationIds: ['th-dest-1'] }),
     });
-    const res = await handleConnectComplete(req, 'threads', dbClient);
+    const res = await handleConnectComplete(req, 'threads');
     const data = (await res.json()) as { accountsUrl: string; addedCount: number };
     return { status: res.status, data };
   }
@@ -559,7 +564,9 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
   it('complete lands a Threads connect on Threads accounts, never generic /accounts', async () => {
     const { status, data } = await completeThreads();
     expect(status).toBe(200);
-    expect(data.addedCount).toBe(1);
+    // Spec 174 2A: connect creates no destinations rows, for any platform.
+    expect(data.addedCount).toBe(0);
+    expect([...db.destinations.values()]).toHaveLength(0);
     const url = new URL(data.accountsUrl, 'http://localhost:3000');
     expect(url.pathname).toBe(`/tenant/${subdomain}/threads/accounts`);
     expect(url.searchParams.get('connected')).toBe('1');
@@ -799,8 +806,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
         },
         body: JSON.stringify({ destinationIds: ['dest-1001'] }),
       }),
-      'instagram',
-      dbClient
+      'instagram'
     );
     expect(foreignRes.status).toBe(403);
 
@@ -816,8 +822,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
         },
         body: JSON.stringify({ destinationIds: [] }),
       }),
-      'instagram',
-      dbClient
+      'instagram'
     );
     expect(emptyRes.status).toBe(400);
   });
@@ -859,8 +864,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
         },
         body: 'this is not json',
       }),
-      'instagram',
-      dbClient
+      'instagram'
     );
     expect(res.status).toBe(400);
   });
@@ -871,7 +875,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       headers: { cookie: sessionCookie, 'content-type': 'application/json' },
       body: JSON.stringify({ destinationIds: ['dest-1001'] }),
     });
-    const res = await handleConnectComplete(req, 'instagram', dbClient);
+    const res = await handleConnectComplete(req, 'instagram');
     expect(res.status).toBe(410);
   });
 
@@ -940,7 +944,25 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       },
       body: JSON.stringify({ destinationIds: ['dest-1001'] }),
     });
-    await handleConnectComplete(completeReq, 'instagram', dbClient);
+    await handleConnectComplete(completeReq, 'instagram');
+
+    // Spec 174 2A: the connect created the ACCOUNT only — no
+    // destinations row. The Instagram destination below is seeded
+    // directly, the way a section import creates it.
+    expect([...db.destinations.values()]).toHaveLength(0);
+    db.destinations.set('acct-1|dest-1001', {
+      id: 'dest-row-ig',
+      workspace_id: workspaceId,
+      account_id: 'acct-1',
+      platform: 'instagram',
+      external_destination_id: 'dest-1001',
+      name: 'My Brand',
+      handle: 'mybrand',
+      avatar_url: null,
+      timezone: 'UTC',
+      status: 'active',
+      created_at: new Date().toISOString(),
+    });
 
     // A second platform's account + destination, as spec 125 would persist them.
     db.accounts.set(`${workspaceId}|youtube|yt-acct-9`, {
@@ -1435,13 +1457,45 @@ describe('Connect framework via a Supabase-shaped client', () => {
         },
         body: JSON.stringify({ destinationIds: ['dest-2002'] }),
       }),
-      'instagram',
-      supabase
+      'instagram'
     );
     expect(completeRes.status).toBe(200);
+    // Spec 174 2A: the connect created the ACCOUNT only — no
+    // destinations row. The list shows the account with no
+    // destinations until a section imports it.
     const destinationRows = tables.get('destinations') ?? [];
-    expect(destinationRows).toHaveLength(1);
-    expect(destinationRows[0].external_destination_id).toBe('dest-2002');
+    expect(destinationRows).toHaveLength(0);
+    const listBeforeImport = await handleListSocialAccounts(
+      new NextRequest(`http://localhost:3000/api/tenant/${subdomain}/accounts/social`, {
+        headers: { cookie: sessionCookie },
+      }),
+      subdomain,
+      supabase
+    );
+    expect(listBeforeImport.status).toBe(200);
+    const listBeforeImportData = (await listBeforeImport.json()) as {
+      accounts: Array<{ platform: string; destinations: Array<{ id: string; name: string }> }>;
+    };
+    expect(listBeforeImportData.accounts).toHaveLength(1);
+    expect(listBeforeImportData.accounts[0].destinations).toHaveLength(0);
+
+    // A section import creates the copy (seeded directly here).
+    tables.set('destinations', [
+      {
+        id: 'dest-sb-import',
+        workspace_id: workspaceId,
+        account_id: String(accountRows[0].id),
+        platform: 'instagram',
+        external_destination_id: 'dest-2002',
+        name: 'My Brand',
+        handle: 'mybrand',
+        avatar_url: null,
+        timezone: 'UTC',
+        status: 'active',
+        section: 'schedule',
+        created_at: new Date().toISOString(),
+      },
+    ]);
 
     const listRes = await handleListSocialAccounts(
       new NextRequest(`http://localhost:3000/api/tenant/${subdomain}/accounts/social`, {

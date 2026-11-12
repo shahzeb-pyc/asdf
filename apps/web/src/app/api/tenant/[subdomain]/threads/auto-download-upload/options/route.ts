@@ -1,7 +1,15 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { threadsAduContext, threadsAduMissingTable } from '@/lib/server/threads-adu';
 
-/** Threads accounts + their Threads destinations for the Add picker. */
+/** Threads accounts + their Threads destinations for the Add picker.
+ * The dialog lists the ACCOUNTS (spec 174 2A: the Add sources live
+ * from the connected account, never from a table — connect creates
+ * no destinations rows anymore, so an account with no row is still
+ * addable) and the destinations are returned alongside for
+ * compatibility. The dialog greys out accounts already configured,
+ * via configuredAccountIds: a config's destination_id is an
+ * adu-copy id, never an account id, so the dialog cannot check it
+ * against accounts itself. */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ subdomain: string }> }
@@ -51,14 +59,30 @@ export async function GET(
         accounts: accounts ?? [],
         destinations: dedupedDestinations,
         configured: [],
+        configuredAccountIds: [],
         migrationMissing: true,
       });
     }
   }
+  // The accounts that already have an ADU config (spec 174 2A): a
+  // config's destination_id is an adu-copy id, so the join goes
+  // through the loaded destinations' account_ids. The dialog greys
+  // out these accounts instead of submitting into the adu_configs
+  // UNIQUE(destination_id) 23505.
+  const accountIdByDestinationId = new Map<string, string>();
+  for (const row of (destinations ?? []) as Array<{ id: string; account_id: string }>) {
+    accountIdByDestinationId.set(row.id, row.account_id);
+  }
+  const configuredAccountIds = [...new Set(
+    (configured ?? [])
+      .map((c) => accountIdByDestinationId.get(c.destination_id as string))
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  )];
   return NextResponse.json({
     accounts: accounts ?? [],
     destinations: dedupedDestinations,
     configured: configured ?? [],
+    configuredAccountIds,
   });
 }
 

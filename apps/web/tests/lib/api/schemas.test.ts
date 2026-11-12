@@ -105,6 +105,8 @@ describe('accounts schemas', () => {
               timezone: 'UTC',
               status: 'active',
               accountType: 'BUSINESS',
+              // Spec 174 2A: the social destination view carries its section.
+              section: 'schedule',
             },
           ],
         },
@@ -412,6 +414,8 @@ describe('settings, workspaces and connect schemas', () => {
         status: 'active',
         accountType: null,
         platform: 'facebook',
+        // Spec 174 2A: the destination detail view carries its section.
+        section: 'schedule',
         account: { id: UUID2, displayName: 'Jane', platform: 'facebook', status: 'active' },
       },
     });

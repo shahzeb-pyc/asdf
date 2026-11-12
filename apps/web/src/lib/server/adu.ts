@@ -123,6 +123,38 @@ export async function aduDestinationKeysForCap(
 }
 
 /**
+ * Cap keys for an account-sourced ADU add (spec 174 2A): the IG/Threads
+ * Add dialog posts account ids, and the cap key is the account's
+ * external id — the same key the adu copy the add creates carries.
+ * Deliberately NO destinations lookup: the add's import creates the
+ * adu copy from the account, and the copy may not exist yet when the
+ * pre-create gate runs. Throws on a database error: the caller turns
+ * it into a 500, never a silent pass.
+ */
+export async function aduAccountKeysForCap(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  platform: 'instagram' | 'threads',
+  accountIds: string[]
+): Promise<string[]> {
+  const ids = [...new Set(accountIds)];
+  if (ids.length === 0) return [];
+  const { data, error } = await supabase
+    .from('social_accounts')
+    .select('id, external_account_id')
+    .eq('workspace_id', workspaceId)
+    .eq('platform', platform)
+    .in('id', ids);
+  if (error) {
+    throw new Error(`ADU cap key lookup failed: ${error.message}`);
+  }
+  return (data ?? []).map((row) => {
+    const typed = row as { id: string; external_account_id?: string | null };
+    return typed.external_account_id ?? typed.id;
+  });
+}
+
+/**
  * Cap at add, second half (audit fix 2026-11-01): after an ADU
  * config row is created, register its destination in the usage
  * registry, so the cap counts worker-driven features from the
@@ -608,12 +640,19 @@ export async function ensureAduDestinationCopy(
     return { ok: false, error: 'Could not add this account. Please try again.' };
   }
   if (existing) {
+    // A null source metadata keeps the copy's own metadata (spec 174
+    // 2A: the ADU add sources the account row, which carries no
+    // metadata — refreshing with {} would wipe the copy's follower
+    // baseline the insights worker maintains). A provided source
+    // metadata replaces it, as before.
+    const existingMetadata = (existing as { metadata?: Record<string, unknown> | null }).metadata ?? {};
+    const nextMetadata = source.metadata ?? existingMetadata;
     const { error: refreshError } = await supabase
       .from('destinations')
       .update({
         name: source.name,
         avatar_url: source.avatar_url,
-        metadata: source.metadata ?? {},
+        metadata: nextMetadata,
         updated_at: new Date().toISOString(),
       })
       .eq('id', (existing as { id: string }).id);
@@ -626,7 +665,7 @@ export async function ensureAduDestinationCopy(
     return {
       ok: true,
       destinationId: (existing as { id: string }).id,
-      metadata: source.metadata ?? {},
+      metadata: nextMetadata,
     };
   }
   const { data: inserted, error: insertError } = await supabase

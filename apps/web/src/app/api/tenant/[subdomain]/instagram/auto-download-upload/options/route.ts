@@ -4,8 +4,13 @@ import { aduContext, aduMissingTable } from '@/lib/server/adu';
 /**
  * Instagram accounts + their destinations for the Add Account picker.
  * For Instagram the destination IS the account, so the dialog lists
- * destinations (returned as `pages` for dialog compatibility, and as
- * `destinations` for clarity) and the social accounts behind them.
+ * the ACCOUNTS (spec 174 2A: the Add sources live from the connected
+ * account, never from a table — connect creates no destinations
+ * rows anymore, so an account with no row is still addable) and the
+ * destinations are returned alongside for compatibility. The dialog
+ * greys out accounts already configured, via configuredAccountIds:
+ * a config's destination_id is an adu-copy id, never an account id,
+ * so the dialog cannot check it against accounts itself.
  */
 export async function GET(
   request: NextRequest,
@@ -62,15 +67,31 @@ export async function GET(
         pages: dedupedDestinations,
         destinations: dedupedDestinations,
         configured: [],
+        configuredAccountIds: [],
         migrationMissing: true,
       });
     }
   }
+  // The accounts that already have an ADU config (spec 174 2A): a
+  // config's destination_id is an adu-copy id, so the join goes
+  // through the loaded destinations' account_ids. The dialog greys
+  // out these accounts instead of submitting into the adu_configs
+  // UNIQUE(destination_id) 23505.
+  const accountIdByDestinationId = new Map<string, string>();
+  for (const row of (destinations ?? []) as Array<{ id: string; account_id: string }>) {
+    accountIdByDestinationId.set(row.id, row.account_id);
+  }
+  const configuredAccountIds = [...new Set(
+    (configured ?? [])
+      .map((c) => accountIdByDestinationId.get(c.destination_id as string))
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  )];
   return NextResponse.json({
     accounts: accounts ?? [],
     pages: dedupedDestinations,
     destinations: dedupedDestinations,
     configured: configured ?? [],
+    configuredAccountIds,
   });
 }
 

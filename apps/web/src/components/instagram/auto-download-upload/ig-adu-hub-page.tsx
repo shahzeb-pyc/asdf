@@ -59,7 +59,6 @@ interface AduConfigView {
   postsPerDay: number;
 }
 interface PickerPage { id: string; account_id: string; external_destination_id: string; name: string; avatar_url: string | null; status: string; metadata: Record<string, unknown> | null; }
-interface Configured { destination_id: string; source_platform: string; source_username: string; }
 
 export type AduStatusMarkKind = 'operational' | 'queued' | 'critical';
 
@@ -232,11 +231,14 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
 }) {
   const [mode, setMode] = React.useState<'single' | 'bulk' | 'multi'>('single');
   const [step, setStep] = React.useState(1);
-  // Instagram destinations ARE the accounts: no separate account picker.
-  // The options route returns destinations as `pages` for this dialog,
-  // exactly like the Facebook dialog's managed-pages list.
+  // Instagram destinations ARE the accounts: the picker lists the
+  // CONNECTED ACCOUNTS (spec 174 2A: the Add sources live from the
+  // connected account, never from a table — connect creates no
+  // destinations rows anymore, so an account with no row is still
+  // addable). Each account is mapped to a PickerPage entry keyed by
+  // the account id, so the rest of the dialog is unchanged.
   const [pages, setPages] = React.useState<PickerPage[]>([]);
-  const [configured, setConfigured] = React.useState<Configured[]>([]);
+  const [configuredAccountIds, setConfiguredAccountIds] = React.useState<string[]>([]);
   const [pageSearch, setPageSearch] = React.useState('');
   const [selectedPageIds, setSelectedPageIds] = React.useState<string[]>([]);
   const [sources, setSources] = React.useState<Record<string, { platform: Platform; username: string }>>({});
@@ -287,8 +289,16 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
         // render as an empty picker with no error, inviting duplicates.
         if (!r.ok) throw new Error(body.error ?? 'Could not load Instagram accounts.');
         if (body.migrationMissing) throw new Error('The Auto Download/Upload tables have not been created yet. Apply migration 20261030120001_adu.sql, then try again.');
-        setPages(body.pages ?? []);
-        setConfigured(body.configured ?? []);
+        setPages((body.accounts ?? []).map((a: { id: string; external_account_id: string; display_name: string; avatar_url: string | null; status: string }) => ({
+          id: a.id,
+          account_id: a.id,
+          external_destination_id: a.external_account_id,
+          name: a.display_name,
+          avatar_url: a.avatar_url ?? null,
+          status: a.status,
+          metadata: null,
+        })));
+        setConfiguredAccountIds(body.configuredAccountIds ?? []);
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Could not load Instagram accounts.'));
   }, [open, subdomain]);
@@ -298,7 +308,7 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
     p.name.toLowerCase().includes(pageSearch.toLowerCase())
   );
   const selectedPages = pages.filter((p) => selectedPageIds.includes(p.id));
-  const isConfigured = (pageId: string) => configured.some((c) => c.destination_id === pageId);
+  const isConfigured = (pageId: string) => configuredAccountIds.includes(pageId);
   const allSourcesFilled = selectedPages.every((p) => (sources[p.id]?.username ?? '').trim() !== '');
 
   const toggle = (list: string[], id: string, set: (v: string[]) => void) => {
@@ -347,7 +357,7 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
         const response = await fetch(buildTenantApiPath(subdomain, '/instagram/auto-download-upload'), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            destinationId: page.id, sourcePlatform: source.platform, sourceUsername: source.username,
+            accountId: page.id, sourcePlatform: source.platform, sourceUsername: source.username,
             timezone, postsPerDay, scheduleType,
             postingTimes: scheduleType === 'fixed' ? fixedTimes.slice(0, postsPerDay) : undefined,
           }),
@@ -377,7 +387,7 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
         }
         const items = selectedPages.map((p) => {
           const base = {
-            destinationId: p.id,
+            accountId: p.id,
             sourcePlatform: sources[p.id]?.platform ?? 'instagram',
             sourceUsername: sources[p.id]?.username ?? '',
           };
@@ -401,7 +411,7 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
         });
         const body = await response.json().catch(() => ({}));
         if (!response.ok && !(body.created ?? []).length) throw new Error(body.error ?? 'Could not add these accounts.');
-        const failedText = (body.failed ?? []).map((f: { destinationId: string; error: string }) => f.error).join(' ');
+        const failedText = (body.failed ?? []).map((f: { accountId: string; error: string }) => f.error).join(' ');
         setResult(`Created ${(body.created ?? []).length} accounts.${failedText ? ` Failed: ${failedText}` : ''}`);
         if ((body.failed ?? []).length === 0) onCreated();
       }

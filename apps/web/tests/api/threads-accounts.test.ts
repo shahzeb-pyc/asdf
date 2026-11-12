@@ -252,6 +252,9 @@ function makeFake() {
         platform: 'threads',
         handle: 'cedar',
         status: 'active',
+        timezone: 'UTC',
+        encrypted_destination_token: 'tok-dest-1',
+        metadata: { tasks: ['x'] },
       },
       {
         // Disconnected destinations do NOT count and carry no handle.
@@ -263,6 +266,8 @@ function makeFake() {
         status: 'disconnected',
       },
     ],
+    queue_items: [],
+    posting_slots: [],
   };
   const fake = {
     from: (table: string) => new FakeBuilder({ tables }, table),
@@ -414,7 +419,7 @@ describe('Threads accounts list route', () => {
     expect(res.status).toBe(401);
   });
 
-  it('disconnect removes only the Threads account and counts its destinations', async () => {
+  it('disconnect retains the Threads account as disconnected and strips its destinations (spec 174 2A)', async () => {
     const { fake, tables } = makeFake();
     const req = new NextRequest(
       'http://localhost:3000/api/tenant/acme/threads/accounts/cccccccc-cccc-4ccc-cccc-cccccccccccc',
@@ -430,11 +435,21 @@ describe('Threads accounts list route', () => {
     const json = await res.json();
     expect(json.success).toBe(true);
     expect(json.disconnectedDestinationsCount).toBe(1);
-    expect(
-      tables.social_accounts.some(
-        (a) => a.id === 'cccccccc-cccc-4ccc-cccc-cccccccccccc'
-      )
-    ).toBe(false);
+    // Spec 174 2A: the account row is RETAINED as a disconnected
+    // record, never deleted; its tokens and expiry are NULLed.
+    const account = tables.social_accounts.find(
+      (a) => a.id === 'cccccccc-cccc-4ccc-cccc-cccccccccccc'
+    );
+    expect(account).toBeTruthy();
+    expect(account?.status).toBe('disconnected');
+    expect(account?.token_expires_at).toBeNull();
+    expect(account?.encrypted_access_token).toBeNull();
+    // The section copy is stripped: disconnected, token NULL,
+    // working metadata removed — identity kept.
+    const destination = tables.destinations.find((d) => d.id === 'dest-1');
+    expect(destination?.status).toBe('disconnected');
+    expect(destination?.encrypted_destination_token).toBeNull();
+    expect(destination?.metadata).toEqual({});
     // The Facebook account is untouched.
     expect(
       tables.social_accounts.some((a) => a.id === 'eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee')

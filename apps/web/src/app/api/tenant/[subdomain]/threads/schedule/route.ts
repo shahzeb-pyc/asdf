@@ -27,13 +27,18 @@ import {
  *
  * List: only destinations whose section is 'schedule' (spec 174 1B) —
  * connected Threads accounts that were never added here never appear,
- * by design. Add: a connected Threads destination, a validated
- * timezone, and at least one posting time. The add stamps the row's
- * section to 'schedule' (the import IS the section's copy); a row
- * that already belongs to another section is never adopted. The flag,
- * timezone, status and slots are written together; a slot failure
- * rolls all of them back (including pre-existing slots) so a
- * half-added account is impossible.
+ * by design. Add: a connected Threads ACCOUNT, a validated timezone,
+ * and at least one posting time (spec 174 2A: the Add dialog sources
+ * live from the connected account, never from a table — connect
+ * creates no destinations rows anymore). The add stamps the row's
+ * section to 'schedule' (the import IS the section's copy): it
+ * reactivates a removed schedule stub, adopts the unimported
+ * connected row, or inserts a fresh schedule copy from the account.
+ * A row that already belongs to another section is never adopted.
+ * The flag, timezone, status and slots are written together; a slot
+ * failure rolls all of them back (including pre-existing slots, and
+ * deleting a freshly inserted copy) so a half-added account is
+ * impossible.
  */
 
 export async function GET(request: NextRequest, props: { params: Promise<{ subdomain: string }> }) {
@@ -110,7 +115,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
       { status: 400 }
     );
   }
-  const { destinationId, timezone, postingTimes } = parsed.data;
+  const { accountId, timezone, postingTimes } = parsed.data;
   const times = postingTimes.map((t) => t.time);
   if (new Set(times).size !== times.length) {
     return NextResponse.json(
@@ -120,50 +125,31 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
   }
 
   try {
-    const { data: destination, error: destError } = await supabase
-      .from('destinations')
-      .select(
-        'id, account_id, platform, section, external_destination_id, name, handle, avatar_url, timezone, status, metadata, created_at, updated_at'
-      )
-      .eq('id', destinationId)
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'threads')
-      .maybeSingle();
-    if (destError) throw new Error(destError.message);
-    if (!destination) {
-      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
-    }
-    const destRow = destination as ThreadsScheduleDestinationRow;
-    // Membership is the section column now (spec 174 1B): already in
-    // Schedule means an active schedule copy. A removed stub (section
-    // 'schedule', disconnected, flag cleared) is re-addable — the
-    // update below reactivates it. A row belonging to another section
-    // is never adopted: the candidates list only ever offers the
-    // schedule copy or the unimported row, so this is a stale/forged
-    // id, not a normal path.
-    if (destRow.section !== null && destRow.section !== 'schedule') {
-      return NextResponse.json(
-        { error: 'CONFLICT', message: 'This account is already in another section.' },
-        { status: 409 }
-      );
-    }
-    if (isThreadsScheduleListMember(destRow)) {
-      return NextResponse.json(
-        { error: 'ALREADY_ADDED', message: 'This account is already in In-app Schedule.' },
-        { status: 409 }
-      );
-    }
-    const { data: account } = await supabase
+    // 1. The account is the import source (spec 174 2A): the Add
+    // dialog sources live from the connected account, never from a
+    // table. Connect creates no destinations rows anymore, so a
+    // freshly connected account has no row to adopt — the import
+    // creates the schedule copy here (the IG Schedule POST pattern).
+    const { data: account, error: accountError } = await supabase
       .from('social_accounts')
       .select('id, external_account_id, display_name, avatar_url, status, token_expires_at')
-      .eq('id', destRow.account_id)
+      .eq('id', accountId)
       .eq('workspace_id', workspaceId)
       .eq('platform', 'threads')
       .maybeSingle();
+    if (accountError) throw new Error(accountError.message);
     if (!account) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
-    if (isAccountExpired(account as { status: string; token_expires_at: string | null })) {
+    const accountRow = account as {
+      id: string;
+      external_account_id: string;
+      display_name: string;
+      avatar_url: string | null;
+      status: string;
+      token_expires_at: string | null;
+    };
+    if (isAccountExpired(accountRow)) {
       return NextResponse.json(
         {
           error: 'ACCOUNT_EXPIRED',
@@ -172,7 +158,11 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
         { status: 409 }
       );
     }
-    if (destRow.status === 'error' || destRow.status === 'disconnected') {
+    if (
+      accountRow.status === 'disconnected' ||
+      accountRow.status === 'revoked' ||
+      accountRow.status === 'error'
+    ) {
       return NextResponse.json(
         {
           error: 'ACCOUNT_DISCONNECTED',
@@ -182,6 +172,65 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
       );
     }
 
+    // 2. Resolve the schedule copy: the existing schedule copy
+    // (reactivated when it is a removed stub), else the unimported
+    // connected row (adopted in place), else a fresh insert from
+    // the account. A row belonging to another section is never
+    // adopted — the resolution below only ever offers the schedule
+    // copy or the unimported row, so a row from another section
+    // simply means "no row to adopt" and a fresh copy is inserted.
+    const DESTINATION_COLUMNS =
+      'id, account_id, platform, section, external_destination_id, name, handle, avatar_url, timezone, status, metadata, created_at, updated_at';
+    const { data: scheduleCopy, error: copyError } = await supabase
+      .from('destinations')
+      .select(DESTINATION_COLUMNS)
+      .eq('account_id', accountId)
+      .eq('workspace_id', workspaceId)
+      .eq('platform', 'threads')
+      .eq('section', 'schedule')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (copyError) throw new Error(copyError.message);
+    const copyRow = (scheduleCopy ?? null) as ThreadsScheduleDestinationRow | null;
+    if (copyRow && isThreadsScheduleListMember(copyRow)) {
+      return NextResponse.json(
+        { error: 'ALREADY_ADDED', message: 'This account is already in In-app Schedule.' },
+        { status: 409 }
+      );
+    }
+    let unimportedRow: ThreadsScheduleDestinationRow | null = null;
+    if (!copyRow) {
+      const { data: unimported, error: unimportedError } = await supabase
+        .from('destinations')
+        .select(DESTINATION_COLUMNS)
+        .eq('account_id', accountId)
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'threads')
+        .is('section', null)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (unimportedError) throw new Error(unimportedError.message);
+      unimportedRow = (unimported ?? null) as ThreadsScheduleDestinationRow | null;
+      // An unimported row whose status is disconnected/error means
+      // the account's connection died after connect — the account
+      // needs reconnecting, not a re-adoption.
+      if (
+        unimportedRow &&
+        (unimportedRow.status === 'disconnected' || unimportedRow.status === 'error')
+      ) {
+        return NextResponse.json(
+          {
+            error: 'ACCOUNT_DISCONNECTED',
+            message: 'This account is disconnected. Reconnect it in Threads Accounts, then add it here.',
+          },
+          { status: 409 }
+        );
+      }
+    }
+    const targetRow = copyRow ?? unimportedRow;
+
     // Plan cap gate: adding an account to Schedule registers it
     // against the Threads cap, so an over-cap add is rejected here,
     // before any destination mutation or slot write. Admins are never
@@ -189,7 +238,9 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
     // as the destination-queue gate). The gate always uses the admin
     // client, never the route's working client — in production they
     // are the same client, and in tests the working client is a fake
-    // that must not answer billing queries.
+    // that must not answer billing queries. The key is the target
+    // copy's external id when one exists, else the account's
+    // external id — the same key the insert below writes.
     if (session.role !== 'admin') {
       const billingClient = getBillingAdminClient();
       if (billingClient) {
@@ -198,7 +249,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
             billingClient,
             session.userId,
             'threads',
-            [destRow.external_destination_id ?? destRow.id]
+            [targetRow?.external_destination_id ?? accountRow.external_account_id ?? accountId]
           );
         } catch (err) {
           const gateResponse = subscriptionGateResponse(err);
@@ -212,10 +263,10 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
       }
     }
 
-    const previousMetadata = (destRow.metadata ?? {}) as Record<string, unknown>;
-    const previousTimezone = destRow.timezone;
-    const previousStatus = destRow.status;
-    const previousSection = destRow.section;
+    const previousMetadata = ((targetRow?.metadata ?? {}) as Record<string, unknown>);
+    const previousTimezone = targetRow?.timezone ?? null;
+    const previousStatus = targetRow?.status ?? null;
+    const previousSection = targetRow?.section ?? null;
     const nextMetadata: Record<string, unknown> = {
       ...previousMetadata,
       threads_schedule_added_at: new Date().toISOString(),
@@ -226,29 +277,70 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
     // failure can restore them exactly — the old code deleted them
     // first and never put them back, and its flag rollback also
     // forgot the destination status it had forced to active.
-    const { data: previousSlots, error: previousSlotsError } = await supabase
-      .from('posting_slots')
-      .select('time_of_day, is_active, kind')
-      .eq('destination_id', destinationId);
-    if (previousSlotsError) throw new Error(previousSlotsError.message);
-    const previousSlotRows = (previousSlots ?? []) as Array<{
+    let destinationId = targetRow?.id ?? '';
+    let destinationCreated = false;
+    let previousSlotRows: Array<{
       time_of_day: string;
       is_active: boolean;
       kind: unknown;
-    }>;
+    }> = [];
+    if (targetRow) {
+      const { data: previousSlots, error: previousSlotsError } = await supabase
+        .from('posting_slots')
+        .select('time_of_day, is_active, kind')
+        .eq('destination_id', targetRow.id);
+      if (previousSlotsError) throw new Error(previousSlotsError.message);
+      previousSlotRows = (previousSlots ?? []) as Array<{
+        time_of_day: string;
+        is_active: boolean;
+        kind: unknown;
+      }>;
+    }
 
-    const { error: flagError } = await supabase
-      .from('destinations')
-      .update({
-        metadata: nextMetadata,
-        timezone,
-        status: 'active',
-        section: 'schedule',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', destinationId)
-      .eq('workspace_id', workspaceId);
-    if (flagError) throw new Error(flagError.message);
+    // The import IS the section's copy: reactivate the removed stub
+    // or adopt the unimported row in place, or insert a fresh
+    // schedule copy from the account (the unique key
+    // (account, external, section) forbids a second schedule copy).
+    // The stub's token was stripped on removal; publishing reads the
+    // account token at publish time, so the copy needs no token of
+    // its own.
+    if (targetRow) {
+      const { error: flagError } = await supabase
+        .from('destinations')
+        .update({
+          metadata: nextMetadata,
+          timezone,
+          status: 'active',
+          section: 'schedule',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', targetRow.id)
+        .eq('workspace_id', workspaceId);
+      if (flagError) throw new Error(flagError.message);
+    } else {
+      const { data: inserted, error: insertError } = await supabase
+        .from('destinations')
+        .insert({
+          workspace_id: workspaceId,
+          account_id: accountId,
+          platform: 'threads',
+          section: 'schedule',
+          external_destination_id: accountRow.external_account_id ?? accountId,
+          name: accountRow.display_name ?? 'Threads account',
+          handle: null,
+          avatar_url: accountRow.avatar_url ?? null,
+          timezone,
+          status: 'active',
+          metadata: nextMetadata,
+        })
+        .select('id')
+        .single();
+      if (insertError || !inserted) {
+        throw new Error(insertError?.message ?? 'Destination insert failed');
+      }
+      destinationId = inserted.id as string;
+      destinationCreated = true;
+    }
 
     try {
       const { error: deleteError } = await supabase
@@ -268,28 +360,39 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
     } catch (slotError) {
       // Roll everything back: flag, timezone, status AND slots.
       // A half-added account — or a silently emptied posting-times
-      // list — must never survive a slot failure.
-      await supabase
-        .from('destinations')
-        .update({
-          metadata: previousMetadata,
-          timezone: previousTimezone,
-          status: previousStatus,
-          section: previousSection,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', destinationId)
-        .eq('workspace_id', workspaceId);
-      await supabase.from('posting_slots').delete().eq('destination_id', destinationId);
-      if (previousSlotRows.length > 0) {
-        await supabase.from('posting_slots').insert(
-          previousSlotRows.map((slot) => ({
-            destination_id: destinationId,
-            time_of_day: slot.time_of_day,
-            is_active: slot.is_active,
-            kind: slot.kind,
-          }))
-        );
+      // list — must never survive a slot failure. A freshly
+      // inserted copy is deleted again instead of restored.
+      try {
+        if (destinationCreated) {
+          await supabase.from('destinations').delete().eq('id', destinationId);
+        } else if (targetRow) {
+          await supabase
+            .from('destinations')
+            .update({
+              metadata: previousMetadata,
+              timezone: previousTimezone,
+              status: previousStatus,
+              section: previousSection,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', destinationId)
+            .eq('workspace_id', workspaceId);
+        }
+        await supabase.from('posting_slots').delete().eq('destination_id', destinationId);
+        if (previousSlotRows.length > 0) {
+          await supabase.from('posting_slots').insert(
+            previousSlotRows.map((slot) => ({
+              destination_id: destinationId,
+              time_of_day: slot.time_of_day,
+              is_active: slot.is_active,
+              kind: slot.kind,
+            }))
+          );
+        }
+      } catch (rollbackError) {
+        logServerError('[threads/schedule] add rollback failed', rollbackError, {
+          source: 'threads-schedule-add-rollback',
+        });
       }
       throw slotError;
     }
@@ -300,19 +403,28 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
       workspaceId,
       destinationId
     );
-    const item = toScheduleItem(
-      { ...destRow, metadata: nextMetadata, timezone, status: 'active', section: 'schedule' },
-      account as {
-        id: string;
-        external_account_id: string;
-        display_name: string;
-        avatar_url: string | null;
-        status: string;
-        token_expires_at: string | null;
-      },
-      counts,
-      countsError
-    );
+    const { data: detail, error: detailError } = await supabase
+      .from('destinations')
+      .select(DESTINATION_COLUMNS)
+      .eq('id', destinationId)
+      .maybeSingle();
+    if (detailError) throw new Error(detailError.message);
+    const destRow = (detail ?? {
+      id: destinationId,
+      account_id: accountId,
+      platform: 'threads',
+      section: 'schedule',
+      external_destination_id: accountRow.external_account_id ?? accountId,
+      name: accountRow.display_name ?? 'Threads account',
+      handle: null,
+      avatar_url: accountRow.avatar_url ?? null,
+      timezone,
+      status: 'active',
+      metadata: nextMetadata,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }) as ThreadsScheduleDestinationRow;
+    const item = toScheduleItem(destRow, accountRow, counts, countsError);
     return NextResponse.json(
       {
         item: {

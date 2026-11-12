@@ -401,23 +401,116 @@ async function resolveThreadsDestination(
   const accountId = input.accountId as string;
   const targetExternalId = input.targetExternalId as string;
   // The account must be a connected Threads account in this workspace.
+  // Its token is the posting token: for Threads the target IS the
+  // account, so the mirror row carries a copy of the account's token
+  // (spec 174 2A — the Facebook mirror's resolveDestination pattern,
+  // minus the Graph page fetch, which Threads does not need).
   const { data: account, error: accountError } = await db
     .from('social_accounts')
-    .select('id')
+    .select('id, display_name, avatar_url, encrypted_access_token')
     .eq('id', accountId)
     .eq('workspace_id', workspaceId)
     .eq('platform', 'threads')
     .maybeSingle();
   if (accountError) throw new Error(`Failed to load account: ${accountError.message}`);
-  if (!account) return { error: notReady };
-  const { data, error } = await db
+  const accountRow = account as {
+    id: string;
+    display_name: string;
+    avatar_url: string | null;
+    encrypted_access_token: string | null;
+  } | null;
+  if (!accountRow || !accountRow.encrypted_access_token) return { error: notReady };
+  // The mirror row is the only row this path reads or writes: a
+  // schedule or adu copy for the same account is never adopted, and
+  // the unscoped maybeSingle() below would throw once an account
+  // holds more than one section's copy (spec 174 1A).
+  const { data: existing, error: existingError } = await db
     .from('destinations')
     .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
     .eq('account_id', accountId)
     .eq('external_destination_id', targetExternalId)
     .eq('platform', 'threads')
+    .eq('section', 'mirror')
     .maybeSingle();
-  if (error) throw new Error(`Failed to load destination: ${error.message}`);
+  if (existingError) throw new Error(`Failed to load destination: ${existingError.message}`);
+  const existingRow = asDestinationRow(existing);
+  if (existingRow) {
+    // Refresh only identity + token: creating a mirror must NEVER
+    // flip a paused/disconnected row back to active.
+    const { error: refreshError } = await db
+      .from('destinations')
+      .update({
+        name: accountRow.display_name,
+        avatar_url: accountRow.avatar_url ?? null,
+        encrypted_destination_token: accountRow.encrypted_access_token,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existingRow.id);
+    if (refreshError) throw new Error(`Failed to refresh destination: ${refreshError.message}`);
+    return {
+      destination: {
+        ...existingRow,
+        name: accountRow.display_name,
+        avatar_url: accountRow.avatar_url ?? null,
+        encrypted_destination_token: accountRow.encrypted_access_token,
+      },
+    };
+  }
+  // New mirror row (identity + token only, NO slots): the import IS
+  // the section's copy, created here because the account was never
+  // added to this section (connect creates no rows anymore).
+  const { data, error } = await db
+    .from('destinations')
+    .insert({
+      workspace_id: workspaceId,
+      account_id: accountId,
+      platform: 'threads',
+      section: 'mirror',
+      external_destination_id: targetExternalId,
+      name: accountRow.display_name,
+      avatar_url: accountRow.avatar_url ?? null,
+      encrypted_destination_token: accountRow.encrypted_access_token,
+      status: 'active',
+      metadata: {},
+    })
+    .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
+    .single();
+  if (error) {
+    // Insert first; on a concurrent-insert conflict (23505) fall
+    // back to the refresh path so an existing row's status is never
+    // flipped by a mirror creation (an upsert would overwrite
+    // status with 'active').
+    if (error.code !== '23505') throw new Error(`Failed to create destination: ${error.message}`);
+    const { data: raced, error: racedError } = await db
+      .from('destinations')
+      .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
+      .eq('account_id', accountId)
+      .eq('external_destination_id', targetExternalId)
+      .eq('platform', 'threads')
+      .eq('section', 'mirror')
+      .maybeSingle();
+    if (racedError) throw new Error(`Failed to load destination: ${racedError.message}`);
+    const racedRow = asDestinationRow(raced);
+    if (!racedRow) return { error: notReady };
+    const { error: refreshError } = await db
+      .from('destinations')
+      .update({
+        name: accountRow.display_name,
+        avatar_url: accountRow.avatar_url ?? null,
+        encrypted_destination_token: accountRow.encrypted_access_token,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', racedRow.id);
+    if (refreshError) throw new Error(`Failed to refresh destination: ${refreshError.message}`);
+    return {
+      destination: {
+        ...racedRow,
+        name: accountRow.display_name,
+        avatar_url: accountRow.avatar_url ?? null,
+        encrypted_destination_token: accountRow.encrypted_access_token,
+      },
+    };
+  }
   const dest = asDestinationRow(data);
   if (!dest) return { error: notReady };
   return { destination: dest };

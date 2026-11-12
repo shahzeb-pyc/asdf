@@ -185,6 +185,17 @@ class FakeBuilder {
 
 function makeDb() {
   return {
+    social_accounts: [
+      {
+        id: '55555555-5555-4555-8555-555555555555',
+        workspace_id: 'ws-1',
+        platform: 'instagram',
+        external_account_id: '17841400008460056',
+        display_name: 'My IG Account',
+        avatar_url: null,
+        status: 'active',
+      },
+    ] as Row[],
     destinations: [
       {
         id: '11111111-1111-4111-8111-111111111111',
@@ -320,13 +331,13 @@ describe('Instagram ADU hub route', () => {
     expect(body.configs).toHaveLength(0);
   });
 
-  it('single create succeeds for an Instagram destination', async () => {
+  it('single create succeeds for an Instagram account (spec 174 2A: posts the account id, config attaches to the adu copy)', async () => {
     const res = await hubPOST(
       hubRequest('', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          destinationId: '11111111-1111-4111-8111-111111111111',
+          accountId: '55555555-5555-4555-8555-555555555555',
           sourcePlatform: 'tiktok',
           sourceUsername: 'creator_new',
           timezone: 'Asia/Karachi',
@@ -340,6 +351,8 @@ describe('Instagram ADU hub route', () => {
     expect(res.status).toBe(201);
     expect(body.id).toBeTruthy();
     const inserted = db.adu_configs.find((c) => c.id === body.id);
+    // The config attaches to the adu copy (the existing one), not
+    // to the account id the Add dialog posted.
     expect(inserted?.destination_id).toBe('11111111-1111-4111-8111-111111111111');
     expect(inserted?.starting_followers).toBe(500);
     expect(inserted?.current_followers).toBe(500);
@@ -354,13 +367,13 @@ describe('Instagram ADU hub route', () => {
     ).toBe(false);
   });
 
-  it('single create rejects a Facebook destination with the Instagram-account error', async () => {
+  it('single create rejects a Facebook account id with the Instagram-account error', async () => {
     const res = await hubPOST(
       hubRequest('', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          destinationId: '22222222-2222-4222-8222-222222222222',
+          accountId: '66666666-6666-4666-8666-666666666666',
           sourcePlatform: 'tiktok',
           sourceUsername: 'creator_new',
           timezone: 'Asia/Karachi',
@@ -375,15 +388,15 @@ describe('Instagram ADU hub route', () => {
     expect(body.error).toBe('That Instagram account was not found in this workspace.');
   });
 
-  it('bulk create reports per-item failure for a Facebook destination without failing the IG item', async () => {
+  it('bulk create reports per-item failure for a Facebook account id without failing the IG item', async () => {
     const res = await hubPOST(
       hubRequest('', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           items: [
-            { destinationId: '11111111-1111-4111-8111-111111111111', sourcePlatform: 'tiktok', sourceUsername: 'creator_bulk' },
-            { destinationId: '22222222-2222-4222-8222-222222222222', sourcePlatform: 'tiktok', sourceUsername: 'creator_bulk' },
+            { accountId: '55555555-5555-4555-8555-555555555555', sourcePlatform: 'tiktok', sourceUsername: 'creator_bulk' },
+            { accountId: '66666666-6666-4666-8666-666666666666', sourcePlatform: 'tiktok', sourceUsername: 'creator_bulk' },
           ],
           timezone: 'Asia/Karachi',
           postsPerDay: 1,
@@ -396,7 +409,7 @@ describe('Instagram ADU hub route', () => {
     expect(res.status).toBe(201);
     expect(body.created).toHaveLength(1);
     expect(body.failed).toHaveLength(1);
-    expect(body.failed[0].destinationId).toBe('22222222-2222-4222-8222-222222222222');
+    expect(body.failed[0].accountId).toBe('66666666-6666-4666-8666-666666666666');
   });
 });
 

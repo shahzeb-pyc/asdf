@@ -57,9 +57,7 @@ interface AduConfigView {
   failedToday: number;
   postsPerDay: number;
 }
-interface PickerAccount { id: string; external_account_id: string; display_name: string; avatar_url: string | null; status: string; }
 interface PickerPage { id: string; account_id: string; external_destination_id: string; name: string; avatar_url: string | null; status: string; metadata: Record<string, unknown> | null; }
-interface Configured { destination_id: string; source_platform: string; source_username: string; }
 
 export type AduStatusMarkKind = 'operational' | 'queued' | 'critical';
 
@@ -232,12 +230,15 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
 }) {
   const [mode, setMode] = React.useState<'single' | 'bulk' | 'multi'>('single');
   const [step, setStep] = React.useState(1);
-  const [accounts, setAccounts] = React.useState<PickerAccount[]>([]);
+  // The picker lists the CONNECTED ACCOUNTS (spec 174 2A: the Add
+  // sources live from the connected account, never from a table —
+  // connect creates no destinations rows anymore, so an account with
+  // no row is still addable). Each account is mapped to a PickerPage
+  // entry keyed by the account id, so the rest of the dialog is
+  // unchanged.
   const [pages, setPages] = React.useState<PickerPage[]>([]);
-  const [configured, setConfigured] = React.useState<Configured[]>([]);
-  const [accountSearch, setAccountSearch] = React.useState('');
+  const [configuredAccountIds, setConfiguredAccountIds] = React.useState<string[]>([]);
   const [pageSearch, setPageSearch] = React.useState('');
-  const [selectedAccountIds, setSelectedAccountIds] = React.useState<string[]>([]);
   const [selectedPageIds, setSelectedPageIds] = React.useState<string[]>([]);
   const [sources, setSources] = React.useState<Record<string, { platform: Platform; username: string }>>({});
   const [pasteOpen, setPasteOpen] = React.useState(false);
@@ -283,21 +284,26 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
     void fetch(buildTenantApiPath(subdomain, '/threads/auto-download-upload/options'))
       .then((r) => r.json())
       .then((body) => {
-        setAccounts(body.accounts ?? []);
-        setPages(body.destinations ?? []);
-        setConfigured(body.configured ?? []);
+        setPages((body.accounts ?? []).map((a: { id: string; external_account_id: string; display_name: string; avatar_url: string | null; status: string }) => ({
+          id: a.id,
+          account_id: a.id,
+          external_destination_id: a.external_account_id,
+          name: a.display_name,
+          avatar_url: a.avatar_url ?? null,
+          status: a.status,
+          metadata: null,
+        })));
+        setConfiguredAccountIds(body.configuredAccountIds ?? []);
       })
       .catch(() => setError('Could not load Threads accounts.'));
   }, [open, subdomain]);
 
   const totalSteps = mode === 'single' ? 2 : 3;
-  const filteredAccounts = accounts.filter((a) => a.display_name.toLowerCase().includes(accountSearch.toLowerCase()));
   const visiblePages = pages.filter((p) =>
-    (mode === 'single' || selectedAccountIds.length === 0 || selectedAccountIds.includes(p.account_id)) &&
     p.name.toLowerCase().includes(pageSearch.toLowerCase())
   );
   const selectedPages = pages.filter((p) => selectedPageIds.includes(p.id));
-  const isConfigured = (pageId: string) => configured.some((c) => c.destination_id === pageId);
+  const isConfigured = (pageId: string) => configuredAccountIds.includes(pageId);
   const allSourcesFilled = selectedPages.every((p) => (sources[p.id]?.username ?? '').trim() !== '');
 
   const toggle = (list: string[], id: string, set: (v: string[]) => void) => {
@@ -346,7 +352,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
         const response = await fetch(buildTenantApiPath(subdomain, '/threads/auto-download-upload'), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            destinationId: page.id, sourcePlatform: source.platform, sourceUsername: source.username,
+            accountId: page.id, sourcePlatform: source.platform, sourceUsername: source.username,
             timezone, postsPerDay, scheduleType,
             postingTimes: scheduleType === 'fixed' ? fixedTimes.slice(0, postsPerDay) : undefined,
           }),
@@ -376,7 +382,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
         }
         const items = selectedPages.map((p) => {
           const base = {
-            destinationId: p.id,
+            accountId: p.id,
             sourcePlatform: sources[p.id]?.platform ?? 'instagram',
             sourceUsername: sources[p.id]?.username ?? '',
           };
@@ -400,7 +406,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
         });
         const body = await response.json().catch(() => ({}));
         if (!response.ok && !(body.created ?? []).length) throw new Error(body.error ?? 'Could not add these accounts.');
-        const failedText = (body.failed ?? []).map((f: { destinationId: string; error: string }) => f.error).join(' ');
+        const failedText = (body.failed ?? []).map((f: { accountId: string; error: string }) => f.error).join(' ');
         setResult(`Created ${(body.created ?? []).length} accounts.${failedText ? ` Failed: ${failedText}` : ''}`);
         if ((body.failed ?? []).length === 0) onCreated();
       }
@@ -438,34 +444,9 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
         {step === 1 ? (
           <div className="flex flex-col gap-4">
             <div>
-              <h3 className="font-medium">Select Threads Account</h3>
-              <p className="text-metadata text-ink-dim">{accounts.length} Connected</p>
-              <Input placeholder="Search accounts…" value={accountSearch} onChange={(e) => setAccountSearch(e.target.value)} className="mt-2" />
-              <div className="mt-2 flex max-h-48 flex-col gap-1 overflow-y-auto">
-                {filteredAccounts.map((account) => (
-                  <label key={account.id} className="flex items-center gap-2 rounded-md border p-2">
-                    <Checkbox
-                      checked={selectedAccountIds.includes(account.id)}
-                      onCheckedChange={() => {
-                        toggle(selectedAccountIds, account.id, setSelectedAccountIds);
-                        if (mode === 'single') setSelectedAccountIds([account.id]);
-                      }}
-                    />
-                    <span className="min-w-0 flex-1 truncate">{account.display_name}</span>
-                    <span className="font-mono text-metadata text-ink-dim">{account.external_account_id}</span>
-                  </label>
-                ))}
-              </div>
-              {mode !== 'single' ? (
-                <div className="mt-2 flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => setSelectedAccountIds(accounts.map((a) => a.id))}>Select all accounts</Button>
-                  <Button type="button" variant="outline" onClick={() => setSelectedAccountIds([])}>Deselect all</Button>
-                </div>
-              ) : null}
-            </div>
-            <div>
-              <h3 className="font-medium">Select Managed Account(s)</h3>
-              <Input placeholder="Search pages…" value={pageSearch} onChange={(e) => setPageSearch(e.target.value)} className="mt-2" />
+              <h3 className="font-medium">Select Threads Account{mode === 'single' ? '' : 's'}</h3>
+              <p className="text-metadata text-ink-dim">{pages.length} Connected</p>
+              <Input placeholder="Search accounts…" value={pageSearch} onChange={(e) => setPageSearch(e.target.value)} className="mt-2" />
               <div className="mt-2 flex max-h-64 flex-col gap-1 overflow-y-auto">
                 {visiblePages.map((page) => {
                   const configuredAlready = isConfigured(page.id);
@@ -488,7 +469,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
               </div>
               {mode !== 'single' ? (
                 <div className="mt-2 flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => setSelectedPageIds(visiblePages.filter((p) => !isConfigured(p.id)).map((p) => p.id))}>Select all pages</Button>
+                  <Button type="button" variant="outline" onClick={() => setSelectedPageIds(visiblePages.filter((p) => !isConfigured(p.id)).map((p) => p.id))}>Select all accounts</Button>
                   <Button type="button" variant="outline" onClick={() => setSelectedPageIds([])}>Clear</Button>
                 </div>
               ) : null}
@@ -651,8 +632,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                 <div className="flex max-h-80 flex-col gap-2 overflow-y-auto pr-2">
                   {selectedPages.map((page) => {
                     const s = pageSchedule(page.id);
-                    const accountName = mode === 'multi' ? accounts.find((a) => a.id === page.account_id)?.display_name : undefined;
-                    const label = accountName ? `${page.name} · ${accountName}` : page.name;
+                    const label = page.name;
                     return (
                       <div key={`schedule-${page.id}`} className="flex flex-col gap-3 rounded-lg border p-3">
                         <p className="text-body font-semibold">{label}</p>

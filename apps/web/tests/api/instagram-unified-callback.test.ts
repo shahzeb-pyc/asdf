@@ -217,19 +217,22 @@ describe('Instagram Unified Login callback', () => {
     expect(res.headers.get('location')).toContain('connected=1');
   });
 
-  it('several shared accounts: several account rows and several destinations', async () => {
+  it('several shared accounts: several account rows and zero destinations (spec 174 2A)', async () => {
     const { res, queries } = await runCallback({ fetchFn: unifiedFetch(allGranted) });
     expect(res.status).toBe(307);
     expect(res.headers.get('location')).toContain('connected=1');
     expect(
       queries.filter((q) => q.sql.includes('INSERT INTO social_accounts')).length
     ).toBe(2);
+    // Connecting an account must never create a destinations row
+    // (spec 174 2A): the accounts live only in Accounts, and every
+    // section imports from there.
     expect(
       queries.filter((q) => q.sql.includes('INSERT INTO destinations')).length
-    ).toBe(2);
-    const destinationMetadata = queries.filter((q) => q.sql.startsWith('UPDATE destinations'));
-    expect(destinationMetadata.length).toBeGreaterThan(0);
-    expect(JSON.stringify(destinationMetadata.map((q) => q.params))).toContain('bisu');
+    ).toBe(0);
+    expect(
+      queries.filter((q) => q.sql.startsWith('UPDATE destinations')).length
+    ).toBe(0);
   });
 
   it('missing Configuration ID at callback: credentials_required, nothing saved', async () => {

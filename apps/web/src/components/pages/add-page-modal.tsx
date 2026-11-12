@@ -138,7 +138,7 @@ export interface AddPageModalProps {
 async function executeDiscoverPages(subdomain: string, accountId: string) {
   try {
     const data = await api.get(
-      buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover`),
+      buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover?section=schedule`),
       { schema: DiscoverPagesResponseSchema }
     );
     return {

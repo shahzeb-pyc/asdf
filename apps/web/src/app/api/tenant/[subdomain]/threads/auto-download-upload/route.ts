@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
-  AduBulkCreateSchema,
-  AduCreateConfigSchema,
+  AduAccountBulkCreateSchema,
+  AduAccountCreateConfigSchema,
   generateDailyRandomTimes,
   resolveAduBulkItemSchedule,
   sanitizeSourceIdentity,
@@ -13,7 +13,7 @@ import {
   threadsAduContext,
   threadsAduMissingTable,
 } from '@/lib/server/threads-adu';
-import { aduDestinationKeysForCap, ensureAduDestinationCopy, registerAduConfigUsage, type AduConfigView } from '@/lib/server/adu';
+import { aduAccountKeysForCap, ensureAduDestinationCopy, registerAduConfigUsage, type AduConfigView } from '@/lib/server/adu';
 import {
   assertFeatureAddWithinCap,
   getEntitlement,
@@ -127,7 +127,7 @@ interface AduRouteContext {
 async function createOne(
   ctx: AduRouteContext,
   input: {
-    destinationId: string;
+    accountId: string;
     sourcePlatform: AduSourcePlatform;
     sourceUsername: string;
     timezone: string;
@@ -135,37 +135,39 @@ async function createOne(
     scheduleType: 'dailyrandom' | 'fixed';
     postingTimes?: string[] | undefined;
   }
-): Promise<{ ok: boolean; id?: string; error?: string }> {
+): Promise<{ ok: boolean; id?: string; destinationId?: string; error?: string }> {
   const { workspaceId, supabase } = ctx;
   const username = sanitizeSourceIdentity(input.sourcePlatform, input.sourceUsername);
   if (!username) return { ok: false, error: 'Enter a source username.' };
-  // The picked row is only the identity source: the config attaches
-  // to this section's own copy, created here when it does not exist
-  // yet (spec 174 1B). A config must never attach to another
-  // section's row.
-  const { data: picked, error: destError } = await supabase
-    .from('destinations')
-    .select('id, account_id, external_destination_id, name, avatar_url, metadata')
+  // The account is the identity source (spec 174 2A): the Add dialog
+  // sources live from the connected account, never from a table.
+  // The config attaches to this section's own copy, created here
+  // when it does not exist yet (spec 174 1B). A config must never
+  // attach to another section's row.
+  const { data: account, error: accountError } = await supabase
+    .from('social_accounts')
+    .select('id, external_account_id, display_name, avatar_url')
     .eq('workspace_id', workspaceId)
-    .eq('id', input.destinationId)
+    .eq('id', input.accountId)
     .eq('platform', 'threads')
     .maybeSingle();
-  if (destError || !picked) {
+  if (accountError || !account) {
     return { ok: false, error: 'That Threads account was not found in this workspace.' };
   }
-  const pickedRow = picked as {
-    account_id: string;
-    external_destination_id: string;
-    name: string;
+  const accountRow = account as {
+    id: string;
+    external_account_id: string;
+    display_name: string;
     avatar_url: string | null;
-    metadata: Record<string, unknown> | null;
   };
   const ensured = await ensureAduDestinationCopy(supabase, workspaceId, 'threads', {
-    account_id: pickedRow.account_id,
-    external_destination_id: pickedRow.external_destination_id,
-    name: pickedRow.name,
-    avatar_url: pickedRow.avatar_url ?? null,
-    metadata: pickedRow.metadata ?? null,
+    account_id: accountRow.id,
+    external_destination_id: accountRow.external_account_id,
+    name: accountRow.display_name,
+    avatar_url: accountRow.avatar_url ?? null,
+    // The account row carries no metadata: the copy keeps its own
+    // (followers) when it exists, and starts empty when it does not.
+    metadata: null,
   });
   if (!ensured.ok) return { ok: false, error: ensured.error };
   const destination = { id: ensured.destinationId, metadata: ensured.metadata };
@@ -211,7 +213,11 @@ async function createOne(
     }
     return { ok: false, error: error.message };
   }
-  return { ok: true, id: data.id as string };
+  // The adu copy id is returned alongside the config id so the
+  // caller registers the plan usage against the copy the config
+  // actually attaches to (spec 174 2A) — never the picked id, which
+  // no longer exists as an input.
+  return { ok: true, id: data.id as string, destinationId: destination.id };
 }
 
 export async function POST(
@@ -227,7 +233,7 @@ export async function POST(
   }
   // Bulk: { items: [...], timezone, postsPerDay, scheduleType, postingTimes? }
   if (Array.isArray((body as { items?: unknown }).items)) {
-    const parsed = AduBulkCreateSchema.safeParse(body);
+    const parsed = AduAccountBulkCreateSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: parsed.error.issues[0]?.message ?? 'Invalid bulk request.' },
@@ -248,9 +254,11 @@ export async function POST(
     // rule as the destination-queue gate). The gate always uses the
     // admin client, never the route's working client — in production
     // they are the same client, and in tests the working client is a
-    // fake that must not answer billing queries. Unknown destination
+    // fake that must not answer billing queries. Unknown account
     // ids are skipped by the key loader — createOne rejects them per
-    // item downstream.
+    // item downstream. The gate keys come from the ACCOUNTS (spec
+    // 174 2A): the adu copy the add creates may not exist yet when
+    // the pre-create gate runs.
     // R3 + C1 (rework): the entitlement is read once here and
     // shared with every item's register below — the only writes
     // between the two reads are the config rows themselves, so the
@@ -265,11 +273,11 @@ export async function POST(
       const billingClient = getBillingAdminClient();
       if (billingClient) {
         try {
-          const keys = await aduDestinationKeysForCap(
+          const keys = await aduAccountKeysForCap(
             billingClient,
             resolved.context.workspaceId,
             'threads',
-            parsed.data.items.map((item) => item.destinationId)
+            parsed.data.items.map((item) => item.accountId)
           );
           sharedEntitlement = await getEntitlement(billingClient, resolved.context.userId);
           await assertFeatureAddWithinCap(
@@ -291,7 +299,7 @@ export async function POST(
       }
     }
     const created: string[] = [];
-    const failed: Array<{ destinationId: string; error: string }> = [];
+    const failed: Array<{ accountId: string; error: string }> = [];
     for (const item of parsed.data.items) {
       const schedule = resolveAduBulkItemSchedule(item, parsed.data);
       const result = await createOne(resolved.context, {
@@ -305,16 +313,18 @@ export async function POST(
         // Cap at add (plan-check B1): creation registers the
         // destination's Threads unit; a registration failure rolls
         // the config back and fails this item, never a success
-        // without a unit.
-        const reg = await registerAduConfigUsage(resolved.context, 'threads', item.destinationId, result.id, sharedEntitlement);
+        // without a unit. The usage registers against the adu COPY
+        // the config attaches to (createOne returns it), not the
+        // account the Add dialog posted.
+        const reg = await registerAduConfigUsage(resolved.context, 'threads', result.destinationId ?? item.accountId, result.id, sharedEntitlement);
         if (reg.ok) created.push(result.id);
-        else failed.push({ destinationId: item.destinationId, error: reg.error instanceof Error ? reg.error.message : 'Failed to register the plan limit.' });
+        else failed.push({ accountId: item.accountId, error: reg.error instanceof Error ? reg.error.message : 'Failed to register the plan limit.' });
       }
-      else failed.push({ destinationId: item.destinationId, error: result.error ?? 'Failed to create.' });
+      else failed.push({ accountId: item.accountId, error: result.error ?? 'Failed to create.' });
     }
     return NextResponse.json({ created, failed }, { status: failed.length > 0 && created.length === 0 ? 400 : 201 });
   }
-  const parsed = AduCreateConfigSchema.safeParse(body);
+  const parsed = AduAccountCreateConfigSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message ?? 'Invalid request.' },
@@ -332,11 +342,11 @@ export async function POST(
     const billingClient = getBillingAdminClient();
     if (billingClient) {
       try {
-        const keys = await aduDestinationKeysForCap(
+        const keys = await aduAccountKeysForCap(
           billingClient,
           resolved.context.workspaceId,
           'threads',
-          [parsed.data.destinationId]
+          [parsed.data.accountId]
         );
         sharedEntitlement = await getEntitlement(billingClient, resolved.context.userId);
         await assertFeatureAddWithinCap(
@@ -366,7 +376,7 @@ export async function POST(
     // destination's Threads unit; a registration failure rolls the
     // config back and reports the gate error, never a success
     // without a unit.
-    const reg = await registerAduConfigUsage(resolved.context, 'threads', parsed.data.destinationId, result.id, sharedEntitlement);
+    const reg = await registerAduConfigUsage(resolved.context, 'threads', result.destinationId ?? parsed.data.accountId, result.id, sharedEntitlement);
     if (!reg.ok) {
       const gateResponse = subscriptionGateResponse(reg.error);
       if (gateResponse) return gateResponse;

@@ -291,6 +291,7 @@ function makeClient() {
     subscription_periods: [],
     subscription_usage: [],
     destinations: [],
+    social_accounts: [],
     workspaces: [{ id: 'ws-1', owner_id: 'user-1' }],
     adu_configs: [],
     adu_reels: [],
@@ -324,9 +325,12 @@ function makeClient() {
 }
 
 const DAY = 86_400_000;
-const DEST_1 = '11111111-1111-4111-8111-111111111111';
-const DEST_2 = '22222222-2222-4222-8222-222222222222';
 const DEST_9 = '99999999-9999-4999-8999-999999999999';
+// Spec 174 2A: the ADU add takes the ACCOUNT id (a UUID — the
+// account schemas validate it as one); the config attaches to the
+// adu copy created from that account, never to a posted destination.
+const ACCT_1 = '33333333-3333-4333-8333-333333333333';
+const ACCT_2 = '44444444-4444-4444-8444-444444444444';
 
 function seedActivePeriod(tables: Record<string, Row[]>, threadsCount: number) {
   const now = Date.now();
@@ -352,6 +356,18 @@ function seedDestination(tables: Record<string, Row[]>, id: string, externalId: 
     platform: 'threads',
     external_destination_id: externalId,
     metadata: { current_followers: 0 },
+    status: 'active',
+  });
+}
+
+function seedThreadsAccount(tables: Record<string, Row[]>, id: string, externalId: string) {
+  tables['social_accounts'].push({
+    id,
+    workspace_id: 'ws-1',
+    platform: 'threads',
+    external_account_id: externalId,
+    display_name: `Threads ${externalId}`,
+    avatar_url: null,
     status: 'active',
   });
 }
@@ -387,11 +403,11 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
     const { client, tables } = makeClient();
     ctxHolder.client = client;
     seedActivePeriod(tables, 2);
-    seedDestination(tables, DEST_1, 'threads-acct-1');
+    seedThreadsAccount(tables, ACCT_1, 'threads-acct-1');
 
     const res = await POST(
       postRequest({
-        destinationId: DEST_1,
+        accountId: ACCT_1,
         sourcePlatform: 'instagram',
         sourceUsername: 'someone',
         timezone: 'UTC',
@@ -417,12 +433,17 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
       Number.isNaN(Date.parse(config['followers_updated_at'] as string))
     ).toBe(false);
     expect(tables['subscription_usage']).toHaveLength(1);
+    // Spec 174 2A: the usage registers against the adu COPY the
+    // config attaches to (created from the account here), not the
+    // posted account id.
+    const copy = tables['destinations'].find((row) => row['section'] === 'adu');
+    expect(copy?.['external_destination_id']).toBe('threads-acct-1');
     expect(tables['subscription_usage'][0]).toMatchObject({
       user_id: 'user-1',
       platform: 'threads',
       destination_key: 'threads-acct-1',
       feature: 'auto-download-upload',
-      destination_id: DEST_1,
+      destination_id: copy?.['id'],
     });
   });
 
@@ -430,7 +451,7 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
     const { client, tables } = makeClient();
     ctxHolder.client = client;
     seedActivePeriod(tables, 1);
-    seedDestination(tables, DEST_1, 'threads-acct-1');
+    seedThreadsAccount(tables, ACCT_1, 'threads-acct-1');
     seedDestination(tables, DEST_9, 'threads-acct-9');
     tables['subscription_usage'].push({
       id: 'usage-9',
@@ -443,7 +464,7 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
 
     const res = await POST(
       postRequest({
-        destinationId: DEST_1,
+        accountId: ACCT_1,
         sourcePlatform: 'instagram',
         sourceUsername: 'someone',
         timezone: 'UTC',
@@ -461,14 +482,14 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
     const { client, tables } = makeClient();
     ctxHolder.client = client;
     seedActivePeriod(tables, 2);
-    seedDestination(tables, DEST_1, 'threads-acct-1');
-    seedDestination(tables, DEST_2, 'threads-acct-2');
+    seedThreadsAccount(tables, ACCT_1, 'threads-acct-1');
+    seedThreadsAccount(tables, ACCT_2, 'threads-acct-2');
 
     const res = await POST(
       postRequest({
         items: [
-          { destinationId: DEST_1, sourcePlatform: 'instagram', sourceUsername: 'someone' },
-          { destinationId: DEST_2, sourcePlatform: 'instagram', sourceUsername: 'someone' },
+          { accountId: ACCT_1, sourcePlatform: 'instagram', sourceUsername: 'someone' },
+          { accountId: ACCT_2, sourcePlatform: 'instagram', sourceUsername: 'someone' },
         ],
         timezone: 'UTC',
         postsPerDay: 1,
@@ -493,10 +514,10 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
     const { client, tables } = makeClient();
     ctxHolder.client = client;
     seedActivePeriod(tables, 2);
-    seedDestination(tables, DEST_1, 'threads-acct-1');
+    seedThreadsAccount(tables, ACCT_1, 'threads-acct-1');
 
     const body = {
-      destinationId: DEST_1,
+      accountId: ACCT_1,
       sourcePlatform: 'instagram',
       sourceUsername: 'someone',
       timezone: 'UTC',

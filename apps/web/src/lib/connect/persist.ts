@@ -22,10 +22,7 @@ import {
 import { getRouteSupabase, isLegacyClient } from '@/lib/route-auth';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { propagateRevokedAccount } from '@/lib/publishing/account-expiry-propagation';
-import type {
-  DiscoveredDestination,
-  ExchangedAccount,
-} from './registry';
+import type { ExchangedAccount } from './registry';
 
 export type ConnectDbClient = DatabaseClient | SupabaseClient;
 
@@ -43,6 +40,15 @@ export interface SocialDestinationView {
   avatarUrl: string | null;
   timezone: string;
   status: string;
+  /**
+   * Which section this copy belongs to (spec 174): 'schedule' |
+   * 'adu' | 'mirror' | 'publish_now'. Null for rows created before
+   * the section label (1A) or in the deploy window — the Phase 4
+   * straggler backfill labels them, and no new row is created
+   * without a section. Null is never guessed: a section-less row
+   * belongs to no section.
+   */
+  section: string | null;
   /**
    * The provider-reported account type from `destinations.metadata`
    * (`account_type`), e.g. Instagram's 'BUSINESS' / 'MEDIA_CREATOR'.
@@ -201,77 +207,20 @@ export async function persistConnectedAccount(
 }
 
 /**
- * Inserts the destinations the user picked, ignoring conflicts on
- * (account_id, external_destination_id) so re-picking an already-added
- * destination is a no-op rather than a duplicate.
+ * NOTE (spec 174 PR 2A): there is deliberately NO connect-time
+ * destinations-row creator in this module anymore. The old
+ * `persistPickedDestinations` (insert the user's picker picks,
+ * ignoring conflicts) was deleted here: spec §2 says connecting an
+ * account must never create a destinations row — every account lives
+ * only in the Accounts section, and every feature IMPORTS from
+ * Accounts at its own Add/import endpoint, which creates that
+ * section's copy with its section stamped (the Publish Now import
+ * pattern from 1B). A connect-time creator cannot name a section:
+ * no connect flow is initiated from a section, so no section is
+ * available at connect time. Any future caller that needs to create
+ * a section copy must do it at the section's endpoint, with the
+ * section, never here.
  */
-export async function persistPickedDestinations(
-  client: ConnectDbClient | null | undefined,
-  input: {
-    workspaceId: string;
-    accountId: string;
-    platform: Platform;
-    destinations: DiscoveredDestination[];
-  }
-): Promise<{ inserted: number }> {
-  if (input.destinations.length === 0) {
-    return { inserted: 0 };
-  }
-
-  if (isLegacyClient(client ?? undefined)) {
-    const legacy = client as DatabaseClient;
-    const insertResults = await Promise.all(
-      input.destinations.map(async (destination): Promise<number> => {
-        const rows = (await legacy.query(
-          `INSERT INTO destinations (
-             workspace_id, account_id, platform, external_destination_id,
-             name, handle, avatar_url, status, metadata
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', '{}'::jsonb)
-           ON CONFLICT (account_id, external_destination_id) DO NOTHING
-           RETURNING id`,
-          [
-            input.workspaceId,
-            input.accountId,
-            input.platform,
-            destination.externalDestinationId,
-            destination.name,
-            destination.handle ?? null,
-            destination.avatarUrl ?? null,
-          ]
-        )) as Array<{ id: string }>;
-        return rows?.[0]?.id ? 1 : 0;
-      })
-    );
-    return { inserted: insertResults.reduce((sum, n) => sum + n, 0) };
-  }
-
-  const supabase = getRouteSupabase(client ?? undefined);
-  if (!supabase) {
-    throw new Error('Database service unavailable');
-  }
-  const rows = input.destinations.map((destination) => ({
-    workspace_id: input.workspaceId,
-    account_id: input.accountId,
-    platform: input.platform,
-    external_destination_id: destination.externalDestinationId,
-    name: destination.name,
-    handle: destination.handle ?? null,
-    avatar_url: destination.avatarUrl ?? null,
-    status: STATUS_ACTIVE,
-    metadata: {},
-  }));
-  const { data, error } = await supabase
-    .from('destinations')
-    .upsert(rows, {
-      onConflict: 'account_id,external_destination_id',
-      ignoreDuplicates: true,
-    })
-    .select('id');
-  if (error) {
-    throw new Error(`Failed to persist destinations: ${error.message}`);
-  }
-  return { inserted: Array.isArray(data) ? data.length : 0 };
-}
 
 /**
  * Reads (never writes) the workspace's BYOC app credentials for a platform
@@ -564,8 +513,27 @@ function mapDestinationRow(row: Record<string, any>): SocialDestinationView {
     avatarUrl: row.avatar_url ?? row.avatarUrl ?? null,
     timezone: row.timezone ?? 'UTC',
     status: row.status ?? STATUS_ACTIVE,
+    section: row.section ?? null,
     accountType: destinationAccountTypeFromMetadata(row.metadata),
   };
+}
+
+/**
+ * Section order for grouping an account's destinations (spec 174):
+ * the section's own copies stay together in the order the sections
+ * are presented in the app. A section-less row (NULL, pre-1A or
+ * deploy-window) sorts last — it belongs to no section.
+ */
+const SECTION_RANK: Record<string, number> = {
+  schedule: 0,
+  adu: 1,
+  mirror: 2,
+  publish_now: 3,
+};
+
+function sectionRank(section: string | null): number {
+  if (section === null || section === undefined) return 4;
+  return SECTION_RANK[section] ?? 4;
 }
 
 /**
@@ -675,6 +643,12 @@ export async function fetchSocialAccountsWithDestinations(
     const list = destinationsByAccount.get(accountId) ?? [];
     list.push(mapDestinationRow(row));
     destinationsByAccount.set(accountId, list);
+  }
+  // Group each account's destinations by section (spec 174 2A): the
+  // loader already orders rows by created_at, and the sort below is
+  // stable, so rows stay in created_at order within each section.
+  for (const list of destinationsByAccount.values()) {
+    list.sort((a, b) => sectionRank(a.section) - sectionRank(b.section));
   }
 
   return accountRows.map((row) => ({

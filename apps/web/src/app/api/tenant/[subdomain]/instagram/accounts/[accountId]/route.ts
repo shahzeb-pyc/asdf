@@ -8,6 +8,11 @@ import {
   type Database,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import {
+  disconnectAccountRow,
+  stripDestinationCopiesForAccount,
+} from '@/lib/connect/disconnect';
+import { logServerError } from '@/lib/server-analytics';
 import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -15,15 +20,18 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * DELETE /api/tenant/[subdomain]/instagram/accounts/[accountId]
  *
  * Instagram-only counterpart of the Facebook disconnect handler. It exists
- * because that handler hardcodes `platform = 'facebook'` and cannot delete
- * an Instagram row. The semantics are identical, scoped to Instagram:
- * session-cookie auth, tenant authorisation, workspace resolution, then
- * delete of the `social_accounts` row for (id, workspace_id,
- * platform = 'instagram'). Foreign-key cascade removes the account's
- * destination row(s) and their queued items, exactly as for Facebook.
+ * because that handler hardcodes `platform = 'facebook'` and cannot
+ * disconnect an Instagram row. The semantics are identical, scoped to
+ * Instagram: session-cookie auth, tenant authorisation, workspace
+ * resolution, then disconnect + strip (spec 174 PR 2A) — the account
+ * row is retained as a disconnected record (never deleted) and every
+ * section's copy becomes a disconnected stub (identity + followers +
+ * section kept, all working data removed). `ON DELETE RESTRICT` on
+ * `destinations.account_id` is the backstop.
  *
- * A second delete of the same id is a 404, not a second side effect:
- * DELETE is naturally idempotent here and no external state is mutated.
+ * A second delete of the same id is a 404 only when the account row
+ * is genuinely gone; disconnecting an already-disconnected account
+ * re-strips its copies (idempotent) and succeeds again.
  */
 export async function handleDisconnectInstagramAccount(
   request: NextRequest,
@@ -66,28 +74,32 @@ export async function handleDisconnectInstagramAccount(
   let disconnectedDestinationsCount = 0;
 
   if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
-    // 4. Count the account's destinations prior to cascade deletion
-    const countRows = (await dbClient.query(
-      "SELECT COUNT(*)::int AS count FROM destinations WHERE account_id = $1 AND workspace_id = $2 AND platform = 'instagram'",
+    // 4. The account row must exist (a 404 here is a genuinely
+    // missing account, never a masked DB failure). The platform
+    // predicate is load-bearing: without it this handler could
+    // disconnect another platform's account that happens to share
+    // an id.
+    const accountRows = (await dbClient.query(
+      "SELECT id FROM social_accounts WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram'",
       [accountId, workspaceId]
     )) as Record<string, unknown>[];
-    disconnectedDestinationsCount = Number(countRows?.[0]?.count ?? 0);
-
-    // 5. Delete the account record (FK cascade removes its destinations
-    // and their queued items). The platform predicate is load-bearing:
-    // without it this handler could delete another platform's account
-    // that happens to share an id.
-    const result = (await dbClient.query(
-      "DELETE FROM social_accounts WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' RETURNING id",
-      [accountId, workspaceId]
-    )) as Record<string, unknown>[];
-
-    if (!result || result.length === 0) {
+    if (!accountRows || accountRows.length === 0) {
       return NextResponse.json(
         { error: 'Instagram account not found' },
         { status: 404 }
       );
     }
+
+    // 5. Strip every section's copy to a disconnected stub, then
+    // disconnect the account row itself (retained, never deleted).
+    const { stripped } = await stripDestinationCopiesForAccount(
+      dbClient,
+      workspaceId,
+      accountId,
+      'instagram'
+    );
+    disconnectedDestinationsCount = stripped;
+    await disconnectAccountRow(dbClient, workspaceId, accountId, 'instagram');
   } else {
     const supabase = (
       dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()
@@ -99,26 +111,49 @@ export async function handleDisconnectInstagramAccount(
       );
     }
 
-    const { count } = await supabase
-      .from('destinations')
-      .select('id', { count: 'exact', head: true })
-      .eq('account_id', accountId)
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'instagram');
-    disconnectedDestinationsCount = count ?? 0;
+    try {
+      const { data: account, error: accountErr } = await supabase
+        .from('social_accounts')
+        .select('id')
+        .eq('id', accountId)
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'instagram')
+        .maybeSingle();
+      if (accountErr) throw new Error(accountErr.message);
+      if (!account) {
+        return NextResponse.json(
+          { error: 'Instagram account not found' },
+          { status: 404 }
+        );
+      }
 
-    const { data: deleted, error: deleteErr } = await supabase
-      .from('social_accounts')
-      .delete()
-      .eq('id', accountId)
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'instagram')
-      .select('id');
-
-    if (deleteErr || !deleted || deleted.length === 0) {
+      const { stripped } = await stripDestinationCopiesForAccount(
+        supabase,
+        workspaceId,
+        accountId,
+        'instagram'
+      );
+      disconnectedDestinationsCount = stripped;
+      const found = await disconnectAccountRow(
+        supabase,
+        workspaceId,
+        accountId,
+        'instagram'
+      );
+      if (!found) {
+        return NextResponse.json(
+          { error: 'Instagram account not found' },
+          { status: 404 }
+        );
+      }
+    } catch (err) {
+      logServerError('[instagram/accounts] Failed to disconnect account', err, {
+        source: 'instagram-disconnect',
+        accountId,
+      });
       return NextResponse.json(
-        { error: 'Instagram account not found' },
-        { status: 404 }
+        { error: "Couldn't disconnect the account. Please try again." },
+        { status: 500 }
       );
     }
   }

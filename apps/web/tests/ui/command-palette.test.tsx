@@ -108,6 +108,8 @@ const SOCIAL = {
           timezone: 'UTC',
           status: 'active',
           accountType: null,
+          // Spec 174 2A: the social destination view carries its section.
+          section: null,
         },
       ],
     },

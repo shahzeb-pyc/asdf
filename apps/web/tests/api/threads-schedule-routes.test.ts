@@ -65,6 +65,10 @@ const ADD_DEST = '44444444-4444-4444-a444-444444444444';
 const EXP_DEST = '55555555-5555-4555-a555-555555555555';
 const DISC_DEST = '66666666-6666-4666-a666-666666666666';
 const ACCT = 'acct-1';
+// The Add schema validates accountId as a UUID, so the add tests
+// seed a UUID account (the list tests keep the short 'acct-1' id,
+// which never passes through the Add schema).
+const ACCT_UUID = '77777777-7777-4777-a777-777777777777';
 
 function params(subdomain = 'acme', extra: Record<string, string> = {}) {
   return {
@@ -181,7 +185,8 @@ describe('Threads Schedule list + add', () => {
 
   it('adds an account with slots, and rejects duplicates, expired and disconnected accounts', async () => {
     const db = baseDb({
-      destinations: [destinationRow({ id: ADD_DEST, section: null, metadata: {} })],
+      destinations: [destinationRow({ id: ADD_DEST, section: null, metadata: {}, account_id: ACCT_UUID })],
+      social_accounts: [accountRow({ id: ACCT_UUID })],
       posting_slots: [],
     });
     useFake(db);
@@ -189,14 +194,17 @@ describe('Threads Schedule list + add', () => {
       req('http://localhost:3000/api/tenant/acme/threads/schedule', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ destinationId: ADD_DEST, timezone: 'Asia/Karachi', postingTimes: [{ time: '09:00', formats: ['text'] }] }),
+        body: JSON.stringify({ accountId: ACCT_UUID, timezone: 'Asia/Karachi', postingTimes: [{ time: '09:00', formats: ['text'] }] }),
       }),
       params()
     );
     expect(added.status).toBe(201);
     const addedJson = await added.json();
     expect(addedJson.item.timezone).toBe('Asia/Karachi');
+    // The unimported NULL-section row was adopted in place: it is
+    // now the schedule copy, active, with the flag stamped.
     expect(db.destinations[0]?.status).toBe('active');
+    expect(db.destinations[0]?.section).toBe('schedule');
     expect(db.posting_slots).toHaveLength(1);
     expect(mockRefresh).toHaveBeenCalled();
 
@@ -204,7 +212,7 @@ describe('Threads Schedule list + add', () => {
       req('http://localhost:3000/api/tenant/acme/threads/schedule', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ destinationId: ADD_DEST, timezone: 'UTC', postingTimes: [{ time: '10:00', formats: ['text'] }] }),
+        body: JSON.stringify({ accountId: ACCT_UUID, timezone: 'UTC', postingTimes: [{ time: '10:00', formats: ['text'] }] }),
       }),
       params()
     );
@@ -212,15 +220,15 @@ describe('Threads Schedule list + add', () => {
     expect((await duplicate.json()).error).toBe('ALREADY_ADDED');
 
     const db2 = baseDb({
-      destinations: [destinationRow({ id: EXP_DEST, section: null, metadata: {} })],
-      social_accounts: [accountRow({ id: 'acct-1', status: 'expired' })],
+      destinations: [destinationRow({ id: EXP_DEST, section: null, metadata: {}, account_id: ACCT_UUID })],
+      social_accounts: [accountRow({ id: ACCT_UUID, status: 'expired' })],
     });
     useFake(db2);
     const expired = await listPost(
       req('http://localhost:3000/api/tenant/acme/threads/schedule', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ destinationId: EXP_DEST, timezone: 'UTC', postingTimes: [{ time: '10:00', formats: ['text'] }] }),
+        body: JSON.stringify({ accountId: ACCT_UUID, timezone: 'UTC', postingTimes: [{ time: '10:00', formats: ['text'] }] }),
       }),
       params()
     );
@@ -228,14 +236,15 @@ describe('Threads Schedule list + add', () => {
     expect((await expired.json()).error).toBe('ACCOUNT_EXPIRED');
 
     const db3 = baseDb({
-      destinations: [destinationRow({ id: DISC_DEST, section: null, metadata: {}, status: 'disconnected' })],
+      destinations: [destinationRow({ id: DISC_DEST, section: null, metadata: {}, status: 'disconnected', account_id: ACCT_UUID })],
+      social_accounts: [accountRow({ id: ACCT_UUID })],
     });
     useFake(db3);
     const disconnected = await listPost(
       req('http://localhost:3000/api/tenant/acme/threads/schedule', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ destinationId: DISC_DEST, timezone: 'UTC', postingTimes: [{ time: '10:00', formats: ['text'] }] }),
+        body: JSON.stringify({ accountId: ACCT_UUID, timezone: 'UTC', postingTimes: [{ time: '10:00', formats: ['text'] }] }),
       }),
       params()
     );
@@ -243,14 +252,42 @@ describe('Threads Schedule list + add', () => {
     expect((await disconnected.json()).error).toBe('ACCOUNT_DISCONNECTED');
   });
 
+  it('adds a freshly connected account with no destinations row at all (spec 174 2A)', async () => {
+    const db = baseDb({
+      destinations: [],
+      social_accounts: [accountRow({ id: ACCT_UUID })],
+      posting_slots: [],
+    });
+    useFake(db);
+    const added = await listPost(
+      req('http://localhost:3000/api/tenant/acme/threads/schedule', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ accountId: ACCT_UUID, timezone: 'Asia/Karachi', postingTimes: [{ time: '09:00', formats: ['text'] }] }),
+      }),
+      params()
+    );
+    expect(added.status).toBe(201);
+    const addedJson = await added.json();
+    expect(addedJson.item.timezone).toBe('Asia/Karachi');
+    // A fresh schedule copy was inserted from the account (connect
+    // creates no rows anymore, so there was nothing to adopt).
+    expect(db.destinations).toHaveLength(1);
+    expect(db.destinations[0]?.section).toBe('schedule');
+    expect(db.destinations[0]?.status).toBe('active');
+    expect(db.destinations[0]?.account_id).toBe(ACCT_UUID);
+    expect(db.destinations[0]?.external_destination_id).toBe('threads-1');
+    expect(db.posting_slots).toHaveLength(1);
+  });
+
   it('rejects invalid add bodies and duplicate posting times before touching the store', async () => {
-    const db = baseDb({ destinations: [destinationRow({ id: ADD_DEST, section: null, metadata: {} })], posting_slots: [] });
+    const db = baseDb({ destinations: [destinationRow({ id: ADD_DEST, section: null, metadata: {}, account_id: ACCT_UUID })], social_accounts: [accountRow({ id: ACCT_UUID })], posting_slots: [] });
     useFake(db);
     const invalid = await listPost(
       req('http://localhost:3000/api/tenant/acme/threads/schedule', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ destinationId: ADD_DEST, timezone: 'UTC', postingTimes: [] }),
+        body: JSON.stringify({ accountId: ACCT_UUID, timezone: 'UTC', postingTimes: [] }),
       }),
       params()
     );
@@ -259,7 +296,7 @@ describe('Threads Schedule list + add', () => {
       req('http://localhost:3000/api/tenant/acme/threads/schedule', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ destinationId: ADD_DEST, timezone: 'UTC', postingTimes: [{ time: '09:00', formats: ['text'] }, { time: '09:00', formats: ['image'] }] }),
+        body: JSON.stringify({ accountId: ACCT_UUID, timezone: 'UTC', postingTimes: [{ time: '09:00', formats: ['text'] }, { time: '09:00', formats: ['image'] }] }),
       }),
       params()
     );
@@ -271,7 +308,8 @@ describe('Threads Schedule list + add', () => {
   it('rolls back flag, timezone, status AND pre-existing slots when the slot insert fails', async () => {
     const oldSlot = { id: 'slot-old', destination_id: ADD_DEST, time_of_day: '08:00', is_active: true, kind: ['text'], created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' };
     const db = baseDb({
-      destinations: [destinationRow({ id: ADD_DEST, section: null, metadata: {}, timezone: 'UTC', status: 'rate_limited' })],
+      destinations: [destinationRow({ id: ADD_DEST, section: null, metadata: {}, timezone: 'UTC', status: 'rate_limited', account_id: ACCT_UUID })],
+      social_accounts: [accountRow({ id: ACCT_UUID })],
       posting_slots: [oldSlot],
     });
     // Fail the new-slot insert exactly once: the rollback re-insert
@@ -282,7 +320,7 @@ describe('Threads Schedule list + add', () => {
       req('http://localhost:3000/api/tenant/acme/threads/schedule', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ destinationId: ADD_DEST, timezone: 'Asia/Karachi', postingTimes: [{ time: '09:00', formats: ['text'] }] }),
+        body: JSON.stringify({ accountId: ACCT_UUID, timezone: 'Asia/Karachi', postingTimes: [{ time: '09:00', formats: ['text'] }] }),
       }),
       params()
     );

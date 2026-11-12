@@ -634,8 +634,9 @@ describe('AddPageModal flow behaviour', () => {
     fireEvent.click(screen.getByTestId(`select-account-${activeAccount.id}`));
 
     await screen.findByTestId('discovered-pages-list');
+    // Spec 174 2A: the Schedule dialog discovers per-section.
     expect(fetchMock).toHaveBeenCalledWith(
-      `/api/tenant/acme/accounts/${activeAccount.id}/pages/discover`,
+      `/api/tenant/acme/accounts/${activeAccount.id}/pages/discover?section=schedule`,
       expect.anything()
     );
     expect(screen.getByTestId('already-added-fb_page_101')).toBeTruthy();

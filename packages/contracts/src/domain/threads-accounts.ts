@@ -83,6 +83,7 @@ export type ListThreadsAccountsResponse = z.infer<
   typeof ListThreadsAccountsResponseSchema
 >;
 
+/** Disconnect acknowledgement: the account id plus how many of its destination rows were disconnected + stripped with it (spec 174 2A: the account row is retained as a disconnected record, never deleted). */
 export const DisconnectThreadsAccountResponseSchema = z.object({
   success: z.boolean(),
   accountId: z.string().uuid(),

@@ -107,7 +107,7 @@ export function AddMirrorDialog({
   const discoverQuery = useQuery({
     queryKey: [...tenant.accounts.list, 'discover', accountId] as const,
     queryFn: ({ signal }) =>
-      api.get(buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover`), {
+      api.get(buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover?section=mirror`), {
         schema: DiscoverPagesResponseSchema,
         signal,
       }),

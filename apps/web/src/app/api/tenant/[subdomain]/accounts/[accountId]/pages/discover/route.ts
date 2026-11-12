@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import {
   canAccessTenant,
   decryptToken,
+  DestinationSectionSchema,
   DiscoverPagesResponseSchema,
   fetchAllFacebookPages,
   getSessionSecret,
@@ -62,6 +63,24 @@ export async function handleDiscoverPages(
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
 
+  // Spec 174 PR 2A: `isImported` is per-section. The importing
+  // section passes `?section=<section>` (the Schedule modal passes
+  // 'schedule', the Auto Download dialog 'adu', the mirror dialog
+  // 'mirror'); a page already in Schedule but not in Auto Download
+  // shows as not-added for Auto Download. Without the param the
+  // flag keeps its old any-section meaning (backward compatible
+  // for callers that do not name a section). An unknown section is
+  // a 400, never silently treated as "no section".
+  const sectionParam = request.nextUrl.searchParams.get('section');
+  let section: string | null = null;
+  if (sectionParam !== null) {
+    const parsedSection = DestinationSectionSchema.safeParse(sectionParam);
+    if (!parsedSection.success) {
+      return NextResponse.json({ error: 'Invalid section' }, { status: 400 });
+    }
+    section = parsedSection.data;
+  }
+
   // 4. Fetch account and composite ownership (user_id, workspace_id, accountId)
   // Row shapes as consumed below (spec 137 §3.7): the account fields this
   // handler reads, in both the snake_case (SQL/Supabase) and camelCase
@@ -95,10 +114,14 @@ export async function handleDiscoverPages(
 
     // Audit BG7: isImported is per-ACCOUNT, not workspace-wide —
     // a page imported under another account must not read as
-    // imported when discovering under this one.
+    // imported when discovering under this one. And per-SECTION
+    // (spec 174 2A): when the importing section is named, only
+    // that section's copies count as imported.
     importedRows = await dbClient.query<ImportedPageIdRow>(
-      "SELECT external_destination_id AS fb_page_id FROM destinations WHERE workspace_id = $1 AND account_id = $2 AND platform = 'facebook' AND (status != 'disconnected' OR metadata->>'fb_status' = 'paused')",
-      [workspaceId, accountId]
+      section === null
+        ? "SELECT external_destination_id AS fb_page_id FROM destinations WHERE workspace_id = $1 AND account_id = $2 AND platform = 'facebook' AND (status != 'disconnected' OR metadata->>'fb_status' = 'paused')"
+        : "SELECT external_destination_id AS fb_page_id FROM destinations WHERE workspace_id = $1 AND account_id = $2 AND platform = 'facebook' AND section = $3 AND (status != 'disconnected' OR metadata->>'fb_status' = 'paused')",
+      section === null ? [workspaceId, accountId] : [workspaceId, accountId, section]
     );
   } else {
     const supabase = (dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
@@ -131,12 +154,18 @@ export async function handleDiscoverPages(
     const pageRows: unknown[] = [];
     for (let page = 0; page < DISCOVER_MAX_PAGES; page++) {
       const from = page * DISCOVER_PAGE_SIZE;
-      const { data, error: pageErr } = await supabase
+      let pageQuery = supabase
         .from('destinations')
         .select('external_destination_id, status, metadata')
         .eq('workspace_id', workspaceId)
         .eq('account_id', accountId)
-        .eq('platform', 'facebook')
+        .eq('platform', 'facebook');
+      // Spec 174 2A: per-section isImported — only the importing
+      // section's copies count when the section is named.
+      if (section !== null) {
+        pageQuery = pageQuery.eq('section', section);
+      }
+      const { data, error: pageErr } = await pageQuery
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
         .range(from, from + DISCOVER_PAGE_SIZE - 1);
