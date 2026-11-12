@@ -6,6 +6,10 @@ import {
   authenticateInstagramSchedule,
   type InstagramScheduleDbClient,
 } from '@/lib/server/instagram-schedule-auth';
+import {
+  isScheduleListMember,
+  parseDestinationMetadata,
+} from '@/lib/server/instagram-schedule';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /** Deletes one posting time from a scheduled Instagram destination. */
@@ -22,17 +26,21 @@ export async function handleDeleteInstagramScheduleSlot(
   try {
     if (dbClient && 'query' in dbClient) {
       const destRows = await (dbClient as DatabaseClient).query<{
+        section: unknown;
+        status: unknown;
         metadata: unknown;
       }>(
-        `SELECT metadata FROM destinations WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' LIMIT 1`,
+        `SELECT section, status, metadata FROM destinations WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' AND section = 'schedule' LIMIT 1`,
         [destinationId, auth.workspaceId]
       );
-      const metadata = destRows[0]?.metadata;
-      const scheduled =
-        typeof metadata === 'object' &&
-        metadata !== null &&
-        (metadata as Record<string, unknown>).scheduled === true;
-      if (!scheduled) {
+      if (
+        !destRows[0] ||
+        !isScheduleListMember({
+          section: typeof destRows[0].section === 'string' ? destRows[0].section : null,
+          status: typeof destRows[0].status === 'string' ? destRows[0].status : null,
+          metadata: parseDestinationMetadata(destRows[0].metadata),
+        })
+      ) {
         return NextResponse.json(
           { error: 'Scheduled account not found.' },
           { status: 404 }
@@ -61,16 +69,20 @@ export async function handleDeleteInstagramScheduleSlot(
     }
     const { data: dest } = await supabase
       .from('destinations')
-      .select('metadata')
+      .select('section, status, metadata')
       .eq('id', destinationId)
       .eq('workspace_id', auth.workspaceId)
       .eq('platform', 'instagram')
+      .eq('section', 'schedule')
       .maybeSingle();
-    const scheduled =
-      typeof dest?.metadata === 'object' &&
-      dest?.metadata !== null &&
-      (dest.metadata as Record<string, unknown>).scheduled === true;
-    if (!scheduled) {
+    if (
+      !dest ||
+      !isScheduleListMember({
+        section: dest.section as string | null,
+        status: dest.status as string | null,
+        metadata: parseDestinationMetadata(dest.metadata),
+      })
+    ) {
       return NextResponse.json(
         { error: 'Scheduled account not found.' },
         { status: 404 }

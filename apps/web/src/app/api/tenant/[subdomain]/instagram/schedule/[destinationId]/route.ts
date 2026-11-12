@@ -9,7 +9,7 @@ import {
   UpdateInstagramScheduleRequestSchema,
 } from '@/lib/api/schemas/instagram-schedule';
 import {
-  isScheduledDestination,
+  isScheduleListMember,
   mapDestinationToScheduleItem,
   parseDestinationMetadata,
 } from '@/lib/server/instagram-schedule';
@@ -23,16 +23,19 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * Instagram Schedule detail routes.
  *
  * GET returns the scheduled destination or 404 — a destination that
- * is not in Schedule (flag absent) is not a Schedule detail, even
- * though the destination row itself exists for Accounts/Publish Now.
+ * is not in Schedule (section is not 'schedule', or a removed stub)
+ * is not a Schedule detail, even though the destination row itself
+ * exists for Accounts/Publish Now.
  *
  * PATCH toggles Pause/Resume only. Timezone changes live on the
  * slots route, mirroring Pages.
  *
- * DELETE is Remove from Schedule: it deletes the destination's
- * posting times, clears the scheduled flag, and cancels queued posts
- * (they must not publish after removal). It never deletes the
- * destination row, the connected account, or published/failed history.
+ * DELETE is Remove from Schedule: it disconnects + strips the
+ * Schedule copy (spec 174 1B, the removal rule) — token, timezone,
+ * tasks and posting times go; identity, followers and the section
+ * stay — and cancels queued posts (they must not publish after
+ * removal). It never deletes the destination row, the connected
+ * account, or published/failed history.
  */
 
 interface DetailRow {
@@ -40,6 +43,7 @@ interface DetailRow {
   account_id: string;
   timezone: string | null;
   status: string | null;
+  section: string | null;
   metadata: unknown;
   name: string | null;
   handle: string | null;
@@ -71,7 +75,7 @@ async function fetchDetailSql(
   destinationId: string
 ): Promise<DetailRow | null> {
   const rows = await dbClient.query<DetailRow>(
-    `SELECT d.id, d.account_id, d.timezone, d.status, d.metadata, d.name,
+    `SELECT d.id, d.account_id, d.timezone, d.status, d.section, d.metadata, d.name,
        d.handle, d.avatar_url, d.created_at, d.updated_at,
        sa.display_name AS account_display_name,
        sa.avatar_url AS account_avatar_url,
@@ -83,7 +87,7 @@ async function fetchDetailSql(
        (SELECT COUNT(*)::int FROM queue_items qi WHERE qi.destination_id = d.id AND qi.status = 'failed') AS failed_count
      FROM destinations d
      JOIN social_accounts sa ON sa.id = d.account_id
-     WHERE d.id = $1 AND d.workspace_id = $2 AND d.platform = 'instagram' LIMIT 1`,
+     WHERE d.id = $1 AND d.workspace_id = $2 AND d.platform = 'instagram' AND d.section = 'schedule' LIMIT 1`,
     [destinationId, workspaceId]
   );
   return rows[0] ?? null;
@@ -117,11 +121,12 @@ async function fetchDetailSupabase(
   const { data: dest, error } = await supabase
     .from('destinations')
     .select(
-      'id, account_id, timezone, status, metadata, name, handle, avatar_url, created_at, updated_at'
+      'id, account_id, timezone, status, section, metadata, name, handle, avatar_url, created_at, updated_at'
     )
     .eq('id', destinationId)
     .eq('workspace_id', workspaceId)
     .eq('platform', 'instagram')
+    .eq('section', 'schedule')
     .maybeSingle();
   if (error || !dest) return null;
   const { data: account } = await supabase
@@ -177,7 +182,14 @@ async function loadDetail(
 }
 
 function requireScheduled(row: DetailRow | null): row is DetailRow {
-  return row !== null && isScheduledDestination(parseDestinationMetadata(row.metadata));
+  return (
+    row !== null &&
+    isScheduleListMember({
+      section: row.section,
+      status: row.status,
+      metadata: parseDestinationMetadata(row.metadata),
+    })
+  );
 }
 
 export async function handleGetInstagramScheduleDetail(
@@ -301,6 +313,7 @@ export async function handleDeleteInstagramSchedule(
     const metadata = parseDestinationMetadata(row.metadata) ?? {};
     delete metadata.scheduled;
     delete metadata.schedule_paused;
+    delete metadata.tasks;
     if (dbClient && 'query' in dbClient) {
       const sql = dbClient as DatabaseClient;
       await sql.query(`DELETE FROM posting_slots WHERE destination_id = $1`, [
@@ -310,8 +323,13 @@ export async function handleDeleteInstagramSchedule(
         `UPDATE queue_items SET status = 'cancelled', updated_at = now() WHERE destination_id = $1 AND status = 'queued'`,
         [destinationId]
       );
+      // Removal disconnects + strips the Schedule copy (spec 174 1B,
+      // the removal rule): token, timezone and posting times go;
+      // identity, followers and the section stay. The row disappears
+      // from the Schedule list (a disconnected stub is not a member)
+      // but stays saved, so the account can be re-added later.
       await sql.query(
-        `UPDATE destinations SET status = 'active', metadata = $1::jsonb, updated_at = now() WHERE id = $2 AND workspace_id = $3`,
+        `UPDATE destinations SET status = 'disconnected', encrypted_destination_token = NULL, timezone = 'UTC', metadata = $1::jsonb, updated_at = now() WHERE id = $2 AND workspace_id = $3`,
         [JSON.stringify(metadata), destinationId, auth.workspaceId]
       );
     } else {
@@ -335,7 +353,12 @@ export async function handleDeleteInstagramSchedule(
         .eq('status', 'queued');
       const { error } = await supabase
         .from('destinations')
-        .update({ status: 'active', metadata })
+        .update({
+          status: 'disconnected',
+          encrypted_destination_token: null,
+          timezone: 'UTC',
+          metadata,
+        })
         .eq('id', destinationId)
         .eq('workspace_id', auth.workspaceId);
       if (error) throw new Error(error.message);
