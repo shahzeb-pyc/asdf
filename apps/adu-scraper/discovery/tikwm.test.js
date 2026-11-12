@@ -3,9 +3,10 @@ import test from 'node:test';
 import {
   TIKWMAPI_BASE_URL,
   getTikwmScraperKeys,
-  logTikwmFallbackStatus,
+  logTikwmPrimaryStatus,
   parseTikwmScraperKeys,
   redactTikwmKeys,
+  resetTikwmKeyRotationForTests,
   resolveSecUidWithTikwm,
 } from './tikwm.js';
 
@@ -108,6 +109,7 @@ test('getTikwmScraperKeys reads TIKWMAPI_KEYS_SCRAPER only, never TIKWMAPI_KEYS'
 });
 
 test('resolveSecUidWithTikwm: success returns the camelCase secUid, one direct call', async () => {
+  resetTikwmKeyRotationForTests();
   const { fetchFn, calls } = stubFetch([{ status: 200, body: userInfoBody() }]);
   const { result, lines } = await withCapturedConsole(() =>
     resolveSecUidWithTikwm('courtroom62', { keys: [FAKE_KEY_A], fetchFn }),
@@ -120,6 +122,7 @@ test('resolveSecUidWithTikwm: success returns the camelCase secUid, one direct c
 });
 
 test('resolveSecUidWithTikwm: key rotation — first key fails, second succeeds', async () => {
+  resetTikwmKeyRotationForTests();
   const { fetchFn, calls } = stubFetch([
     { status: 200, body: { code: 10401, msg: 'invalid key' } },
     { status: 200, body: userInfoBody() },
@@ -135,6 +138,7 @@ test('resolveSecUidWithTikwm: key rotation — first key fails, second succeeds'
 });
 
 test('resolveSecUidWithTikwm: rotation on HTTP failure — first key 403, second succeeds', async () => {
+  resetTikwmKeyRotationForTests();
   const { fetchFn, calls } = stubFetch([
     { status: 403, body: { code: 0 } },
     { status: 200, body: userInfoBody() },
@@ -148,6 +152,7 @@ test('resolveSecUidWithTikwm: rotation on HTTP failure — first key 403, second
 });
 
 test('resolveSecUidWithTikwm: all keys exhausted returns the last failure reason', async () => {
+  resetTikwmKeyRotationForTests();
   const { fetchFn, calls } = stubFetch([
     { status: 200, body: { code: 10401, msg: 'invalid key' } },
     { status: 200, body: { code: 10430, msg: 'quota exhausted' } },
@@ -227,26 +232,64 @@ test('redactTikwmKeys: an error string containing a key value is scrubbed', () =
   assert.equal(redactTikwmKeys('plain text', []), 'plain text');
 });
 
-test('logTikwmFallbackStatus: no keys logs ONE loud warning and returns false', async () => {
+test('resolveSecUidWithTikwm: sequential lookups rotate the starting key (round-robin)', async () => {
+  resetTikwmKeyRotationForTests();
+  const { fetchFn, calls } = stubFetch([
+    { status: 200, body: userInfoBody() },
+    { status: 200, body: userInfoBody() },
+    { status: 200, body: userInfoBody() },
+  ]);
+  const keys = [FAKE_KEY_A, FAKE_KEY_B];
+  for (let i = 0; i < 3; i += 1) {
+    const result = await resolveSecUidWithTikwm('courtroom62', { keys, fetchFn });
+    assert.deepEqual(result, { ok: true, secUid: FAKE_SECUID });
+  }
+  assert.equal(calls.length, 3);
+  // Starts rotate A, B, A — no lookup always starts at key 1.
+  assert.equal(calls[0].headers['x-tikwmapi-key'], FAKE_KEY_A);
+  assert.equal(calls[1].headers['x-tikwmapi-key'], FAKE_KEY_B);
+  assert.equal(calls[2].headers['x-tikwmapi-key'], FAKE_KEY_A);
+});
+
+test('resolveSecUidWithTikwm: parallel lookups start on different keys (round-robin under concurrency)', async () => {
+  resetTikwmKeyRotationForTests();
+  const { fetchFn, calls } = stubFetch([
+    { status: 200, body: userInfoBody() },
+    { status: 200, body: userInfoBody() },
+  ]);
+  const keys = [FAKE_KEY_A, FAKE_KEY_B];
+  const [first, second] = await Promise.all([
+    resolveSecUidWithTikwm('courtroom62', { keys, fetchFn }),
+    resolveSecUidWithTikwm('otherhandle', { keys, fetchFn }),
+  ]);
+  assert.deepEqual(first, { ok: true, secUid: FAKE_SECUID });
+  assert.deepEqual(second, { ok: true, secUid: FAKE_SECUID });
+  assert.equal(calls.length, 2);
+  const usedKeys = calls.map((call) => call.headers['x-tikwmapi-key']).sort();
+  assert.deepEqual(usedKeys, [FAKE_KEY_A, FAKE_KEY_B]);
+});
+
+test('logTikwmPrimaryStatus: no keys logs ONE loud ERROR and returns false', async () => {
   const saved = process.env.TIKWMAPI_KEYS_SCRAPER;
   try {
     delete process.env.TIKWMAPI_KEYS_SCRAPER;
-    const { result, lines } = await withCapturedConsole(() => logTikwmFallbackStatus());
+    const { result, lines } = await withCapturedConsole(() => logTikwmPrimaryStatus());
     assert.equal(result, false);
     const warnings = lines.filter((line) => line.includes('TIKWMAPI_KEYS_SCRAPER'));
     assert.equal(warnings.length, 1);
     assert.ok(warnings[0].includes('DISABLED'));
+    assert.ok(warnings[0].includes('PRIMARY'));
   } finally {
     if (saved === undefined) delete process.env.TIKWMAPI_KEYS_SCRAPER;
     else process.env.TIKWMAPI_KEYS_SCRAPER = saved;
   }
 });
 
-test('logTikwmFallbackStatus: keys configured logs the count, never a key value', async () => {
+test('logTikwmPrimaryStatus: keys configured logs the count, never a key value', async () => {
   const saved = process.env.TIKWMAPI_KEYS_SCRAPER;
   try {
     process.env.TIKWMAPI_KEYS_SCRAPER = `${FAKE_KEY_A}, ${FAKE_KEY_B}`;
-    const { result, lines } = await withCapturedConsole(() => logTikwmFallbackStatus());
+    const { result, lines } = await withCapturedConsole(() => logTikwmPrimaryStatus());
     assert.equal(result, true);
     assert.ok(lines.some((line) => line.includes('2 key(s) configured')));
     assert.ok(lines.every((line) => !line.includes(FAKE_KEY_A) && !line.includes(FAKE_KEY_B)));

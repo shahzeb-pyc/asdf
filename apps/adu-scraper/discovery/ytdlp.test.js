@@ -27,8 +27,20 @@ const PROFILE_URL = 'https://www.tiktok.com/@courtroom62';
 //                      with a stderr message, then attempts succeed
 //   fail-profile-direct-ok - the profile-URL attempt always fails, but a
 //                      `tiktokuser:` direct attempt succeeds (the TikWM
-//                      fallback path: profile fails 5x, secUid resolves,
-//                      direct feed returns DIRECT_IDS)
+//                      primary path: lookup resolves, direct feed
+//                      returns DIRECT_IDS)
+//   fail-direct-profile-ok - the `tiktokuser:` direct attempt always
+//                      fails, but the profile-URL attempt succeeds
+//                      (paid path fails at the direct attempt, the
+//                      profile backup runs and recovers)
+//   partial-ids        - every attempt exits 1 but writes valid-IDs
+//                      JSON to stdout first (partial-results recovery)
+//   partial-direct-only - the `tiktokuser:` direct attempt exits 1
+//                      with valid-IDs JSON on stdout; profile attempts
+//                      fail (partial recovery on the direct attempt)
+//   partial-zero-ids   - every attempt exits 1 with JSON holding zero
+//                      valid IDs (an internal ByteDance asset ID only)
+//   partial-unparseable - every attempt exits 1 with non-JSON stdout
 const FAKE_YTDLP_SCRIPT = `#!/usr/bin/env node
 const fs = require('node:fs');
 const logFile = process.env.FAKE_YTDLP_LOG;
@@ -61,6 +73,34 @@ if (!hanging) {
       process.exit(0);
     }
     fail('fake yt-dlp: simulated profile failure');
+  }
+  if (mode === 'fail-direct-profile-ok') {
+    const target = args[args.length - 1] || '';
+    if (String(target).indexOf('tiktokuser:') === 0) {
+      fail('fake yt-dlp: simulated direct failure');
+    }
+  }
+  if (mode === 'partial-ids') {
+    const ids = ${JSON.stringify(PROFILE_IDS)};
+    process.stdout.write(JSON.stringify({ entries: ids.map((id) => ({ id })) }));
+    process.exit(1);
+  }
+  if (mode === 'partial-direct-only') {
+    const target = args[args.length - 1] || '';
+    if (String(target).indexOf('tiktokuser:') === 0) {
+      const ids = ${JSON.stringify(DIRECT_IDS)};
+      process.stdout.write(JSON.stringify({ entries: ids.map((id) => ({ id })) }));
+      process.exit(1);
+    }
+    fail('fake yt-dlp: simulated profile failure');
+  }
+  if (mode === 'partial-zero-ids') {
+    process.stdout.write(JSON.stringify({ entries: [{ id: 'vid:v12044123456789012' }] }));
+    process.exit(1);
+  }
+  if (mode === 'partial-unparseable') {
+    process.stdout.write('not json{{{');
+    process.exit(1);
   }
   if (mode === 'fail-first-n') {
     const failFirst = Number(process.env.FAKE_YTDLP_FAIL_FIRST || '2');
@@ -294,9 +334,11 @@ test('timeout-killed first attempt never leaks the proxy value into logs or the 
   }
 });
 
-// --- TikWM secUid fallback integration (spec scraper-tikwm-fallback) ---
+// --- TikWM PRIMARY integration (spec scraper-tikwm-first-concurrency) ---
 //
-// The fallback runs ONLY after all 5 yt-dlp profile attempts fail.
+// The paid path runs FIRST on every TikTok claim: TikWM lookup, then
+// ONE `tiktokuser:` direct attempt. The 5 profile-URL attempts run
+// ONLY as backup, when the whole paid path fails.
 // Fake fetch answers from a queue, one entry per call: { status, body }
 // or an Error to throw. It records every call so tests can assert the
 // TikWM lookup happened (or did not) and with which key header.
@@ -341,25 +383,7 @@ function assertTikwmKeyNeverLogged(lines) {
   );
 }
 
-test('yt-dlp success never calls the TikWM lookup', async () => {
-  const { logFile, restore } = await setupFakeYtdlp({ mode: 'profile-ok', proxy: FAKE_PROXY });
-  try {
-    const { fetchFn, calls } = stubTikwmFetch([{ status: 200, body: tikwmUserInfoBody() }]);
-    const { result } = await withCapturedConsole(() =>
-      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, {
-        tikwmKeys: [FAKE_TIKWM_KEY],
-        fetchFn,
-      }),
-    );
-    assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
-    assert.equal(calls.length, 0);
-    assert.equal(readInvocations(logFile).length, 1);
-  } finally {
-    restore();
-  }
-});
-
-test('all 5 profile attempts fail + TikWM secUid success → tiktokuser: direct attempt happens', async () => {
+test('TikWM first: paid path succeeds → tiktokuser: runs first, zero profile attempts, exactly 1 invocation', async () => {
   const { logFile, restore } = await setupFakeYtdlp({ mode: 'fail-profile-direct-ok', proxy: FAKE_PROXY });
   try {
     const { fetchFn, calls } = stubTikwmFetch([{ status: 200, body: tikwmUserInfoBody() }]);
@@ -371,16 +395,16 @@ test('all 5 profile attempts fail + TikWM secUid success → tiktokuser: direct 
     );
     assert.deepEqual(result, { ok: true, ids: DIRECT_IDS });
 
-    // 5 profile attempts + exactly 1 direct attempt.
+    // Exactly 1 yt-dlp invocation total, and it is the direct attempt.
     const invocations = readInvocations(logFile);
-    assert.equal(invocations.length, 6);
-    assert.equal(invocations.slice(0, 5).every((argv) => argv.at(-1) === PROFILE_URL), true);
-    assert.equal(invocations[5].at(-1), `tiktokuser:${FAKE_SECUID}`);
+    assert.equal(invocations.length, 1);
+    assert.equal(invocations[0].at(-1), `tiktokuser:${FAKE_SECUID}`);
     // The direct attempt carries no --proxy (it runs direct, like the
     // old Countik path).
-    assert.ok(!invocations[5].includes('--proxy'));
+    assert.ok(!invocations[0].includes('--proxy'));
 
-    // Exactly one TikWM call, keyed, for the profile username.
+    // Exactly one TikWM call, keyed, for the profile username — and it
+    // happened before any yt-dlp invocation (it is the first step).
     assert.equal(calls.length, 1);
     assert.ok(calls[0].url.includes('/user/info?unique_id=courtroom62'));
     assert.equal(calls[0].headers['x-tikwmapi-key'], FAKE_TIKWM_KEY);
@@ -391,7 +415,58 @@ test('all 5 profile attempts fail + TikWM secUid success → tiktokuser: direct 
   }
 });
 
-test('all 5 profile attempts fail + TikWM success but direct attempt fails → error, no crash', async () => {
+test('paid path fails at lookup → the 5 profile attempts run as backup', async () => {
+  const { logFile, restore } = await setupFakeYtdlp({ mode: 'fail-first-n', failFirst: 2, proxy: FAKE_PROXY });
+  try {
+    const { fetchFn, calls } = stubTikwmFetch([
+      { status: 200, body: { code: 10401, msg: 'invalid key' } },
+    ]);
+    const { result, lines } = await withCapturedConsole(() =>
+      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, {
+        tikwmKeys: [FAKE_TIKWM_KEY],
+        fetchFn,
+      }),
+    );
+    assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
+
+    // No direct attempt (the lookup never resolved a secUid); the
+    // backup ran and succeeded on its 3rd attempt.
+    const invocations = readInvocations(logFile);
+    assert.equal(invocations.length, 3);
+    assert.ok(invocations.every((argv) => argv.at(-1) === PROFILE_URL));
+    assert.equal(calls.length, 1);
+    assert.ok(result.ok);
+    assertTikwmKeyNeverLogged(lines);
+  } finally {
+    restore();
+  }
+});
+
+test('paid path fails at the direct attempt → the profile backup runs and recovers', async () => {
+  const { logFile, restore } = await setupFakeYtdlp({ mode: 'fail-direct-profile-ok', proxy: FAKE_PROXY });
+  try {
+    const { fetchFn, calls } = stubTikwmFetch([{ status: 200, body: tikwmUserInfoBody() }]);
+    const { result, lines } = await withCapturedConsole(() =>
+      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, {
+        tikwmKeys: [FAKE_TIKWM_KEY],
+        fetchFn,
+      }),
+    );
+    assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
+
+    // 1 direct attempt (failed) + 1 profile backup attempt (succeeded).
+    const invocations = readInvocations(logFile);
+    assert.equal(invocations.length, 2);
+    assert.equal(invocations[0].at(-1), `tiktokuser:${FAKE_SECUID}`);
+    assert.equal(invocations[1].at(-1), PROFILE_URL);
+    assert.equal(calls.length, 1);
+    assertTikwmKeyNeverLogged(lines);
+  } finally {
+    restore();
+  }
+});
+
+test('paid path fails entirely (lookup ok, direct fails, backup fails) → error recording both failures', async () => {
   const { logFile, restore } = await setupFakeYtdlp({ mode: 'all-fail', proxy: FAKE_PROXY });
   try {
     const { fetchFn, calls } = stubTikwmFetch([{ status: 200, body: tikwmUserInfoBody() }]);
@@ -402,11 +477,13 @@ test('all 5 profile attempts fail + TikWM success but direct attempt fails → e
       }),
     );
     assert.equal(result.ok, false);
-    assert.ok(result.reason.includes('tikwm fallback direct attempt failed'));
-    // 5 profile attempts + 1 direct attempt (which also fails).
+    assert.ok(result.reason.includes('tikwm direct attempt failed'));
+    assert.ok(result.reason.includes('profile backup failed'));
+    // 1 direct attempt + 5 profile backup attempts.
     const invocations = readInvocations(logFile);
     assert.equal(invocations.length, 6);
-    assert.equal(invocations[5].at(-1), `tiktokuser:${FAKE_SECUID}`);
+    assert.equal(invocations[0].at(-1), `tiktokuser:${FAKE_SECUID}`);
+    assert.ok(invocations.slice(1).every((argv) => argv.at(-1) === PROFILE_URL));
     assert.equal(calls.length, 1);
     assertTikwmKeyNeverLogged(lines);
   } finally {
@@ -414,7 +491,7 @@ test('all 5 profile attempts fail + TikWM success but direct attempt fails → e
   }
 });
 
-test('TikWM response with snake_case sec_uid only → lookup failure, no direct attempt', async () => {
+test('TikWM response with snake_case sec_uid only → lookup failure, backup runs, no direct attempt', async () => {
   const { logFile, restore } = await setupFakeYtdlp({ mode: 'all-fail', proxy: FAKE_PROXY });
   try {
     const { fetchFn, calls } = stubTikwmFetch([
@@ -430,8 +507,10 @@ test('TikWM response with snake_case sec_uid only → lookup failure, no direct 
       }),
     );
     assert.equal(result.ok, false);
-    assert.ok(result.reason.includes('tikwm fallback failed (tikwm_missing_sec_uid)'));
-    // Exactly 5 invocations: the direct attempt never ran.
+    assert.ok(result.reason.includes('tikwm lookup failed (tikwm_missing_sec_uid)'));
+    assert.ok(result.reason.includes('profile backup failed'));
+    // Exactly 5 invocations, all profile backup: the direct attempt
+    // never ran (no secUid was resolved).
     const invocations = readInvocations(logFile);
     assert.equal(invocations.length, 5);
     assert.ok(invocations.every((argv) => argv.at(-1) === PROFILE_URL));
@@ -442,7 +521,7 @@ test('TikWM response with snake_case sec_uid only → lookup failure, no direct 
   }
 });
 
-test('TikWM non-zero code → config errors as before, no direct attempt, no crash', async () => {
+test('TikWM non-zero code → lookup failure, backup runs, no direct attempt, no crash', async () => {
   const { logFile, restore } = await setupFakeYtdlp({ mode: 'all-fail', proxy: FAKE_PROXY });
   try {
     const { fetchFn, calls } = stubTikwmFetch([
@@ -455,7 +534,8 @@ test('TikWM non-zero code → config errors as before, no direct attempt, no cra
       }),
     );
     assert.equal(result.ok, false);
-    assert.ok(result.reason.includes('tikwm fallback failed (tikwm_nonzero_code)'));
+    assert.ok(result.reason.includes('tikwm lookup failed (tikwm_nonzero_code)'));
+    assert.ok(result.reason.includes('profile backup failed'));
     assert.equal(readInvocations(logFile).length, 5);
     assert.equal(calls.length, 1);
     assertTikwmKeyNeverLogged(lines);
@@ -464,7 +544,7 @@ test('TikWM non-zero code → config errors as before, no direct attempt, no cra
   }
 });
 
-test('TikWM timeout → config errors as before, no key in the logged error', async () => {
+test('TikWM timeout → lookup failure, backup runs, no key in the logged error', async () => {
   const { logFile, restore } = await setupFakeYtdlp({ mode: 'all-fail', proxy: FAKE_PROXY });
   try {
     const { fetchFn, calls } = stubTikwmFetch([
@@ -477,7 +557,8 @@ test('TikWM timeout → config errors as before, no key in the logged error', as
       }),
     );
     assert.equal(result.ok, false);
-    assert.ok(result.reason.includes('tikwm fallback failed (tikwm_unreachable)'));
+    assert.ok(result.reason.includes('tikwm lookup failed (tikwm_unreachable)'));
+    assert.ok(result.reason.includes('profile backup failed'));
     assert.equal(readInvocations(logFile).length, 5);
     assert.equal(calls.length, 1);
     assertTikwmKeyNeverLogged(lines);
@@ -486,19 +567,94 @@ test('TikWM timeout → config errors as before, no key in the logged error', as
   }
 });
 
-test('no TikWM keys configured → fallback skipped silently, reason is the yt-dlp detail alone', async () => {
-  const { logFile, restore } = await setupFakeYtdlp({ mode: 'all-fail', proxy: FAKE_PROXY });
+test('no TikWM keys configured → backup-only with a per-claim warning; TikWM never called; discovery still succeeds via backup', async () => {
+  const { logFile, restore } = await setupFakeYtdlp({ mode: 'profile-ok', proxy: FAKE_PROXY });
   try {
     const { fetchFn, calls } = stubTikwmFetch([{ status: 200, body: tikwmUserInfoBody() }]);
     const { result, lines } = await withCapturedConsole(() =>
       discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, { fetchFn }),
     );
-    assert.equal(result.ok, false);
-    assert.ok(!result.reason.includes('tikwm'), `fallback ran without keys: ${result.reason}`);
-    assert.ok(result.reason.includes('fake yt-dlp: simulated failure'));
+    assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
+    assert.ok(!result.reason, `backup success should carry no reason`);
     assert.equal(calls.length, 0);
-    assert.equal(readInvocations(logFile).length, 5);
+    assert.equal(readInvocations(logFile).length, 1);
+    assert.ok(
+      lines.some((line) => line.includes('TikWM primary unavailable')),
+      `expected a per-claim no-keys warning: ${lines.join(' | ')}`,
+    );
     assertTikwmKeyNeverLogged(lines);
+  } finally {
+    restore();
+  }
+});
+
+// --- Partial-results recovery (spec scraper-tikwm-first-concurrency §2) ---
+//
+// A yt-dlp attempt that exits non-zero can still carry usable IDs on
+// stdout. Those IDs are recovered; zero valid IDs or unparseable
+// stdout take the existing failure path.
+
+test('partial results: exit 1 with valid-IDs JSON on stdout → IDs returned, job succeeds', async () => {
+  const { logFile, restore } = await setupFakeYtdlp({ mode: 'partial-ids', proxy: FAKE_PROXY });
+  try {
+    const { result, lines } = await withCapturedConsole(() =>
+      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10),
+    );
+    assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
+    // Recovered on the FIRST backup attempt — no retries.
+    assert.equal(readInvocations(logFile).length, 1);
+    assert.ok(
+      lines.some((line) => line.includes('recovered') && line.includes('partial ID')),
+      `expected a partial-recovery log line: ${lines.join(' | ')}`,
+    );
+    assertProxyValueNeverLogged(lines);
+  } finally {
+    restore();
+  }
+});
+
+test('partial results on the direct attempt: exit 1 with valid-IDs JSON → IDs returned, backup never runs', async () => {
+  const { logFile, restore } = await setupFakeYtdlp({ mode: 'partial-direct-only', proxy: FAKE_PROXY });
+  try {
+    const { fetchFn, calls } = stubTikwmFetch([{ status: 200, body: tikwmUserInfoBody() }]);
+    const { result } = await withCapturedConsole(() =>
+      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, {
+        tikwmKeys: [FAKE_TIKWM_KEY],
+        fetchFn,
+      }),
+    );
+    assert.deepEqual(result, { ok: true, ids: DIRECT_IDS });
+    assert.equal(readInvocations(logFile).length, 1);
+    assert.equal(calls.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('partial results: exit 1 with JSON holding zero valid IDs → failure, existing reason', async () => {
+  const { logFile, restore } = await setupFakeYtdlp({ mode: 'partial-zero-ids', proxy: FAKE_PROXY });
+  try {
+    const { result } = await withCapturedConsole(() =>
+      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10),
+    );
+    assert.equal(result.ok, false);
+    assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
+    // No recovery: all 5 backup attempts ran and failed.
+    assert.equal(readInvocations(logFile).length, 5);
+  } finally {
+    restore();
+  }
+});
+
+test('partial results: exit 1 with unparseable stdout → failure, existing reason', async () => {
+  const { logFile, restore } = await setupFakeYtdlp({ mode: 'partial-unparseable', proxy: FAKE_PROXY });
+  try {
+    const { result } = await withCapturedConsole(() =>
+      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10),
+    );
+    assert.equal(result.ok, false);
+    assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
+    assert.equal(readInvocations(logFile).length, 5);
   } finally {
     restore();
   }
