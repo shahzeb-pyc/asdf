@@ -31,10 +31,38 @@ async function waitFor(predicate, timeoutMs = 5000) {
   return predicate();
 }
 
-test('pool runs at most N jobs in flight; a 4th job waits for a free slot', async () => {
-  const queue = [tiktokJob('1'), tiktokJob('2'), tiktokJob('3'), tiktokJob('4')];
+// Claim function serving one queue in order, then null forever.
+function queueClaim(jobs) {
   let claimIndex = 0;
-  const claimTikTokJob = async () => queue[claimIndex++] ?? null;
+  return async () => jobs[claimIndex++] ?? null;
+}
+
+// Start a pool, wait until `done()` is true, then stop it and drain
+// (start() resolves only once in-flight jobs finish). Every pool test
+// below uses this: the create/start/wait/stop/await shape is
+// identical, only the queue, the processor, and the wait condition
+// differ. Returns the capturing logger for log assertions.
+async function runPoolUntilDone({ concurrency, claimTikTokJob, processTikTokJob, done, doneMessage }) {
+  const logger = capturingLogger();
+  const pool = createTikTokPool({
+    concurrency,
+    claimTikTokJob,
+    processTikTokJob,
+    sleep: fastSleep,
+    logger,
+  });
+  const donePromise = pool.start();
+  try {
+    assert.ok(await waitFor(done), doneMessage);
+  } finally {
+    pool.stop();
+  }
+  await donePromise;
+  return logger;
+}
+
+test('pool runs at most N jobs in flight; a 4th job waits for a free slot', async () => {
+  const claimTikTokJob = queueClaim([tiktokJob('1'), tiktokJob('2'), tiktokJob('3'), tiktokJob('4')]);
 
   let inFlight = 0;
   let maxInFlight = 0;
@@ -50,21 +78,13 @@ test('pool runs at most N jobs in flight; a 4th job waits for a free slot', asyn
     }
   };
 
-  const logger = capturingLogger();
-  const pool = createTikTokPool({
+  await runPoolUntilDone({
     concurrency: 2,
     claimTikTokJob,
     processTikTokJob,
-    sleep: fastSleep,
-    logger,
+    done: () => processed.length === 4,
+    doneMessage: 'all 4 jobs should be processed',
   });
-  const done = pool.start();
-  try {
-    assert.ok(await waitFor(() => processed.length === 4), 'all 4 jobs should be processed');
-  } finally {
-    pool.stop();
-  }
-  await done;
 
   assert.equal(maxInFlight, 2);
   assert.deepEqual([...processed].sort(), ['1', '2', '3', '4']);
@@ -72,9 +92,7 @@ test('pool runs at most N jobs in flight; a 4th job waits for a free slot', asyn
 });
 
 test('a slow job in one slot does not block the other slots', async () => {
-  const queue = [tiktokJob('slow'), tiktokJob('fast1'), tiktokJob('fast2')];
-  let claimIndex = 0;
-  const claimTikTokJob = async () => queue[claimIndex++] ?? null;
+  const claimTikTokJob = queueClaim([tiktokJob('slow'), tiktokJob('fast1'), tiktokJob('fast2')]);
 
   const events = [];
   const startedAt = Date.now();
@@ -84,20 +102,13 @@ test('a slow job in one slot does not block the other slots', async () => {
     events.push({ id: job.id, at: Date.now() - startedAt });
   };
 
-  const pool = createTikTokPool({
+  await runPoolUntilDone({
     concurrency: 2,
     claimTikTokJob,
     processTikTokJob,
-    sleep: fastSleep,
-    logger: capturingLogger(),
+    done: () => events.length === 3,
+    doneMessage: 'all 3 jobs should finish',
   });
-  const done = pool.start();
-  try {
-    assert.ok(await waitFor(() => events.length === 3), 'all 3 jobs should finish');
-  } finally {
-    pool.stop();
-  }
-  await done;
 
   const byId = Object.fromEntries(events.map((event) => [event.id, event.at]));
   // Both fast jobs finished while the slow job was still in flight,
@@ -110,34 +121,24 @@ test('a slow job in one slot does not block the other slots', async () => {
 });
 
 test('non-TikTok claims are rejected, never processed; the pool moves on to TikTok jobs', async () => {
-  const queue = [
+  const claimTikTokJob = queueClaim([
     { job: { id: 'yt1', source_platform: 'youtube', source_username: 'ytchannel' }, platform: 'youtube' },
     tiktokJob('1'),
     tiktokJob('2'),
-  ];
-  let claimIndex = 0;
-  const claimTikTokJob = async () => queue[claimIndex++] ?? null;
+  ]);
 
   const processed = [];
   const processTikTokJob = async (job) => {
     processed.push(job.id);
   };
 
-  const logger = capturingLogger();
-  const pool = createTikTokPool({
+  const logger = await runPoolUntilDone({
     concurrency: 2,
     claimTikTokJob,
     processTikTokJob,
-    sleep: fastSleep,
-    logger,
+    done: () => processed.length === 2,
+    doneMessage: 'both TikTok jobs should be processed',
   });
-  const done = pool.start();
-  try {
-    assert.ok(await waitFor(() => processed.length === 2), 'both TikTok jobs should be processed');
-  } finally {
-    pool.stop();
-  }
-  await done;
 
   assert.deepEqual([...processed].sort(), ['1', '2']);
   assert.ok(!processed.includes('yt1'), 'the YouTube job must never be processed');
@@ -148,9 +149,7 @@ test('non-TikTok claims are rejected, never processed; the pool moves on to TikT
 });
 
 test('shutdown drains: stop() during a slow job lets it finish before start() resolves', async () => {
-  const queue = [tiktokJob('1')];
-  let claimIndex = 0;
-  const claimTikTokJob = async () => queue[claimIndex++] ?? null;
+  const claimTikTokJob = queueClaim([tiktokJob('1')]);
 
   let jobStarted = false;
   let jobStartTime = 0;
@@ -162,20 +161,13 @@ test('shutdown drains: stop() during a slow job lets it finish before start() re
     jobEndTime = Date.now();
   };
 
-  const pool = createTikTokPool({
+  await runPoolUntilDone({
     concurrency: 1,
     claimTikTokJob,
     processTikTokJob,
-    sleep: fastSleep,
-    logger: capturingLogger(),
+    done: () => jobStarted,
+    doneMessage: 'the job should start',
   });
-  const done = pool.start();
-  try {
-    assert.ok(await waitFor(() => jobStarted), 'the job should start');
-  } finally {
-    pool.stop();
-  }
-  await done;
 
   // The in-flight job ran to completion even though stop() was called
   // just after it started: it finished its full 150ms of work.
@@ -196,21 +188,13 @@ test('a claim failure is logged and the pool keeps claiming', async () => {
     processed.push(job.id);
   };
 
-  const logger = capturingLogger();
-  const pool = createTikTokPool({
+  const logger = await runPoolUntilDone({
     concurrency: 1,
     claimTikTokJob,
     processTikTokJob,
-    sleep: fastSleep,
-    logger,
+    done: () => processed.length === 1,
+    doneMessage: 'the job after the failed claim should be processed',
   });
-  const done = pool.start();
-  try {
-    assert.ok(await waitFor(() => processed.length === 1), 'the job after the failed claim should be processed');
-  } finally {
-    pool.stop();
-  }
-  await done;
 
   assert.deepEqual(processed, ['1']);
   assert.ok(

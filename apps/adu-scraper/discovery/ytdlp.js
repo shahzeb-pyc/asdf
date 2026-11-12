@@ -168,6 +168,26 @@ async function runYtDlp(args) {
  * one). Zero valid IDs, unparseable stdout, or empty stdout take the
  * existing failure path unchanged.
  */
+
+/**
+ * Parse one yt-dlp JSON stdout blob and extract TikTok IDs with the
+ * single shared extractor (no second, looser definition — the
+ * extractor decides what counts as a valid ID). Returns
+ * { ok: true, ids } when the text parses (ids may be empty) or
+ * { ok: false, parseError } when it is not JSON at all. Shared by
+ * the partial-results recovery path and the success path below so the
+ * parse → extract sequence exists exactly once.
+ */
+function parseDiscoveryIds(text, maxCount) {
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch (parseErr) {
+    return { ok: false, parseError: parseErr instanceof Error ? parseErr.message : String(parseErr) };
+  }
+  return { ok: true, ids: extractIdsFromYtdlpJson(payload, 'tiktok', maxCount) };
+}
+
 async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
   const args = buildTiktokYtdlpArgs(targetUrl, maxCount, argOptions);
   console.log(`📡 TikTok yt-dlp discovery: ${targetUrl}`);
@@ -180,18 +200,20 @@ async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
     // stdout JSON is useless. Try it before declaring failure.
     const failedStdout = err.stdout?.toString?.() || '';
     if (failedStdout.trim()) {
-      try {
-        const partialPayload = JSON.parse(failedStdout);
-        const partialIds = extractIdsFromYtdlpJson(partialPayload, 'tiktok', maxCount);
-        if (partialIds.length > 0) {
-          console.log(
-            `✅ TikTok yt-dlp recovered ${partialIds.length} partial ID(s) for @${logUser} via ${targetUrl} (attempt exited non-zero).`,
-          );
-          return { ok: true, ids: partialIds };
-        }
-      } catch {
-        // Unparseable stdout: fall through to the failure path below.
+      const partial = parseDiscoveryIds(failedStdout, maxCount);
+      if (partial.ok && partial.ids.length > 0) {
+        // No targetUrl here (Sonar S5145): the direct attempt's target
+        // is `tiktokuser:{secUid}` where secUid comes from the TikWM
+        // API response — external, unsanitised data must never be
+        // interpolated into a log line. The allowlisted @logUser
+        // identifies the claim.
+        console.log(
+          `✅ TikTok yt-dlp recovered ${partial.ids.length} partial ID(s) for @${logUser} (attempt exited non-zero).`,
+        );
+        return { ok: true, ids: partial.ids };
       }
+      // Unparseable stdout or zero valid IDs: fall through to the
+      // failure path below.
     }
     const message = err instanceof Error ? err.message : String(err);
     const stderr = err.stderr?.toString?.() || '';
@@ -204,16 +226,13 @@ async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
     return { ok: false, reason: detail };
   }
 
-  let payload;
-  try {
-    payload = JSON.parse(stdout);
-  } catch (parseErr) {
-    const message = parseErr instanceof Error ? parseErr.message : String(parseErr);
-    console.warn(`⚠️ TikTok yt-dlp returned invalid JSON for ${targetUrl}: ${message}`);
+  const parsed = parseDiscoveryIds(stdout, maxCount);
+  if (!parsed.ok) {
+    console.warn(`⚠️ TikTok yt-dlp returned invalid JSON for ${targetUrl}: ${parsed.parseError}`);
     return { ok: false, reason: 'unparseable_json' };
   }
 
-  const ids = extractIdsFromYtdlpJson(payload, 'tiktok', maxCount);
+  const ids = parsed.ids;
   if (ids.length > 0) {
     console.log(`✅ TikTok yt-dlp discovered ${ids.length} ID(s) for @${logUser} via ${targetUrl}`);
     return { ok: true, ids };
