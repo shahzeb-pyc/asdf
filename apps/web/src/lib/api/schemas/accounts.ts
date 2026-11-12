@@ -62,8 +62,11 @@ export type ListFacebookAccountsResponse = z.infer<
 export const DisconnectAccountResponseSchema = z.object({
   success: z.boolean(),
   accountId: z.string().uuid(),
-  // Pages removed with the account (deleted via cascade with the
-  // account row — see the disconnect route).
+  // Pages whose section copies were disconnected + stripped with the
+  // account (spec 174 2A: the account row is retained as a
+  // disconnected record, never deleted, and every section's copy
+  // becomes a disconnected stub — identity, followers and section
+  // kept, all working data removed).
   disconnectedPagesCount: z.number().int().nonnegative(),
   // Whether the Facebook-side authorization was actually revoked.
   // Informational only: local removal is complete regardless —
@@ -82,6 +85,8 @@ export const SocialDestinationViewSchema = z.object({
   avatarUrl: z.string().nullable(),
   timezone: z.string(),
   status: z.string(),
+  /** Which section this copy belongs to (spec 174): 'schedule' | 'adu' | 'mirror' | 'publish_now'; null = created before the section label, belongs to no section. */
+  section: z.string().nullable(),
   /** Provider-reported account type (destinations.metadata `account_type`); null = unknown, never guessed. */
   accountType: z.string().nullable(),
 });

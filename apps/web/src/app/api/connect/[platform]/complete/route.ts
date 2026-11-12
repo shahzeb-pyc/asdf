@@ -11,22 +11,26 @@ import {
   PENDING_COOKIE_NAME,
 } from '@/lib/connect/state';
 import {
-  persistPickedDestinations,
-  type ConnectDbClient,
-} from '@/lib/connect/persist';
-import {
   extractConnectSession,
-  resolveConnectDbClient,
   sessionCanAccessTenant,
 } from '@/lib/connect/session';
+import type { ConnectDbClient } from '@/lib/connect/persist';
 
 /**
  * POST /api/connect/[platform]/complete — finishes a connect flow.
  *
  * Body: { destinationIds: string[] } — the external destination IDs the
  * user picked in the destination picker. Only destinations from the signed
- * pending cookie can be persisted; anything else is ignored. Returns the
+ * pending cookie can be confirmed; anything else is ignored. Returns the
  * unified Accounts landing URL.
+ *
+ * Spec 174 §2 (PR 2A): confirming a pick creates NO destinations row —
+ * the account already lives in the Accounts section, and each feature
+ * imports from Accounts at its own Add endpoint. The picker is a
+ * confirmation step now, not an import step: the pick is validated
+ * against the signed cookie (at least one picked destination), the
+ * cookie is cleared, and the user lands on Accounts. `addedCount`
+ * reports destinations rows created, which is 0.
  */
 /**
  * Body schema for completing a connect flow (spec 139 Wave B, audit C2:
@@ -114,28 +118,13 @@ export async function handleConnectComplete(
     );
   }
 
-  const client = resolveConnectDbClient(dbClient);
-  if (!client) {
-    return NextResponse.json(
-      { error: 'Database service unavailable' },
-      { status: 503 }
-    );
-  }
-
-  try {
-    await persistPickedDestinations(client, {
-      workspaceId: pending.workspaceId,
-      accountId: pending.accountId,
-      platform,
-      destinations: picked,
-    });
-  } catch (err) {
-    console.error('[connect/complete] Failed to persist destinations:', err);
-    return NextResponse.json(
-      { error: "Couldn't save your choices. Please try again." },
-      { status: 500 }
-    );
-  }
+  // Spec 174 §2 (PR 2A): the confirmed pick creates no destinations
+  // row — the account is already persisted by the callback, and each
+  // feature imports from Accounts at its own Add endpoint. This
+  // route makes no database access anymore, so the injected
+  // `dbClient` is retained only for signature compatibility with
+  // existing callers/tests; a database outage must not fail a
+  // connect whose confirmation needs no database at all.
 
   // Per-platform Accounts landing page: facebook keeps the historic
   // `/tenant/<sub>/accounts`; every other platform lands on its own
@@ -175,7 +164,10 @@ export async function handleConnectComplete(
 
   const response = NextResponse.json({
     accountsUrl,
-    addedCount: picked.length,
+    // Spec 174 §2 (PR 2A): no destinations rows are created at
+    // connect, so the count of rows added is 0. The field stays so
+    // the response shape (and its schema) is unchanged.
+    addedCount: 0,
   });
   response.cookies.set(PENDING_COOKIE_NAME, '', {
     httpOnly: true,

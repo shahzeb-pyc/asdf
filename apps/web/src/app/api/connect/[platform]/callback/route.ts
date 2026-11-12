@@ -26,7 +26,6 @@ import {
 } from '@/lib/connect/state';
 import {
   persistConnectedAccount,
-  persistPickedDestinations,
   resolvePlatformClientCredentials,
   type ConnectDbClient,
 } from '@/lib/connect/persist';
@@ -483,25 +482,11 @@ export async function handleConnectCallback(
   // opened the link holds no session, so there is no picker to
   // show it — the single Threads destination is confirmed
   // server-side here and the flow finishes on the public magic
-  // success page (app host, same host rule as Facebook's).
+  // success page (app host, same host rule as Facebook's). No
+  // destinations row is created (spec 174 §2): the account lives
+  // only in the Accounts section, and each feature imports from
+  // Accounts at its own Add endpoint.
   if (statePayload.isMagic && platform === 'threads') {
-    try {
-      await persistPickedDestinations(client, {
-        workspaceId: statePayload.workspaceId,
-        accountId,
-        platform,
-        destinations,
-      });
-    } catch (err) {
-      console.error('[connect/callback] Failed to persist magic destinations:', err);
-      return threadsNoticeRedirect(
-        request,
-        statePayload.tenantSubdomain,
-        rootDomain,
-        NOTICE_CONNECT_FAILED,
-        true
-      );
-    }
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     const successUrl = buildMagicConnectUrl(
       '/connect/threads/success',

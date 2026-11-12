@@ -68,7 +68,7 @@ export type ListInstagramAccountsResponse = z.infer<
   typeof ListInstagramAccountsResponseSchema
 >;
 
-/** Disconnect acknowledgement: the account id plus how many of its destination rows went with it. */
+/** Disconnect acknowledgement: the account id plus how many of its destination rows were disconnected + stripped with it (spec 174 2A: the account row is retained as a disconnected record, never deleted). */
 export const DisconnectInstagramAccountResponseSchema = z.object({
   success: z.boolean(),
   accountId: z.string().uuid(),

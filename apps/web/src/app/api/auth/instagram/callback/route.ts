@@ -16,7 +16,6 @@ import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
   mergeRowMetadata,
   persistConnectedAccount,
-  persistPickedDestinations,
   resolvePlatformClientCredentials,
   type ConnectDbClient,
 } from '@/lib/connect/persist';
@@ -517,9 +516,14 @@ export async function handleInstagramCallback(
     }
 
     // 4. Persist EVERY shared account (one BISU token covers them
-    // all) and each account itself as its destination — there is no
-    // picker in this flow. A destination write failing must not
-    // report the connect as failed, but it must not be silent either.
+    // all). Connecting an account never creates a destinations row
+    // (spec 174 §2): every account lives only in the Accounts
+    // section, and each feature imports from Accounts at its own
+    // Add endpoint, which creates that section's copy. A
+    // destination write failing must not report the connect as
+    // failed, but it must not be silent either — that clause is
+    // moot now that no destination is written here, and is kept
+    // only as the account-persist error handling below.
     let firstAccountId: string | null = null;
     let firstAlreadyExisted = false;
     try {
@@ -554,27 +558,6 @@ export async function handleInstagramCallback(
             config_id: credentials.configId,
           }
         );
-        try {
-          await persistPickedDestinations(db as ConnectDbClient, {
-            workspaceId,
-            accountId: persisted.accountId,
-            platform: 'instagram',
-            destinations: [
-              { externalDestinationId: shared.id, name: shared.username },
-            ],
-          });
-          await mergeRowMetadata(
-            db as ConnectDbClient,
-            'destinations',
-            {
-              account_id: persisted.accountId,
-              external_destination_id: shared.id,
-            },
-            { token_kind: 'bisu' }
-          );
-        } catch (err) {
-          console.error('[InstagramOAuth] Destination persist failed:', err);
-        }
         if (firstAccountId === null) {
           firstAccountId = persisted.accountId;
           firstAlreadyExisted = alreadyExisted;
