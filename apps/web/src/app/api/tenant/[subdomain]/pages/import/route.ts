@@ -380,7 +380,7 @@ export async function handleImportPages(
     }>(
       `SELECT external_destination_id, status, metadata->>'fb_status' AS fb_status,
         name, avatar_url, encrypted_destination_token, metadata FROM destinations
-       WHERE account_id = $1 AND external_destination_id = ANY($2::text[])`,
+       WHERE account_id = $1 AND external_destination_id = ANY($2::text[]) AND section = 'schedule'`,
       [accountId, matchedPages.map((item) => String(item.id))]
     )) as Array<{
       external_destination_id?: string;
@@ -503,6 +503,7 @@ export async function handleImportPages(
         .select('external_destination_id, status, metadata, name, avatar_url, encrypted_destination_token')
         .eq('workspace_id', workspaceId)
         .eq('platform', 'facebook')
+        .eq('section', 'schedule')
         // K9: the upsert key is (account_id,
         // external_destination_id) — scoping by workspace alone
         // misclassifies a second account's row for the same page as
@@ -583,8 +584,8 @@ export async function handleImportPages(
       // disconnected — the same rule the pre-unification upsert ran.
       const result = (await dbClient.query(
         `INSERT INTO destinations (
-          workspace_id, account_id, platform, external_destination_id, name, avatar_url, encrypted_destination_token, status, metadata, updated_at
-        ) VALUES ($1, $2, 'facebook', $3, $4, $5, $6, 'active',
+          workspace_id, account_id, platform, section, external_destination_id, name, avatar_url, encrypted_destination_token, status, metadata, updated_at
+        ) VALUES ($1, $2, 'facebook', 'schedule', $3, $4, $5, $6, 'active',
           jsonb_build_object(
             'category', $7::text,
             'tasks', $8::jsonb,
@@ -593,7 +594,7 @@ export async function handleImportPages(
             'followers_updated_at', now()::text
           ),
           now())
-        ON CONFLICT (account_id, external_destination_id) DO UPDATE SET
+        ON CONFLICT (account_id, external_destination_id, section) DO UPDATE SET
           workspace_id = EXCLUDED.workspace_id,
           name = EXCLUDED.name,
           avatar_url = EXCLUDED.avatar_url,
@@ -698,6 +699,7 @@ export async function handleImportPages(
             workspace_id: workspaceId,
             account_id: accountId,
             platform: 'facebook',
+            section: 'schedule',
             external_destination_id: String(pageItem.id),
             name: String(pageItem.name),
             avatar_url: profilePictureUrl,
@@ -706,7 +708,7 @@ export async function handleImportPages(
             metadata: nextMetadata,
             updated_at: new Date().toISOString(),
           },
-          { onConflict: 'account_id,external_destination_id' }
+          { onConflict: 'account_id,external_destination_id,section' }
         )
         .select('id, external_destination_id, name')
         .single();
@@ -949,8 +951,11 @@ export async function handleImportPages(
   };
 
   // Best-effort rollback for this call's schedule targets.
-  // Newly created destinations are deleted (slots first, then the
-  // destination). Reactivated destinations are NEVER deleted: they
+  // Newly created destinations are disconnected + stripped, never
+  // deleted (spec 174 1B, the removal rule): slots are deleted,
+  // queued items cancelled, and the copy is left as a disconnected
+  // stub (identity, followers and section stay; token, timezone and
+  // tasks go). Reactivated destinations are NEVER deleted: they
   // are restored to disconnected with their snapshotted timezone
   // and slots AND their pre-upsert name/avatar/token/metadata
   // (K9 — the upsert overwrote all of those, so restoring only
@@ -983,7 +988,11 @@ export async function handleImportPages(
             [ids]
           );
           await dbClient.query(
-            `DELETE FROM destinations WHERE id = ANY($1::uuid[]) AND workspace_id = $2 AND platform = 'facebook'`,
+            `UPDATE queue_items SET status = 'cancelled', updated_at = now() WHERE destination_id = ANY($1::uuid[]) AND status = 'queued'`,
+            [ids]
+          );
+          await dbClient.query(
+            `UPDATE destinations SET status = 'disconnected', encrypted_destination_token = NULL, timezone = 'UTC', metadata = metadata - 'tasks', updated_at = now() WHERE id = ANY($1::uuid[]) AND workspace_id = $2 AND platform = 'facebook' AND section = 'schedule'`,
             [ids, workspaceId]
           );
         } else {
@@ -993,11 +1002,35 @@ export async function handleImportPages(
           if (supabase) {
             await supabase.from('posting_slots').delete().in('destination_id', ids);
             await supabase
+              .from('queue_items')
+              .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+              .in('destination_id', ids)
+              .eq('status', 'queued');
+            const { data: createdRows } = await supabase
               .from('destinations')
-              .delete()
+              .select('id, metadata')
               .in('id', ids)
               .eq('workspace_id', workspaceId)
               .eq('platform', 'facebook');
+            for (const row of createdRows ?? []) {
+              const metadata = {
+                ...((row.metadata as Record<string, unknown> | null) ?? {}),
+              };
+              delete metadata.tasks;
+              await supabase
+                .from('destinations')
+                .update({
+                  status: 'disconnected',
+                  encrypted_destination_token: null,
+                  timezone: 'UTC',
+                  metadata,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', row.id)
+                .eq('workspace_id', workspaceId)
+                .eq('platform', 'facebook')
+                .eq('section', 'schedule');
+            }
           }
         }
       } catch (rollbackErr) {
