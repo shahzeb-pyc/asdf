@@ -19,6 +19,8 @@ export interface MockDestinationRow {
   avatar_url: string | null;
   metadata: Record<string, unknown> | null;
   status: string;
+  // Spec 174 1B: the destinations table carries the section label.
+  section?: string | null;
   created_at: string;
   updated_at: string;
   social_accounts: { display_name: string; avatar_url?: string | null } | null;

@@ -444,7 +444,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
 
       const seenPageIds = new Set<string>();
       const nextGroups: PublishNowDiscoveredGroup[] = [];
-      const failures: string[] = [...(imported.failures ?? [])];
+      const failures: string[] = [...imported.failures];
       for (const account of selectedAccounts) {
         const group = imported.groups.find((g) => g.accountId === account.id);
         if (!group) {

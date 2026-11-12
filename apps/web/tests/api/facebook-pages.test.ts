@@ -376,7 +376,14 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       // metadata jsonb; the merge preserves starting_followers unless
       // the existing destination was disconnected.
       expect(insertSql).toContain('INSERT INTO destinations');
-      expect(insertSql).toContain('ON CONFLICT (account_id, external_destination_id)');
+      // Spec 174 1B: the upsert stamps the schedule section and the
+      // conflict target includes it, so an import creates the
+      // Schedule copy and never adopts another section's row.
+      expect(insertSql).toContain(
+        'ON CONFLICT (account_id, external_destination_id, section)'
+      );
+      expect(insertSql).toContain("platform, section, external_destination_id");
+      expect(insertSql).toContain("'facebook', 'schedule'");
       expect(insertSql).toContain("'starting_followers'");
       expect(insertSql).toContain("'current_followers'");
       expect(insertSql).toContain("destinations.status = 'disconnected'");
@@ -835,6 +842,7 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
           name: 'Supabase Cooldown Page',
           avatar_url: null,
           status: 'rate_limited',
+          section: 'schedule',
           metadata: {
             category: 'Retail Company',
             tasks: ['CREATE_CONTENT'],
@@ -902,14 +910,23 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       expect(json.success).toBe(true);
       expect(json.pageId).toBe(pageId);
 
-      expect(executedStatements).toHaveLength(2);
+      expect(executedStatements).toHaveLength(3);
       expect(executedStatements[0]!.sql).toContain("status = 'disconnected'");
       expect(executedStatements[0]!.sql).toContain('encrypted_destination_token = NULL');
+      // Spec 174 1B: the disconnect is the full strip — timezone
+      // resets, tasks leave metadata, and the row stays a schedule
+      // copy (section-scoped, never deleted).
+      expect(executedStatements[0]!.sql).toContain("timezone = 'UTC'");
+      expect(executedStatements[0]!.sql).toContain("metadata - 'fb_status' - 'tasks'");
+      expect(executedStatements[0]!.sql).toContain("section = 'schedule'");
       expect(executedStatements[0]!.params).toEqual([pageId, 'ws_123']);
 
       expect(executedStatements[1]!.sql).toContain('UPDATE queue_items');
       expect(executedStatements[1]!.sql).toContain("status = 'cancelled'");
       expect(executedStatements[1]!.params).toEqual(['ws_123', pageId]);
+
+      expect(executedStatements[2]!.sql).toContain('DELETE FROM posting_slots');
+      expect(executedStatements[2]!.params).toEqual([pageId]);
     });
 
     it('disconnects page and skips queued items via Supabase client', async () => {
@@ -945,9 +962,14 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
                   eq: () => ({
                     eq: () => ({
                       eq: () => ({
-                        select: vi.fn().mockResolvedValue({
-                          data: [{ id: pageId, external_destination_id: 'page_1001' }],
-                          error: null,
+                        // Spec 174 1B: the disconnect update is
+                        // section-scoped (id, workspace, platform,
+                        // section) before the select.
+                        eq: () => ({
+                          select: vi.fn().mockResolvedValue({
+                            data: [{ id: pageId, external_destination_id: 'page_1001' }],
+                            error: null,
+                          }),
                         }),
                       }),
                     }),
@@ -968,6 +990,14 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
                 };
                 return chain;
               }),
+            };
+          }
+          if (table === 'posting_slots') {
+            // Spec 174 1B: the disconnect strips posting times too.
+            return {
+              delete: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({ error: null }),
+              })),
             };
           }
           return {};
@@ -1089,6 +1119,16 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
           }
           if (table === 'queue_items') {
             return { update: vi.fn(() => queueChain) };
+          }
+          if (table === 'posting_slots') {
+            // Spec 174 1B: slots are stripped before the disconnect
+            // update; the delete succeeds here so the update is the
+            // step that fails.
+            return {
+              delete: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({ error: null }),
+              })),
+            };
           }
           return {};
         }),

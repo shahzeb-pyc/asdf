@@ -409,6 +409,9 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
         external_destination_id: `page_${i}`,
         name: `Page ${i}`,
         avatar_url: null,
+        // Spec 174 1B: the Schedule list filters section = 'schedule',
+        // so every fixture row here is a schedule copy.
+        section: 'schedule',
         metadata: {
           category: 'Digital Creator',
           starting_followers: 100,
@@ -506,6 +509,8 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
         external_destination_id: `page_${i}`,
         name: i < 5 ? 'Brand Page' : `Page ${i}`,
         avatar_url: null,
+        // Spec 174 1B: Schedule list rows carry section = 'schedule'.
+        section: 'schedule',
         metadata: {
           category: 'Digital Creator',
           starting_followers: 100,
@@ -539,6 +544,8 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
         external_destination_id: `page_${i}`,
         name: `Page ${i}`,
         avatar_url: null,
+        // Spec 174 1B: Schedule list rows carry section = 'schedule'.
+        section: 'schedule',
         metadata: {
           category: 'Digital Creator',
           starting_followers: 100,
@@ -572,6 +579,8 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
         external_destination_id: `page_${i}`,
         name: `Page ${i}`,
         avatar_url: null,
+        // Spec 174 1B: Schedule list rows carry section = 'schedule'.
+        section: 'schedule',
         metadata: {
           category: 'Digital Creator',
           starting_followers: 100,

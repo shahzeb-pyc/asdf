@@ -116,21 +116,65 @@ const DISCOVERED = [
 import { api } from '@/lib/api';
 
 let mockAccountsData: typeof ACCOUNTS = ACCOUNTS;
-let mockDiscoverShouldFail = false;
+let mockImportShouldFail = false;
 let mockAccountsShouldFail = false;
+
+const IMPORT_PATH = '/publishing/publish-now/import';
+
+/**
+ * The import step's mocked answer (spec 174 1B): one group per
+ * requested account, built from the DISCOVERED pages with status
+ * 'active'. When the import is flagged to fail, the accounts land
+ * in `failures` instead — the route reports per-account failures,
+ * it does not throw for them.
+ */
+function mockImportResponse(body: unknown): {
+  groups: Array<{
+    accountId: string;
+    accountName: string;
+    pages: Array<{
+      fbPageId: string;
+      pageName: string;
+      profilePictureUrl: string | null;
+      category: string | null;
+      followers: number;
+      status: string;
+    }>;
+  }>;
+  failures: string[];
+} {
+  const accountIds = (body as { accountIds?: string[] }).accountIds ?? [];
+  if (mockImportShouldFail) {
+    return {
+      groups: [],
+      failures: accountIds.map(
+        (accountId) =>
+          ACCOUNTS.find((account) => account.id === accountId)?.displayName ?? accountId
+      ),
+    };
+  }
+  return {
+    groups: accountIds.map((accountId) => ({
+      accountId,
+      accountName:
+        ACCOUNTS.find((account) => account.id === accountId)?.displayName ??
+        'Shahzeb Malik',
+      pages: DISCOVERED.map((page) => ({
+        fbPageId: page.fbPageId,
+        pageName: page.pageName,
+        profilePictureUrl: page.profilePictureUrl ?? null,
+        category: page.category ?? null,
+        followers: page.currentFollowers ?? page.followersCount ?? 0,
+        status: 'active',
+      })),
+    })),
+    failures: [],
+  };
+}
 
 vi.mock('@/lib/api', () => ({
   api: {
     get: async (path: string) => {
-      if (path.includes('/pages/discover')) {
-        if (mockDiscoverShouldFail) {
-          throw new Error('discover failed');
-        }
-        return { accountId: '11111111-1111-4111-a111-111111111111', accountDisplayName: 'Shahzeb Malik', pages: DISCOVERED, total: 2 };
-      }
-      if (path.endsWith('/pages')) {
-        return { pages: [], total: 0 };
-      }
       if (path.includes('/settings/byoc')) {
         return { fbAppId: null, hasSecret: false };
       }
@@ -142,7 +186,12 @@ vi.mock('@/lib/api', () => ({
       }
       throw new Error(`unexpected api.get path: ${path}`);
     },
-    post: vi.fn(),
+    post: vi.fn(async (path: string, body: unknown) => {
+      if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
+        return mockImportResponse(body);
+      }
+      throw new Error(`unexpected api.post path: ${path}`);
+    }),
     patch: vi.fn(),
     delete: vi.fn(),
   },
@@ -262,6 +311,9 @@ describe('PublishNowPage wizard', () => {
     ];
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
       .mockImplementation(async (path: string, body: unknown) => {
+        if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
+          return mockImportResponse(body);
+        }
         publishCalls.push({ path, body });
         return {
           results: publishCalls.length === 1 ? firstRun : retryRun,
@@ -343,6 +395,9 @@ describe('PublishNowPage wizard', () => {
     const publishCalls: Array<{ path: string; body: unknown }> = [];
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
       .mockImplementation(async (path: string, body: unknown) => {
+        if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
+          return mockImportResponse(body);
+        }
         publishCalls.push({ path, body });
         const targets = (body as { targets: Array<{ fbPageId: string; pageName: string }> }).targets;
         return {
@@ -465,6 +520,9 @@ describe('PublishNowPage wizard', () => {
     // the copy endpoint must answer with a post-owned key.
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
       .mockImplementation(async (path: string, body: unknown) => {
+        if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
+          return mockImportResponse(body);
+        }
         if (typeof path === 'string' && path.includes('copy-library-media')) {
           return {
             storageKey: copyKey,
@@ -568,12 +626,17 @@ describe('PublishNowPage wizard', () => {
       firstCommentReason: null,
     });
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
-      .mockImplementation(async () => ({
-        results: [
-          restricted('page-111', 'Maddie Lippy'),
-          restricted('page-222', 'Sunnie James'),
-        ],
-      }));
+      .mockImplementation(async (path: string, body: unknown) => {
+        if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
+          return mockImportResponse(body);
+        }
+        return {
+          results: [
+            restricted('page-111', 'Maddie Lippy'),
+            restricted('page-222', 'Sunnie James'),
+          ],
+        };
+      });
 
     await reachComposer();
     fireEvent.change(screen.getByPlaceholderText("What's on your mind?"), {
@@ -729,8 +792,11 @@ describe('PublishNowPage wizard', () => {
       mockRejectedValueOnce: (error: unknown) => void;
       mockResolvedValueOnce: (value: unknown) => void;
     };
-    postMock.mockRejectedValueOnce(new Error('Network down'));
+    // The once-queue is armed AFTER reachComposer: the import POST
+    // runs during the wizard, and the queued failures are for the
+    // publish calls below, not the import.
     await reachComposer();
+    postMock.mockRejectedValueOnce(new Error('Network down'));
     fireEvent.change(screen.getByPlaceholderText("What's on your mind?"), {
       target: { value: 'Hello' },
     });
@@ -757,7 +823,10 @@ describe('PublishNowPage wizard', () => {
   it('guards over-limit text and mismatched device and library media', { timeout: 15000 }, async () => {
     const publishCalls: Array<unknown> = [];
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
-      .mockImplementation(async (_path: string, body: unknown) => {
+      .mockImplementation(async (path: string, body: unknown) => {
+        if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
+          return mockImportResponse(body);
+        }
         publishCalls.push(body);
         return { results: [] };
       });
@@ -830,8 +899,8 @@ describe('PublishNowPage wizard', () => {
     }
   });
 
-  it('shows a plain error when page discovery fails', async () => {
-    mockDiscoverShouldFail = true;
+  it('shows a plain error when the page import fails', async () => {
+    mockImportShouldFail = true;
     try {
       renderPage();
       await waitFor(
@@ -850,7 +919,7 @@ describe('PublishNowPage wizard', () => {
         { timeout: 5000 }
       );
     } finally {
-      mockDiscoverShouldFail = false;
+      mockImportShouldFail = false;
     }
   });
 });

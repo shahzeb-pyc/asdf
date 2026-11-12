@@ -9,7 +9,6 @@ import {
   PublishNowImportRequestSchema,
   PublishNowImportResponseSchema,
   verifySessionToken,
-  type Database,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import {
@@ -59,7 +58,7 @@ interface PublishNowCopyRow {
 export async function handleImportPublishNowPages(
   request: NextRequest,
   subdomain: string,
-  dbClient?: SupabaseClient<Database>
+  dbClient?: SupabaseClient
 ): Promise<NextResponse> {
   const limited = await enforceIpRateLimit(request, 'tenant_publish_now_import', 20);
   if (limited) return limited;
@@ -89,7 +88,7 @@ export async function handleImportPublishNowPages(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const supabase = (dbClient ?? getSupabaseAdminClient()) as SupabaseClient<Database> | null;
+  const supabase = (dbClient ?? getSupabaseAdminClient()) as SupabaseClient | null;
   if (!supabase) {
     return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
   }
@@ -204,7 +203,8 @@ export async function handleImportPublishNowPages(
       continue;
     }
     const existingByFbId = new Map<string, PublishNowCopyRow>();
-    for (const row of (existingRows ?? []) as unknown as PublishNowCopyRow[]) {
+    // existingError is handled above, so data is the row array here.
+    for (const row of existingRows as unknown as PublishNowCopyRow[]) {
       existingByFbId.set(row.external_destination_id, row);
     }
 
