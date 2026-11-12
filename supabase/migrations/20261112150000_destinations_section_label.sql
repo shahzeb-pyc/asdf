@@ -84,15 +84,15 @@ end $$;
 -- 4. Delete the 16 owner-confirmed no-evidence Facebook rows.
 --    Exact list: evidence/census-no-evidence-2026-11-12.csv, re-counted
 --    fresh at build time (identical set). Fail if any of them gained
---    evidence since the census — that row is a real page now.
+--    evidence since the census — that row is a real page now. The
+--    post-delete check is absence, not an exact count: on a fresh
+--    database (CI rigs, new deploys) the rows never existed, so
+--    deleting 0 is correct there; what must hold everywhere is that
+--    none of the 16 remain afterwards.
 do $$
 declare
   v_bad integer;
-  v_deleted integer;
-begin
-  select count(*) into v_bad
-  from _dest_evidence_174 e
-  where e.id = any (array[
+  v_ids uuid[] := array[
     'e3a6a989-eeb3-44e6-a157-4c5ff1b364f8',
     'f78eaf14-94a5-421c-8e54-b81915e17135',
     '6258695c-b29c-44b6-b028-76bd2e940afa',
@@ -109,58 +109,48 @@ begin
     '24113f75-6e00-41fa-a25e-c6099697139c',
     'a8dc82af-bf5e-4cb6-9441-41cebe1b8406',
     'e820b678-c35b-4bbd-8005-dcd050eb7b95'
-  ]::uuid[])
+  ]::uuid[];
+begin
+  select count(*) into v_bad
+  from _dest_evidence_174 e
+  where e.id = any (v_ids)
     and (e.has_sched or e.has_adu or e.has_mirror);
   if v_bad > 0 then
     raise exception 'spec 174 1A: % of the 16 confirmed no-evidence rows gained evidence; re-count before applying', v_bad;
   end if;
 
-  delete from public.destinations
-  where id = any (array[
-    'e3a6a989-eeb3-44e6-a157-4c5ff1b364f8',
-    'f78eaf14-94a5-421c-8e54-b81915e17135',
-    '6258695c-b29c-44b6-b028-76bd2e940afa',
-    'c6a7f476-b0b1-4690-9e3e-4d6cad907ede',
-    '63b31526-a956-43d6-b8e3-8c892d6ae010',
-    '1ebd7a14-0ce9-4273-b243-147e60763f26',
-    '382097bf-292c-45de-9ff9-c087617acfef',
-    'bd40cee4-863e-4fc6-ba57-1583b4ca634e',
-    'f4699dd3-d83e-4f93-ac61-0fc35a2928c6',
-    'db7475a8-c143-49e2-93ee-3823ffb9debf',
-    'd7311301-58a9-4ed1-b3e0-65bb87745fe7',
-    'e69663b5-04b4-4dcc-8fa1-6276aa7a563e',
-    '25384b0d-6bad-49a1-ac8e-82c1653de8dd',
-    '24113f75-6e00-41fa-a25e-c6099697139c',
-    'a8dc82af-bf5e-4cb6-9441-41cebe1b8406',
-    'e820b678-c35b-4bbd-8005-dcd050eb7b95'
-  ]::uuid[]);
-  get diagnostics v_deleted = row_count;
-  if v_deleted <> 16 then
-    raise exception 'spec 174 1A: expected to delete 16 no-evidence rows, deleted %', v_deleted;
+  delete from public.destinations where id = any (v_ids);
+
+  select count(*) into v_bad
+  from public.destinations
+  where id = any (v_ids);
+  if v_bad > 0 then
+    raise exception 'spec 174 1A: % of the 16 confirmed no-evidence rows remain after delete', v_bad;
   end if;
 end $$;
 
 -- 5. Remove the 1 Instagram row (shahzeb.pxp) as a correction: it is an
 --    account, not a page. The account row in social_accounts is untouched.
+--    Same absence check as above: the row may never have existed.
 do $$
 declare
   v_bad integer;
-  v_deleted integer;
+  v_ig uuid := 'a6a8ac7c-a449-4f2c-a959-aefda650f2e1'::uuid;
 begin
   select count(*) into v_bad
   from _dest_evidence_174 e
-  where e.id = 'a6a8ac7c-a449-4f2c-a959-aefda650f2e1'::uuid
+  where e.id = v_ig
     and (e.has_sched or e.has_adu or e.has_mirror);
   if v_bad > 0 then
     raise exception 'spec 174 1A: the shahzeb.pxp row gained section evidence; re-count before applying';
   end if;
 
   delete from public.destinations
-  where id = 'a6a8ac7c-a449-4f2c-a959-aefda650f2e1'::uuid
+  where id = v_ig
     and platform = 'instagram';
-  get diagnostics v_deleted = row_count;
-  if v_deleted <> 1 then
-    raise exception 'spec 174 1A: expected to remove 1 Instagram row, removed %', v_deleted;
+
+  if exists (select 1 from public.destinations where id = v_ig) then
+    raise exception 'spec 174 1A: the shahzeb.pxp row remains after delete';
   end if;
 end $$;
 

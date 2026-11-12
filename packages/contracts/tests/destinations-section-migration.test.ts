@@ -66,13 +66,15 @@ describe('spec 174 PR 1A migration file', () => {
     // The delete is guarded by a still-no-evidence assertion: if one of
     // the 16 gained evidence since the census, the migration fails.
     expect(sql).toMatch(/gained evidence; re-count before applying/);
-    // …and the delete count itself is asserted.
-    expect(sql).toMatch(/expected to delete 16 no-evidence rows/);
+    // …and the post-delete check is absence, not an exact count: on a
+    // fresh database the rows never existed, so deleting 0 is correct
+    // there. What must hold everywhere is that none of the 16 remain.
+    expect(sql).toMatch(/remain after delete/);
   });
 
   it('removes the shahzeb.pxp Instagram row as a correction', () => {
     expect(sql).toContain(INSTAGRAM_CORRECTION_ID);
-    expect(sql).toMatch(/expected to remove 1 Instagram row/);
+    expect(sql).toMatch(/the shahzeb\.pxp row remains after delete/);
   });
 
   it('deletes orphaned usage rows and splits multi-section rows with provenance', () => {
