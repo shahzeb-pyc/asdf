@@ -104,6 +104,7 @@ export async function aduDestinationKeysForCap(
     .select('id, external_destination_id')
     .eq('workspace_id', workspaceId)
     .eq('platform', platform)
+    .eq('section', 'adu')
     .in('id', ids);
   if (error) {
     throw new Error(`ADU cap key lookup failed: ${error.message}`);
@@ -323,6 +324,7 @@ export async function loadAduOptionsLists(
       .select('id, account_id, external_destination_id, name, avatar_url, status, metadata')
       .eq('workspace_id', workspaceId)
       .eq('platform', 'facebook')
+      .eq('section', 'adu')
       .order('name')
       .range(from, to),
   );
@@ -490,6 +492,7 @@ export async function ensureAduDestination(
     .eq('workspace_id', workspaceId)
     .eq('account_id', accountId)
     .eq('platform', 'facebook')
+    .eq('section', 'adu')
     .eq('external_destination_id', page.fbPageId)
     .maybeSingle();
   if (existingError) {
@@ -529,6 +532,7 @@ export async function ensureAduDestination(
         workspace_id: workspaceId,
         account_id: accountId,
         platform: 'facebook',
+        section: 'adu',
         external_destination_id: page.fbPageId,
         name: page.pageName,
         avatar_url: page.profilePictureUrl,
@@ -537,7 +541,7 @@ export async function ensureAduDestination(
         metadata: nextMetadata,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: 'account_id,external_destination_id' },
+      { onConflict: 'account_id,external_destination_id,section' },
     )
     .select('id')
     .single();
@@ -645,6 +649,7 @@ export async function buildAduConfigView(
     .from('destinations')
     .select('id, name, external_destination_id, avatar_url, status, account_id, handle, platform, social_accounts(display_name, avatar_url)')
     .eq('id', config.destination_id)
+    .eq('section', 'adu')
     .maybeSingle();
   const dest = destination as DestinationJoin | null;
   // Bounded counts only: the old code loaded every reel and every job
