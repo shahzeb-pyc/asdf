@@ -769,7 +769,7 @@ const EMPTY_DISCOVER_ENTRY: DiscoverEntry = {
 async function executeDiscoverPages(subdomain: string, accountId: string) {
   try {
     const data = await api.get(
-      buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover`),
+      buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover?section=adu`),
       { schema: DiscoverPagesResponseSchema },
     );
     return {
