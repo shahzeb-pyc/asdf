@@ -579,8 +579,60 @@ export const AduBulkCreateSchema = z.object({
 });
 export type AduBulkCreate = z.infer<typeof AduBulkCreateSchema>;
 
+/**
+ * Instagram/Threads ADU create (spec 174 2A): the import sources the
+ * CONNECTED ACCOUNT, never a destinations row — connect creates no
+ * rows anymore, so the Add dialog posts the account id and the route
+ * creates the adu copy from the account. Facebook keeps the
+ * destination-based schemas above (its Add dialog picks real pages
+ * live from Graph, so it still posts a destination id).
+ */
+export const AduAccountCreateConfigSchema = z
+  .object({
+    accountId: z.string().uuid(),
+    sourcePlatform: AduSourcePlatformSchema,
+    sourceUsername: z.string().min(1).max(255),
+    timezone: z.string().min(1).max(100).default('Asia/Karachi'),
+    postsPerDay: z.number().int().min(1).max(12),
+    scheduleType: z.enum(['dailyrandom', 'fixed']).default('dailyrandom'),
+    postingTimes: z.array(AduTimeOfDaySchema).optional(),
+    displayName: z.string().min(1).max(255).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.scheduleType === 'fixed') {
+      if (
+        !value.postingTimes ||
+        value.postingTimes.length !== value.postsPerDay
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Fixed posting requires ${value.postsPerDay} posting times.`,
+          path: ['postingTimes'],
+        });
+      }
+    }
+  });
+export type AduAccountCreateConfig = z.infer<typeof AduAccountCreateConfigSchema>;
+
+export const AduAccountBulkItemSchema = z.object({
+  accountId: z.string().uuid(),
+  sourcePlatform: AduSourcePlatformSchema,
+  sourceUsername: z.string().min(1).max(255),
+  schedule: AduBulkItemScheduleSchema.optional(),
+});
+export type AduAccountBulkItem = z.infer<typeof AduAccountBulkItemSchema>;
+
+export const AduAccountBulkCreateSchema = z.object({
+  items: z.array(AduAccountBulkItemSchema).min(1).max(1000),
+  timezone: z.string().min(1).max(100).default('Asia/Karachi'),
+  postsPerDay: z.number().int().min(1).max(12),
+  scheduleType: z.enum(['dailyrandom', 'fixed']).default('dailyrandom'),
+  postingTimes: z.array(z.string()).optional(),
+});
+export type AduAccountBulkCreate = z.infer<typeof AduAccountBulkCreateSchema>;
+
 export function resolveAduBulkItemSchedule(
-  item: AduBulkItem,
+  item: AduBulkItem | AduAccountBulkItem,
   shared: { timezone: string; postsPerDay: number; postingTimes?: string[] | undefined },
 ): { timezone: string; postsPerDay: number; postingTimes: string[] | undefined } {
   return {
@@ -593,7 +645,7 @@ export function resolveAduBulkItemSchedule(
 /** Fixed-times validation for a bulk create, in route order: the
  * shared schedule first, then each per-item schedule. Returns the
  * old error wording, or null when the request is valid. */
-export function validateAduBulkFixedTimes(data: AduBulkCreate): string | null {
+export function validateAduBulkFixedTimes(data: AduBulkCreate | AduAccountBulkCreate): string | null {
   if (data.scheduleType !== 'fixed') return null;
   if (!data.postingTimes || data.postingTimes.length !== data.postsPerDay) {
     return `Fixed posting requires ${data.postsPerDay} posting times.`;
