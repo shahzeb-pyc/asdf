@@ -106,6 +106,9 @@ describe('Import with timezone + posting times', () => {
   }) {
     const timezoneUpdates: unknown[][] = [];
     const restoreUpdates: unknown[][] = [];
+    // Spec 174 1B: the rollback disconnect is an UPDATE, not a
+    // DELETE — capture its SQL so tests can pin the section scope.
+    const restoreSqls: string[] = [];
     const slotInserts: unknown[][] = [];
     const upsertSqls: string[] = [];
     const deleteQueries: string[] = [];
@@ -193,6 +196,7 @@ describe('Import with timezone + posting times', () => {
         if (sql.includes('UPDATE destinations')) {
           if (sql.includes('SET status')) {
             restoreUpdates.push(params);
+            restoreSqls.push(sql);
             return Promise.resolve([{ id: params[2] }]);
           }
           timezoneUpdates.push(params);
@@ -212,6 +216,7 @@ describe('Import with timezone + posting times', () => {
       mockDb,
       timezoneUpdates,
       restoreUpdates,
+      restoreSqls,
       slotInserts,
       upsertSqls,
       deleteQueries,
@@ -315,7 +320,7 @@ describe('Import with timezone + posting times', () => {
 
   it('a schedule failure returns the distinct schedule error and rolls back the pages created in this call', async () => {
     mockGraphPages();
-    const { mockDb, deleteQueries } = makeMockDb({
+    const { mockDb, deleteQueries, restoreUpdates, restoreSqls } = makeMockDb({
       failTimezoneFor: pageUuids.page_1002,
     });
 
@@ -331,12 +336,27 @@ describe('Import with timezone + posting times', () => {
     expect(json.error).toContain(
       "Couldn't save the posting times — try again, your timezone and times are kept"
     );
-    // Rollback: slots first, then the destinations created here.
+    // Rollback: slots first, then the destinations created here are
+    // DISCONNECTED (spec 174 1B), never deleted — one batched
+    // disconnect UPDATE, section-scoped, token cleared.
     expect(
       deleteQueries.some((sql) => sql.startsWith('DELETE FROM posting_slots'))
     ).toBe(true);
     expect(
       deleteQueries.some((sql) => sql.startsWith('DELETE FROM destinations'))
+    ).toBe(false);
+    expect(restoreUpdates).toHaveLength(1);
+    expect(restoreUpdates[0]).toEqual([
+      [pageUuids.page_1001, pageUuids.page_1002],
+      'ws_123',
+    ]);
+    expect(
+      restoreSqls.some(
+        (sql) =>
+          sql.includes("status = 'disconnected'") &&
+          sql.includes("timezone = 'UTC'") &&
+          sql.includes("section = 'schedule'")
+      )
     ).toBe(true);
   });
 
@@ -426,7 +446,7 @@ describe('Import with timezone + posting times', () => {
     expect(times).toEqual(['09:00', '17:30']);
   });
 
-  it('a schedule failure after reactivation restores disconnected status, old timezone and old slots without deleting the destination', async () => {
+  it('a schedule failure after reactivation restores disconnected status, old timezone and old slots, and disconnects the new page instead of deleting it', async () => {
     mockGraphPages();
     const { mockDb, restoreUpdates, slotInserts, deleteCalls } = makeMockDb({
       preExisting: [{ fbPageId: 'page_1001', status: 'disconnected' }],
@@ -441,17 +461,18 @@ describe('Import with timezone + posting times', () => {
     expect(res.status).toBe(500);
     const json = await res.json();
     expect(json.code).toBe('SCHEDULE_FAILED');
-    // The newly created page is deleted; the reactivated page is
-    // never in a destinations delete.
+    // Spec 174 1B: no destination is ever deleted on rollback — the
+    // newly created page is disconnected by the batched UPDATE
+    // (first restore), the reactivated page is restored (second).
     const destinationDeletes = deleteCalls.filter(
       ([sql]) => sql.startsWith('DELETE FROM destinations')
     );
-    expect(destinationDeletes).toHaveLength(1);
-    expect(destinationDeletes[0]?.[1]?.[0]).toEqual([pageUuids.page_1002]);
+    expect(destinationDeletes).toHaveLength(0);
+    expect(restoreUpdates).toHaveLength(2);
+    expect(restoreUpdates[0]).toEqual([[pageUuids.page_1002], 'ws_123']);
     // The reactivated page is restored to disconnected with its
     // old timezone, and its old 08:00 slot is re-inserted.
-    expect(restoreUpdates).toHaveLength(1);
-    expect(restoreUpdates[0]?.slice(0, 3)).toEqual([
+    expect(restoreUpdates[1]?.slice(0, 3)).toEqual([
       'disconnected',
       'America/New_York',
       pageUuids.page_1001,
@@ -481,8 +502,11 @@ describe('Import with timezone + posting times', () => {
     // carries ['disconnected', pageId, workspaceId], never a
     // fabricated timezone.
     expect(timezoneUpdates).toHaveLength(0);
-    expect(restoreUpdates).toHaveLength(1);
-    expect(restoreUpdates[0]).toEqual([
+    // Two restores: the created page is disconnected first (batched
+    // UPDATE), then the reactivated page is restored status-only.
+    expect(restoreUpdates).toHaveLength(2);
+    expect(restoreUpdates[0]).toEqual([[pageUuids.page_1002], 'ws_123']);
+    expect(restoreUpdates[1]).toEqual([
       'disconnected',
       pageUuids.page_1001,
       'ws_123',
@@ -494,7 +518,7 @@ describe('Import with timezone + posting times', () => {
     ).toBe(false);
   });
 
-  it('a mixed batch failure deletes the new page, restores the reactivated page, and leaves the active page untouched', async () => {
+  it('a mixed batch failure disconnects the new page, restores the reactivated page, and leaves the active page untouched', async () => {
     global.fetch = vi.fn().mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -554,15 +578,16 @@ describe('Import with timezone + posting times', () => {
     expect(new Set(timezoneUpdates.map((params) => params[1]))).toEqual(
       new Set([pageUuids.page_1001, pageUuids.page_1003])
     );
-    // Rollback deletes only the new page and restores only the
-    // reactivated one; the active page appears in neither.
+    // Rollback disconnects only the new page and restores only
+    // the reactivated one (spec 174 1B: never a delete); the active
+    // page appears in neither.
     const destinationDeletes = deleteCalls.filter(
       ([sql]) => sql.startsWith('DELETE FROM destinations')
     );
-    expect(destinationDeletes).toHaveLength(1);
-    expect(destinationDeletes[0]?.[1]?.[0]).toEqual([pageUuids.page_1003]);
-    expect(restoreUpdates).toHaveLength(1);
-    expect(restoreUpdates[0]?.slice(0, 3)).toEqual([
+    expect(destinationDeletes).toHaveLength(0);
+    expect(restoreUpdates).toHaveLength(2);
+    expect(restoreUpdates[0]).toEqual([[pageUuids.page_1003], 'ws_123']);
+    expect(restoreUpdates[1]?.slice(0, 3)).toEqual([
       'disconnected',
       'America/New_York',
       pageUuids.page_1001,
@@ -958,6 +983,16 @@ describe('Import with timezone + posting times', () => {
           if (options?.failExistingQuery) {
             return { data: null, error: { message: 'existing boom' } };
           }
+          // Spec 174 1B: the rollback loads the created rows by id
+          // (filters.id); only the existing-load select (no id
+          // filter) returns the pre-existing entries.
+          if (this.filters.id) {
+            const ids = this.filters.id as string[];
+            return {
+              data: ids.map((id) => ({ id, metadata: {} })),
+              error: null,
+            };
+          }
           existingLoadFilters.push({ ...this.filters });
           return {
             data: existingEntries.map((entry) => ({
@@ -1040,9 +1075,9 @@ describe('Import with timezone + posting times', () => {
     ).toEqual(['09:00', '17:30']);
   });
 
-  it('a Supabase schedule failure returns the distinct error and deletes the created pages', async () => {
+  it('a Supabase schedule failure returns the distinct error and disconnects the created pages', async () => {
     mockGraphPages();
-    const { mockSupabase, deletes } = makeMockSupabase({
+    const { mockSupabase, deletes, restoreUpdates } = makeMockSupabase({
       failScheduleFor: pageUuids.page_1002,
     });
     const res = await handleImportPages(
@@ -1055,14 +1090,15 @@ describe('Import with timezone + posting times', () => {
     expect(json.code).toBe('SCHEDULE_FAILED');
     expect(json.error).toContain("Couldn't save the posting times");
     expect(deletes.some((d) => d.table === 'posting_slots')).toBe(true);
-    expect(deletes.some((d) => d.table === 'destinations')).toBe(true);
-    expect(
-      deletes
-        .filter((d) => d.table === 'destinations')
-        .flatMap((d) => d.filters.id as string[])
-    ).toEqual(
-      expect.arrayContaining([pageUuids.page_1001, pageUuids.page_1002])
-    );
+    // Spec 174 1B: rollback disconnects, never deletes — no
+    // destinations delete; both created pages get a disconnect
+    // update (status disconnected, timezone reset to UTC).
+    expect(deletes.some((d) => d.table === 'destinations')).toBe(false);
+    expect(restoreUpdates).toHaveLength(2);
+    for (const update of restoreUpdates) {
+      expect(update.status).toBe('disconnected');
+      expect(update.timezone).toBe('UTC');
+    }
   });
 
   it('a Supabase reactivated disconnected page gets the new schedule and replaces old slots', async () => {
@@ -1103,7 +1139,7 @@ describe('Import with timezone + posting times', () => {
     ]);
   });
 
-  it('a Supabase schedule failure after reactivation restores the page instead of deleting it', async () => {
+  it('a Supabase schedule failure after reactivation restores the page and disconnects the new page instead of deleting it', async () => {
     mockGraphPages();
     const { mockSupabase, deletes, restoreUpdates } = makeMockSupabase({
       existing: [{ fbPageId: 'page_1001', status: 'disconnected' }],
@@ -1116,17 +1152,21 @@ describe('Import with timezone + posting times', () => {
     );
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBe('SCHEDULE_FAILED');
-    // Only the newly created page is in a destinations delete.
+    // Spec 174 1B: no destinations delete at all — the newly
+    // created page is disconnected, the reactivated page restored.
     const destinationDeletes = deletes.filter(
       (d) => d.table === 'destinations'
     );
-    expect(destinationDeletes).toHaveLength(1);
-    expect(destinationDeletes[0]?.filters.id).toEqual([pageUuids.page_1002]);
+    expect(destinationDeletes).toHaveLength(0);
     // The reactivated page is restored to disconnected with its
-    // old timezone, and its old slot is re-upserted.
-    expect(restoreUpdates).toHaveLength(1);
-    expect(restoreUpdates[0]?.status).toBe('disconnected');
-    expect(restoreUpdates[0]?.timezone).toBe('America/New_York');
+    // old timezone, and its old slot is re-upserted; the created
+    // page is disconnected with timezone reset to UTC.
+    expect(restoreUpdates).toHaveLength(2);
+    expect(restoreUpdates.some((u) => u.timezone === 'America/New_York')).toBe(true);
+    expect(restoreUpdates.some((u) => u.timezone === 'UTC')).toBe(true);
+    for (const update of restoreUpdates) {
+      expect(update.status).toBe('disconnected');
+    }
   });
 
   it('a Supabase existing-pages query error aborts the import with no upsert and no schedule write', async () => {
@@ -1175,9 +1215,17 @@ describe('Import with timezone + posting times', () => {
     // restore, no slot delete and no destination delete for the
     // reactivated page.
     expect(timezoneUpdates).toHaveLength(0);
-    expect(restoreUpdates).toHaveLength(1);
-    expect(restoreUpdates[0]?.status).toBe('disconnected');
-    expect(restoreUpdates[0]?.timezone).toBeUndefined();
+    // Two restores: the created page is disconnected (timezone
+    // UTC) and the reactivated page is restored status-only
+    // (no timezone field on its restore).
+    expect(restoreUpdates).toHaveLength(2);
+    expect(restoreUpdates.some((u) => u.timezone === 'UTC')).toBe(true);
+    expect(
+      restoreUpdates.filter((u) => u.timezone === undefined)
+    ).toHaveLength(1);
+    for (const update of restoreUpdates) {
+      expect(update.status).toBe('disconnected');
+    }
     expect(
       deletes.some(
         (d) =>
@@ -1209,12 +1257,19 @@ describe('Import with timezone + posting times', () => {
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBe('SCHEDULE_FAILED');
     expect(timezoneUpdates).toHaveLength(0);
-    expect(restoreUpdates).toHaveLength(1);
-    expect(restoreUpdates[0]?.status).toBe('disconnected');
-    expect(restoreUpdates[0]?.timezone).toBeUndefined();
+    // Two restores: the created page is disconnected (timezone
+    // UTC) and the reactivated page is restored status-only.
+    expect(restoreUpdates).toHaveLength(2);
+    expect(restoreUpdates.some((u) => u.timezone === 'UTC')).toBe(true);
+    expect(
+      restoreUpdates.filter((u) => u.timezone === undefined)
+    ).toHaveLength(1);
+    for (const update of restoreUpdates) {
+      expect(update.status).toBe('disconnected');
+    }
   });
 
-  it('a Supabase mixed batch failure deletes the new page, restores the reactivated page, and leaves the active page untouched', async () => {
+  it('a Supabase mixed batch failure disconnects the new page, restores the reactivated page, and leaves the active page untouched', async () => {
     global.fetch = vi.fn().mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -1276,10 +1331,14 @@ describe('Import with timezone + posting times', () => {
     const destinationDeletes = deletes.filter(
       (d) => d.table === 'destinations'
     );
-    expect(destinationDeletes).toHaveLength(1);
-    expect(destinationDeletes[0]?.filters.id).toEqual([pageUuids.page_1003]);
-    expect(restoreUpdates).toHaveLength(1);
-    expect(restoreUpdates[0]?.status).toBe('disconnected');
+    expect(destinationDeletes).toHaveLength(0);
+    // Two restores: the new page is disconnected (timezone UTC),
+    // the reactivated page is restored to disconnected.
+    expect(restoreUpdates).toHaveLength(2);
+    expect(restoreUpdates.some((u) => u.timezone === 'UTC')).toBe(true);
+    for (const update of restoreUpdates) {
+      expect(update.status).toBe('disconnected');
+    }
   });
 
   it('a Supabase retry after a slot failure succeeds without duplicating', async () => {
@@ -1370,9 +1429,12 @@ describe('Import with timezone + posting times', () => {
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBe('SCHEDULE_FAILED');
     // Param order keeps [status, timezone, id] first; the restored
-    // pre-upsert columns follow — never fabricated values.
-    expect(restoreUpdates).toHaveLength(1);
-    expect(restoreUpdates[0]).toEqual([
+    // pre-upsert columns follow — never fabricated values. The
+    // created page's disconnect UPDATE runs first (spec 174 1B),
+    // the reactivated restore second.
+    expect(restoreUpdates).toHaveLength(2);
+    expect(restoreUpdates[0]).toEqual([[pageUuids.page_1002], 'ws_123']);
+    expect(restoreUpdates[1]).toEqual([
       'disconnected',
       'America/New_York',
       pageUuids.page_1001,

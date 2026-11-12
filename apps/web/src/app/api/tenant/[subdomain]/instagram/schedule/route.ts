@@ -22,7 +22,7 @@ import {
 import {
   checkScheduleCap,
   isAddableInstagramAccount,
-  isScheduledDestination,
+  isScheduleListMember,
   isValidTimezone,
   mapDestinationToScheduleItem,
   normalizeScheduleSlotFormats,
@@ -37,10 +37,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * Instagram Schedule list + add routes.
  *
  * Membership rule (see lib/server/instagram-schedule): a destination
- * is in Schedule exactly when `destinations.metadata.scheduled` is
- * true. The list therefore filters on that flag, never on a separate
- * table, and Add is an opt-in on an already-connected Instagram
- * account — it never auto-adds accounts and never connects a new one.
+ * is in Schedule exactly when its `section` is 'schedule' and it is
+ * not a removed stub (a disconnected copy whose scheduled flag was
+ * cleared). The list therefore filters on the section column, never
+ * on a separate table, and Add is an opt-in on an already-connected
+ * Instagram account — it never auto-adds accounts and never connects
+ * a new one.
  *
  * Retry safety for Add (no generic idempotency store is reused here,
  * to avoid touching shared queue code owned by other surfaces):
@@ -130,7 +132,7 @@ async function handleListSql(
   const conditions = [
     'd.workspace_id = $1',
     "d.platform = 'instagram'",
-    "d.metadata->>'scheduled' = 'true'",
+    "d.section = 'schedule' AND (d.status <> 'disconnected' OR d.metadata->>'scheduled' = 'true')",
   ];
   if (search) {
     const p = `$${params.length + 1}`;
@@ -198,8 +200,8 @@ async function handleListSupabase(
   page: number,
   limit: number
 ): Promise<NextResponse> {
-  // Bounded fetch, matching the SQL path's scheduled-only
-  // membership: the DB filter keeps unscheduled destinations out
+  // Bounded fetch, matching the SQL path's schedule-only
+  // membership: the DB filter keeps non-schedule destinations out
   // entirely, and .range() chunks keep every single PostgREST
   // response to at most 200 rows instead of one unbounded fetch.
   // Search/status/account filtering and the page window still
@@ -214,11 +216,11 @@ async function handleListSupabase(
     const { data: chunk, error: destError } = await supabase
       .from('destinations')
       .select(
-        'id, account_id, timezone, status, metadata, name, handle, avatar_url, created_at, updated_at'
+        'id, account_id, timezone, status, section, metadata, name, handle, avatar_url, created_at, updated_at'
       )
       .eq('workspace_id', workspaceId)
       .eq('platform', 'instagram')
-      .eq('metadata->>scheduled', 'true')
+      .eq('section', 'schedule')
       .order('created_at', { ascending: false })
       .range(listOffset, listOffset + LIST_CHUNK - 1);
     if (destError) {
@@ -234,9 +236,7 @@ async function handleListSupabase(
     if (chunk.length < LIST_CHUNK) break;
     listOffset += LIST_CHUNK;
   }
-  const scheduled = destinations.filter((d) =>
-    isScheduledDestination(parseDestinationMetadata(d.metadata))
-  );
+  const scheduled = destinations.filter((d) => isScheduleListMember(d));
   const accountIds = [...new Set(scheduled.map((d) => d.account_id))];
   const { data: accounts } = await supabase
     .from('social_accounts')
@@ -394,10 +394,11 @@ interface AddContext {
   account: InstagramScheduleAccountRow & {
     external_account_id?: string | null;
   };
+  // The account's Schedule copy, any status — null when the account
+  // was never imported into Schedule. A removed stub (disconnected,
+  // flag cleared) is reactivated by the add; an active member 409s.
   destination: InstagramScheduleDestinationRow | null;
-  destinationCreated: boolean;
-  previousTimezone: string | null;
-  previousScheduled: boolean;
+  destinationIsMember: boolean;
 }
 
 async function fetchAddContextSql(
@@ -421,24 +422,21 @@ async function fetchAddContextSql(
     };
   }
   const destRows = await dbClient.query<InstagramScheduleDestinationRow>(
-    `SELECT id, account_id, timezone, status, metadata, name, handle, avatar_url, created_at, updated_at
+    `SELECT id, account_id, timezone, status, section, metadata, name, handle, avatar_url, created_at, updated_at
      FROM destinations
-     WHERE account_id = $1 AND workspace_id = $2 AND platform = 'instagram'
+     WHERE account_id = $1 AND workspace_id = $2 AND platform = 'instagram' AND section = 'schedule'
      ORDER BY created_at ASC LIMIT 1`,
     [accountId, workspaceId]
   );
   const destination = destRows[0] ?? null;
+  const parsed = destination
+    ? { ...destination, metadata: parseDestinationMetadata(destination.metadata) }
+    : null;
   return {
     workspaceId,
     account,
-    destination: destination
-      ? { ...destination, metadata: parseDestinationMetadata(destination.metadata) }
-      : null,
-    destinationCreated: false,
-    previousTimezone: destination?.timezone ?? null,
-    previousScheduled: destination
-      ? isScheduledDestination(parseDestinationMetadata(destination.metadata))
-      : false,
+    destination: parsed,
+    destinationIsMember: parsed !== null && isScheduleListMember(parsed),
   };
 }
 
@@ -460,7 +458,7 @@ async function handleAddSql(
       { status: 400 }
     );
   }
-  if (context.destination && context.previousScheduled) {
+  if (context.destination && context.destinationIsMember) {
     return NextResponse.json(
       { error: 'This account is already in Schedule.' },
       { status: 409 }
@@ -468,7 +466,8 @@ async function handleAddSql(
   }
   const countRows = await dbClient.query<{ total?: unknown }>(
     `SELECT COUNT(*)::int AS total FROM destinations
-     WHERE workspace_id = $1 AND platform = 'instagram' AND metadata->>'scheduled' = 'true'`,
+     WHERE workspace_id = $1 AND platform = 'instagram' AND section = 'schedule'
+       AND (status <> 'disconnected' OR metadata->>'scheduled' = 'true')`,
     [workspaceId]
   );
   const cap = checkScheduleCap(numericCount(countRows[0]?.total));
@@ -481,19 +480,24 @@ async function handleAddSql(
   const insertedSlotIds: string[] = [];
   try {
     if (context.destination) {
+      // A removed stub: reactivate the Schedule copy in place (the
+      // unique key (account, external, section) forbids inserting a
+      // second schedule copy). The stub's token was stripped on
+      // removal; publishing reads the account token at publish time,
+      // so the copy needs no token of its own.
       destinationId = context.destination.id;
       const merged = {
         ...(context.destination.metadata ?? {}),
         scheduled: true,
       };
       await dbClient.query(
-        `UPDATE destinations SET timezone = $1, metadata = $2::jsonb, updated_at = now() WHERE id = $3`,
+        `UPDATE destinations SET status = 'active', timezone = $1, metadata = $2::jsonb, updated_at = now() WHERE id = $3`,
         [timezone, JSON.stringify(merged), destinationId]
       );
     } else {
       const inserted = await dbClient.query<{ id: string }>(
-        `INSERT INTO destinations (workspace_id, account_id, platform, external_destination_id, name, handle, avatar_url, timezone, status, metadata)
-         VALUES ($1, $2, 'instagram', $3, $4, $5, $6, $7, 'active', $8::jsonb) RETURNING id`,
+        `INSERT INTO destinations (workspace_id, account_id, platform, section, external_destination_id, name, handle, avatar_url, timezone, status, metadata)
+         VALUES ($1, $2, 'instagram', 'schedule', $3, $4, $5, $6, $7, 'active', $8::jsonb) RETURNING id`,
         [
           workspaceId,
           accountId,
@@ -563,14 +567,17 @@ async function handleAddSql(
           destinationId,
         ]);
       } else if (context.destination) {
+        // Reactivation rollback: restore the stub's own state
+        // (disconnected, its timezone, its metadata).
         const restored = {
           ...(context.destination.metadata ?? {}),
         };
         delete restored.scheduled;
         await dbClient.query(
-          `UPDATE destinations SET timezone = $1, metadata = $2::jsonb, updated_at = now() WHERE id = $3`,
+          `UPDATE destinations SET status = $1, timezone = $2, metadata = $3::jsonb, updated_at = now() WHERE id = $4`,
           [
-            context.previousTimezone ?? 'UTC',
+            context.destination.status ?? 'disconnected',
+            context.destination.timezone ?? 'UTC',
             JSON.stringify(restored),
             context.destination.id,
           ]
@@ -674,35 +681,42 @@ export async function handleAddInstagramSchedule(
     }
     const { data: existingDest } = await supabase
       .from('destinations')
-      .select('id, timezone, metadata, external_destination_id')
+      .select('id, timezone, status, section, metadata, external_destination_id')
       .eq('account_id', accountId)
       .eq('workspace_id', auth.workspaceId)
       .eq('platform', 'instagram')
+      .eq('section', 'schedule')
       .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle();
-    const previousScheduled = existingDest
-      ? isScheduledDestination(parseDestinationMetadata(existingDest.metadata))
+    const existingIsMember = existingDest
+      ? isScheduleListMember({
+          section: existingDest.section as string | null,
+          status: existingDest.status as string | null,
+          metadata: parseDestinationMetadata(existingDest.metadata),
+        })
       : false;
-    if (existingDest && previousScheduled) {
+    if (existingDest && existingIsMember) {
       return NextResponse.json(
         { error: 'This account is already in Schedule.' },
         { status: 409 }
       );
     }
     // Scheduled-only count, matching the SQL path exactly: a
-    // destination counts only when metadata.scheduled is true, so
-    // merely-connected (unscheduled) Instagram destinations never
-    // consume the cap. The cap hook is the same checkScheduleCap()
-    // the SQL path calls — with IG_SCHEDULE_COUNT_CAP null today
-    // this allows everything, and the moment a cap is set both
-    // paths enforce it identically.
+    // destination counts only when it is a Schedule member (section
+    // 'schedule' and not a removed stub), so merely-connected
+    // (unscheduled) Instagram destinations never consume the cap.
+    // The cap hook is the same checkScheduleCap() the SQL path
+    // calls — with IG_SCHEDULE_COUNT_CAP null today this allows
+    // everything, and the moment a cap is set both paths enforce it
+    // identically.
     const { count: scheduledCount, error: countError } = await supabase
       .from('destinations')
       .select('id', { count: 'exact', head: true })
       .eq('workspace_id', auth.workspaceId)
       .eq('platform', 'instagram')
-      .eq('metadata->>scheduled', 'true');
+      .eq('section', 'schedule')
+      .or('status.neq.disconnected,metadata->>scheduled.eq.true');
     if (countError) {
       logServerError('[instagram-schedule] add scheduled count failed', countError, {
         source: 'instagram-schedule-add',
@@ -758,18 +772,25 @@ export async function handleAddInstagramSchedule(
     let destinationId = '';
     let destinationCreated = false;
     let previousTimezone: string | null = null;
+    let previousStatus: string | null = null;
     const insertedSlotIds: string[] = [];
     try {
       if (existingDest) {
+        // A removed stub: reactivate the Schedule copy in place (the
+        // unique key (account, external, section) forbids inserting a
+        // second schedule copy). The stub's token was stripped on
+        // removal; publishing reads the account token at publish
+        // time, so the copy needs no token of its own.
         destinationId = existingDest.id;
         previousTimezone = existingDest.timezone ?? null;
+        previousStatus = existingDest.status ?? null;
         const merged = {
           ...(parseDestinationMetadata(existingDest.metadata) ?? {}),
           scheduled: true,
         };
         const { error: updateError } = await supabase
           .from('destinations')
-          .update({ timezone, metadata: merged })
+          .update({ status: 'active', timezone, metadata: merged })
           .eq('id', destinationId);
         if (updateError) throw new Error(updateError.message);
       } else {
@@ -779,6 +800,7 @@ export async function handleAddInstagramSchedule(
             workspace_id: auth.workspaceId,
             account_id: accountId,
             platform: 'instagram',
+            section: 'schedule',
             external_destination_id: account.external_account_id ?? accountId,
             name: account.display_name ?? 'Instagram account',
             handle: null,
@@ -869,9 +891,12 @@ export async function handleAddInstagramSchedule(
             .eq('id', destinationId);
           if (destDeleteError) throw new Error(destDeleteError.message);
         } else if (destinationId && existingDest) {
+          // Reactivation rollback: restore the stub's own state
+          // (disconnected, its timezone, its metadata).
           const { error: destRestoreError } = await supabase
             .from('destinations')
             .update({
+              status: previousStatus ?? 'disconnected',
               timezone: previousTimezone ?? 'UTC',
               metadata: parseDestinationMetadata(existingDest.metadata) ?? {},
             })

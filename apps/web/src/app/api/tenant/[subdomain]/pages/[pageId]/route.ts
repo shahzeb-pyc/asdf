@@ -776,9 +776,10 @@ export async function handleDisconnectPage(
       `UPDATE destinations
        SET status = 'disconnected',
            encrypted_destination_token = NULL,
-           metadata = metadata - 'fb_status',
+           timezone = 'UTC',
+           metadata = metadata - 'fb_status' - 'tasks',
            updated_at = now()
-       WHERE id = $1 AND workspace_id = $2 AND platform = 'facebook'
+       WHERE id = $1 AND workspace_id = $2 AND platform = 'facebook' AND section = 'schedule'
        RETURNING id, external_destination_id AS fb_page_id`,
       [pageId, workspaceId]
     )) as Record<string, unknown>[];
@@ -792,7 +793,9 @@ export async function handleDisconnectPage(
 
     // Queued items for a disconnected page are cancelled (the unified
     // vocabulary has no 'skipped'; spec 120 backfilled skipped ->
-    // cancelled).
+    // cancelled). Posting times go too: the row is a disconnected
+    // stub now (spec 174 1B, the removal rule), and a re-add starts
+    // from a clean schedule.
     await dbClient.query(
       `UPDATE queue_items
        SET status = 'cancelled',
@@ -800,6 +803,9 @@ export async function handleDisconnectPage(
        WHERE workspace_id = $1 AND destination_id = $2 AND status = 'queued'`,
       [workspaceId, pageId]
     );
+    await dbClient.query(`DELETE FROM posting_slots WHERE destination_id = $1`, [
+      pageId,
+    ]);
   } else {
     const supabase = (dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()) as SupabaseClient | null;
     if (!supabase) {
@@ -838,6 +844,11 @@ export async function handleDisconnectPage(
       ...((existing.metadata as Record<string, unknown> | null) ?? {}),
     };
     delete nextMetadata[PAUSED_MARKER_KEY];
+    // The removal rule (spec 174 1B): the page's working data goes
+    // with the disconnect — tasks are stripped from metadata, the
+    // timezone resets, and posting times are deleted below. Identity,
+    // followers and the section stay on the row.
+    delete nextMetadata.tasks;
 
     // B2 ordering: cancel queued posts FIRST, then disconnect.
     // The old order disconnected first and ignored the cancel
@@ -869,17 +880,35 @@ export async function handleDisconnectPage(
       );
     }
 
+    const { error: slotsError } = await supabase
+      .from('posting_slots')
+      .delete()
+      .eq('destination_id', pageId);
+
+    if (slotsError) {
+      logServerError('[pages] Posting times delete failed on disconnect', slotsError, {
+        source: 'page-disconnect',
+        pageId,
+      });
+      return NextResponse.json(
+        { error: 'Failed to disconnect page' },
+        { status: 500 }
+      );
+    }
+
     const { data: updated, error } = await supabase
       .from('destinations')
       .update({
         status: 'disconnected',
         encrypted_destination_token: null,
+        timezone: 'UTC',
         metadata: nextMetadata,
         updated_at: new Date().toISOString(),
       })
       .eq('id', pageId)
       .eq('workspace_id', workspaceId)
       .eq('platform', 'facebook')
+      .eq('section', 'schedule')
       .select('id, external_destination_id');
 
     // Same 404 discipline as the read above: an update error is a

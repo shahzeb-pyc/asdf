@@ -412,6 +412,8 @@ export function destinationRow(overrides: Partial<Row> = {}): Row {
     avatar_url: null,
     timezone: 'UTC',
     status: 'active',
+    // Spec 174 1B: Threads Schedule rows are the schedule copies.
+    section: 'schedule',
     metadata: { threads_schedule_added_at: '2026-01-01T00:00:00.000Z' },
     workspace_id: 'ws-1',
     created_at: '2026-01-01T00:00:00.000Z',

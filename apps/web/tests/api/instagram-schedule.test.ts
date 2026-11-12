@@ -42,6 +42,9 @@ const detailRow = {
   account_id: ACCOUNT_ID,
   timezone: 'Asia/Karachi',
   status: 'active',
+  // Spec 174 1B: the Schedule list/detail membership read is the
+  // section column — this fixture row is a schedule copy.
+  section: 'schedule',
   metadata: { scheduled: true },
   name: 'Sunset Bakery',
   handle: 'sunset.bakery',
@@ -99,6 +102,13 @@ function mockDb(
       }
       if (sql.includes('SELECT metadata FROM destinations')) {
         return Promise.resolve([{ metadata: { scheduled: true } }]);
+      }
+      // Spec 174 1B: the queue/slotId membership load selects
+      // section, status, metadata — a schedule copy by default.
+      if (sql.includes('SELECT section, status, metadata FROM destinations')) {
+        return Promise.resolve(
+          (overrides.destRows as unknown[] | undefined) ?? [detailRow]
+        );
       }
       if (sql.includes('FROM destinations d')) {
         return Promise.resolve([detailRow]);
@@ -281,6 +291,8 @@ describe('Instagram Schedule API', () => {
           {
             id: DEST_ID,
             timezone: 'Asia/Karachi',
+            status: 'active',
+            section: 'schedule',
             metadata: { scheduled: true },
           },
         ],

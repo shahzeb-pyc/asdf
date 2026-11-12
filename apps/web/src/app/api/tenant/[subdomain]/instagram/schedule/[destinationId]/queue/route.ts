@@ -10,7 +10,7 @@ import {
   type InstagramScheduleQueueItem,
 } from '@/lib/api/schemas/instagram-schedule';
 import {
-  isScheduledDestination,
+  isScheduleListMember,
   parseDestinationMetadata,
 } from '@/lib/server/instagram-schedule';
 import {
@@ -150,13 +150,17 @@ export async function handleListInstagramScheduleQueue(
     let counts: Record<string, number>;
     if (dbClient && 'query' in dbClient) {
       const sql = dbClient as DatabaseClient;
-      const destRows = await sql.query<{ metadata: unknown }>(
-        `SELECT metadata FROM destinations WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' LIMIT 1`,
+      const destRows = await sql.query<{ section: unknown; status: unknown; metadata: unknown }>(
+        `SELECT section, status, metadata FROM destinations WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' AND section = 'schedule' LIMIT 1`,
         [destinationId, auth.workspaceId]
       );
       if (
         !destRows[0] ||
-        !isScheduledDestination(parseDestinationMetadata(destRows[0].metadata))
+        !isScheduleListMember({
+          section: typeof destRows[0].section === 'string' ? destRows[0].section : null,
+          status: typeof destRows[0].status === 'string' ? destRows[0].status : null,
+          metadata: parseDestinationMetadata(destRows[0].metadata),
+        })
       ) {
         return NextResponse.json(
           { error: 'Scheduled account not found.' },
@@ -222,14 +226,19 @@ export async function handleListInstagramScheduleQueue(
       }
       const { data: dest } = await supabase
         .from('destinations')
-        .select('metadata')
+        .select('section, status, metadata')
         .eq('id', destinationId)
         .eq('workspace_id', auth.workspaceId)
         .eq('platform', 'instagram')
+        .eq('section', 'schedule')
         .maybeSingle();
       if (
         !dest ||
-        !isScheduledDestination(parseDestinationMetadata(dest.metadata))
+        !isScheduleListMember({
+          section: dest.section as string | null,
+          status: dest.status as string | null,
+          metadata: parseDestinationMetadata(dest.metadata),
+        })
       ) {
         return NextResponse.json(
           { error: 'Scheduled account not found.' },

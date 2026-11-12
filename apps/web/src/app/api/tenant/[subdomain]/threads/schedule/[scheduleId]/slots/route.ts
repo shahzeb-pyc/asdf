@@ -3,7 +3,7 @@ import { CreateThreadsScheduleSlotRequestSchema } from '@fbuploadpro/contracts';
 import { logServerError } from '@/lib/server-analytics';
 import { authenticateThreadsSchedule } from '@/lib/server/threads-schedule-auth';
 import {
-  isThreadsScheduleAdded,
+  isThreadsScheduleListMember,
   threadsFormatsFromKind,
 } from '@/lib/server/threads-schedule';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
@@ -22,14 +22,15 @@ async function fetchScheduleDestinationId(
 ): Promise<boolean> {
   const { data, error } = await supabase
     .from('destinations')
-    .select('metadata')
+    .select('section, status, metadata')
     .eq('id', scheduleId)
     .eq('workspace_id', workspaceId)
     .eq('platform', 'threads')
+    .eq('section', 'schedule')
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return false;
-  return isThreadsScheduleAdded((data as { metadata: Record<string, unknown> | null }).metadata);
+  return isThreadsScheduleListMember(data as { section: string | null; status: string; metadata: Record<string, unknown> | null });
 }
 
 export async function GET(

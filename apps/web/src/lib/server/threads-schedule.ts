@@ -28,6 +28,7 @@ export interface ThreadsScheduleDestinationRow {
   id: string;
   account_id: string;
   platform: string;
+  section: string | null;
   external_destination_id: string;
   name: string;
   handle: string | null;
@@ -73,6 +74,28 @@ export function scheduleStatusFor(
   });
 }
 
+/**
+ * True when the destination is a member of Threads Schedule as the list
+ * shows it (spec 174 1B). Membership is the section column; a row the
+ * user removed from Schedule is a disconnected stub (status
+ * 'disconnected', added-at flag cleared) and is NOT a member, even
+ * though its section is still 'schedule' — the stub stays saved but
+ * disappears from the list, per the removal rule. A paused row is a
+ * member: pause also stores status 'disconnected', but keeps the
+ * paused marker. A connection-died row (status 'disconnected', flag
+ * still set, no paused marker) is a member too — it shows as
+ * disconnected with reconnect guidance, exactly as before.
+ */
+export function isThreadsScheduleListMember(destination: Pick<
+  ThreadsScheduleDestinationRow,
+  'section' | 'status' | 'metadata'
+>): boolean {
+  if (destination.section !== 'schedule') return false;
+  if (destination.status !== 'disconnected') return true;
+  if (isThreadsSchedulePaused(destination.metadata)) return true;
+  return isThreadsScheduleAdded(destination.metadata);
+}
+
 export async function fetchScheduleDestinations(
   supabase: SupabaseClient,
   workspaceId: string
@@ -83,17 +106,21 @@ export async function fetchScheduleDestinations(
     const { data, error } = await supabase
       .from('destinations')
       .select(
-        'id, account_id, platform, external_destination_id, name, handle, avatar_url, timezone, status, metadata, created_at, updated_at'
+        'id, account_id, platform, section, external_destination_id, name, handle, avatar_url, timezone, status, metadata, created_at, updated_at'
       )
       .eq('workspace_id', workspaceId)
       .eq('platform', 'threads')
+      .eq('section', 'schedule')
       .range(from, from + CHUNK - 1);
     if (error) throw new Error(error.message);
     const page = (data ?? []) as ThreadsScheduleDestinationRow[];
     rows.push(...page);
     if (page.length < CHUNK) break;
   }
-  return rows.filter((row) => isThreadsScheduleAdded(row.metadata));
+  // Membership is the section column now (spec 174 1B), with removed
+  // stubs excluded — see isThreadsScheduleListMember. The added-at
+  // flag itself is left in place until Phase 4 removes it.
+  return rows.filter((row) => isThreadsScheduleListMember(row));
 }
 
 export async function fetchThreadsAccountsById(

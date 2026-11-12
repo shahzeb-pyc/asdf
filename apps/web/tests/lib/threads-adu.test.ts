@@ -135,6 +135,8 @@ function threadsDestination(overrides: Partial<Row> = {}): Row {
     external_destination_id: 'threads-1',
     avatar_url: null,
     status: 'active',
+    // Spec 174 1B: the Threads config view loads the ADU copy.
+    section: 'adu',
     social_accounts: { display_name: 'Owner', avatar_url: null },
     ...overrides,
   };

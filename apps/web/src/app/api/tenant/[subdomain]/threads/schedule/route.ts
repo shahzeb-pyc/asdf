@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
   AddThreadsScheduleRequestSchema,
-  isThreadsScheduleAdded,
   type ThreadsScheduleItem,
 } from '@fbuploadpro/contracts';
 import { logServerError } from '@/lib/server-analytics';
@@ -11,6 +10,7 @@ import {
   fetchScheduleDestinations,
   fetchThreadsAccountsById,
   isAccountExpired,
+  isThreadsScheduleListMember,
   toScheduleItem,
   type ThreadsScheduleDestinationRow,
 } from '@/lib/server/threads-schedule';
@@ -25,13 +25,15 @@ import {
 /**
  * Threads In-app Schedule list + add.
  *
- * List: only destinations whose metadata carries
- * threads_schedule_added_at — connected Threads accounts that were
- * never added here never appear, by design. Add: a connected Threads
- * destination, a validated timezone, and at least one posting time.
- * The flag, timezone, status and slots are written together; a slot
- * failure rolls all of them back (including pre-existing slots) so
- * a half-added account is impossible.
+ * List: only destinations whose section is 'schedule' (spec 174 1B) —
+ * connected Threads accounts that were never added here never appear,
+ * by design. Add: a connected Threads destination, a validated
+ * timezone, and at least one posting time. The add stamps the row's
+ * section to 'schedule' (the import IS the section's copy); a row
+ * that already belongs to another section is never adopted. The flag,
+ * timezone, status and slots are written together; a slot failure
+ * rolls all of them back (including pre-existing slots) so a
+ * half-added account is impossible.
  */
 
 export async function GET(request: NextRequest, props: { params: Promise<{ subdomain: string }> }) {
@@ -121,7 +123,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
     const { data: destination, error: destError } = await supabase
       .from('destinations')
       .select(
-        'id, account_id, platform, external_destination_id, name, handle, avatar_url, timezone, status, metadata, created_at, updated_at'
+        'id, account_id, platform, section, external_destination_id, name, handle, avatar_url, timezone, status, metadata, created_at, updated_at'
       )
       .eq('id', destinationId)
       .eq('workspace_id', workspaceId)
@@ -132,7 +134,20 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
     const destRow = destination as ThreadsScheduleDestinationRow;
-    if (isThreadsScheduleAdded(destRow.metadata)) {
+    // Membership is the section column now (spec 174 1B): already in
+    // Schedule means an active schedule copy. A removed stub (section
+    // 'schedule', disconnected, flag cleared) is re-addable — the
+    // update below reactivates it. A row belonging to another section
+    // is never adopted: the candidates list only ever offers the
+    // schedule copy or the unimported row, so this is a stale/forged
+    // id, not a normal path.
+    if (destRow.section !== null && destRow.section !== 'schedule') {
+      return NextResponse.json(
+        { error: 'CONFLICT', message: 'This account is already in another section.' },
+        { status: 409 }
+      );
+    }
+    if (isThreadsScheduleListMember(destRow)) {
       return NextResponse.json(
         { error: 'ALREADY_ADDED', message: 'This account is already in In-app Schedule.' },
         { status: 409 }
@@ -200,6 +215,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
     const previousMetadata = (destRow.metadata ?? {}) as Record<string, unknown>;
     const previousTimezone = destRow.timezone;
     const previousStatus = destRow.status;
+    const previousSection = destRow.section;
     const nextMetadata: Record<string, unknown> = {
       ...previousMetadata,
       threads_schedule_added_at: new Date().toISOString(),
@@ -227,6 +243,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
         metadata: nextMetadata,
         timezone,
         status: 'active',
+        section: 'schedule',
         updated_at: new Date().toISOString(),
       })
       .eq('id', destinationId)
@@ -258,6 +275,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
           metadata: previousMetadata,
           timezone: previousTimezone,
           status: previousStatus,
+          section: previousSection,
           updated_at: new Date().toISOString(),
         })
         .eq('id', destinationId)
@@ -283,7 +301,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
       destinationId
     );
     const item = toScheduleItem(
-      { ...destRow, metadata: nextMetadata, timezone, status: 'active' },
+      { ...destRow, metadata: nextMetadata, timezone, status: 'active', section: 'schedule' },
       account as {
         id: string;
         external_account_id: string;

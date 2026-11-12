@@ -88,6 +88,12 @@ export async function aduContext(
  * plan-cap gate on ADU adds, loaded in ONE query for the single and
  * bulk paths alike. Unknown ids are skipped here — createOne rejects
  * them per item downstream — so a stale id can never block a valid add.
+ * Deliberately NO section filter (spec 174 1B): the key is the
+ * external id, which is identical on every section copy of the same
+ * page, and the pre-create gate looks the picked row up BEFORE its
+ * adu copy exists — a section filter would return no key and fail
+ * the add. The callers already pass ADU-copy ids (register) or the
+ * picked row whose copy shares the external id (gate).
  * Throws on a database error: the caller turns it into a 500, never a
  * silent pass.
  */
@@ -323,6 +329,7 @@ export async function loadAduOptionsLists(
       .select('id, account_id, external_destination_id, name, avatar_url, status, metadata')
       .eq('workspace_id', workspaceId)
       .eq('platform', 'facebook')
+      .eq('section', 'adu')
       .order('name')
       .range(from, to),
   );
@@ -490,6 +497,7 @@ export async function ensureAduDestination(
     .eq('workspace_id', workspaceId)
     .eq('account_id', accountId)
     .eq('platform', 'facebook')
+    .eq('section', 'adu')
     .eq('external_destination_id', page.fbPageId)
     .maybeSingle();
   if (existingError) {
@@ -529,6 +537,7 @@ export async function ensureAduDestination(
         workspace_id: workspaceId,
         account_id: accountId,
         platform: 'facebook',
+        section: 'adu',
         external_destination_id: page.fbPageId,
         name: page.pageName,
         avatar_url: page.profilePictureUrl,
@@ -537,7 +546,7 @@ export async function ensureAduDestination(
         metadata: nextMetadata,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: 'account_id,external_destination_id' },
+      { onConflict: 'account_id,external_destination_id,section' },
     )
     .select('id')
     .single();
@@ -548,6 +557,126 @@ export async function ensureAduDestination(
     return { ok: false, error: 'Could not add this page. Please try again.' };
   }
   return { ok: true, destinationId: upserted.id as string };
+}
+
+/**
+ * The Instagram/Threads copy of `ensureAduDestination` (spec 174 1B).
+ *
+ * For Facebook the picker lists live pages and the adu row is created
+ * from the discovery; for Instagram/Threads the destination IS the
+ * account, so the add dialog hands over an existing destination row
+ * (the connected row, or another section's copy) as the identity
+ * source. The import creates the section's OWN copy — it never
+ * adopts or mutates the source row, so adding the same account to
+ * Schedule, Auto Download and Publish Now each holds a separate row
+ * and no section can steal another's.
+ *
+ * Load-first: when the adu copy already exists it is refreshed with
+ * the source's identity (name/avatar/followers) and returned; its
+ * status is never touched here, so a paused/disconnected copy is
+ * never silently reactivated by a re-add. The insert runs only when
+ * no copy exists; a concurrent insert (23505) falls back to loading
+ * the copy the other call created. Identity-only: no token is ever
+ * copied — for Instagram/Threads the publishing token lives on the
+ * account row and is read from there.
+ */
+export async function ensureAduDestinationCopy(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  platform: 'instagram' | 'threads',
+  source: {
+    account_id: string;
+    external_destination_id: string;
+    name: string;
+    avatar_url: string | null;
+    metadata: Record<string, unknown> | null;
+  }
+): Promise<{ ok: true; destinationId: string; metadata: Record<string, unknown> | null } | { ok: false; error: string }> {
+  const { data: existing, error: existingError } = await supabase
+    .from('destinations')
+    .select('id, avatar_url, metadata')
+    .eq('workspace_id', workspaceId)
+    .eq('account_id', source.account_id)
+    .eq('platform', platform)
+    .eq('section', 'adu')
+    .eq('external_destination_id', source.external_destination_id)
+    .maybeSingle();
+  if (existingError) {
+    logServerError('[adu] Failed to load existing adu destination', existingError, {
+      source: 'adu-ensure-copy',
+    });
+    return { ok: false, error: 'Could not add this account. Please try again.' };
+  }
+  if (existing) {
+    const { error: refreshError } = await supabase
+      .from('destinations')
+      .update({
+        name: source.name,
+        avatar_url: source.avatar_url,
+        metadata: source.metadata ?? {},
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', (existing as { id: string }).id);
+    if (refreshError) {
+      logServerError('[adu] Failed to refresh adu destination', refreshError, {
+        source: 'adu-ensure-copy',
+      });
+      return { ok: false, error: 'Could not add this account. Please try again.' };
+    }
+    return {
+      ok: true,
+      destinationId: (existing as { id: string }).id,
+      metadata: source.metadata ?? {},
+    };
+  }
+  const { data: inserted, error: insertError } = await supabase
+    .from('destinations')
+    .insert({
+      workspace_id: workspaceId,
+      account_id: source.account_id,
+      platform,
+      section: 'adu',
+      external_destination_id: source.external_destination_id,
+      name: source.name,
+      avatar_url: source.avatar_url,
+      status: 'active',
+      metadata: source.metadata ?? {},
+    })
+    .select('id, avatar_url, metadata')
+    .single();
+  if (insertError && insertError.code === '23505') {
+    const { data: raced, error: racedError } = await supabase
+      .from('destinations')
+      .select('id, avatar_url, metadata')
+      .eq('workspace_id', workspaceId)
+      .eq('account_id', source.account_id)
+      .eq('platform', platform)
+      .eq('section', 'adu')
+      .eq('external_destination_id', source.external_destination_id)
+      .maybeSingle();
+    if (racedError || !raced) {
+      logServerError('[adu] Failed to load raced adu destination', racedError, {
+        source: 'adu-ensure-copy',
+      });
+      return { ok: false, error: 'Could not add this account. Please try again.' };
+    }
+    return {
+      ok: true,
+      destinationId: (raced as { id: string }).id,
+      metadata: ((raced as { metadata?: Record<string, unknown> | null }).metadata ?? null),
+    };
+  }
+  if (insertError || !inserted) {
+    logServerError('[adu] Failed to insert adu destination', insertError, {
+      source: 'adu-ensure-copy',
+    });
+    return { ok: false, error: 'Could not add this account. Please try again.' };
+  }
+  return {
+    ok: true,
+    destinationId: (inserted as { id: string }).id,
+    metadata: ((inserted as { metadata?: Record<string, unknown> | null }).metadata ?? null),
+  };
 }
 
 export interface AduConfigView {
@@ -645,6 +774,7 @@ export async function buildAduConfigView(
     .from('destinations')
     .select('id, name, external_destination_id, avatar_url, status, account_id, handle, platform, social_accounts(display_name, avatar_url)')
     .eq('id', config.destination_id)
+    .eq('section', 'adu')
     .maybeSingle();
   const dest = destination as DestinationJoin | null;
   // Bounded counts only: the old code loaded every reel and every job

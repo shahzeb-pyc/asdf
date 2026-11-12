@@ -113,6 +113,13 @@ class FakeBuilder {
     return this;
   }
 
+  updateData: Row | null = null;
+
+  update(row: Row) {
+    this.updateData = row;
+    return this;
+  }
+
   delete() {
     const rows = applyFilters(this.db[this.table], this.filters);
     for (const row of rows) {
@@ -124,6 +131,13 @@ class FakeBuilder {
 
   private result(): { data: Row[] | Row | null; count: number | null; error: null } {
     let rows = applyFilters(this.db[this.table], this.filters);
+    // The ADU copy helper refreshes identity on an existing copy:
+    // apply the update payload to the matched rows, like PostgREST.
+    if (this.updateData) {
+      for (const row of rows) {
+        Object.assign(row, this.updateData);
+      }
+    }
     const total = rows.length;
     // Last order call is the tie-breaker in PostgREST order lists.
     for (const spec of [...this.orders].reverse()) {
@@ -180,6 +194,8 @@ function makeDb() {
         external_destination_id: '17841400008460056',
         avatar_url: null,
         status: 'connected',
+        // Spec 174 1B: the IG hub/config view load the ADU copy.
+        section: 'adu',
         account_id: '55555555-5555-4555-8555-555555555555',
         handle: 'myigaccount',
         metadata: { current_followers: 500 },

@@ -414,6 +414,39 @@ export const DiscoverPagesResponseSchema = z.object({
 
 export type DiscoverPagesResponse = z.infer<typeof DiscoverPagesResponseSchema>;
 
+// Publish Now import (spec 174 1B): the Publish Now picker imports
+// pages from Accounts into the publish_now section before listing
+// them. One import group per account; the copy's own status drives
+// the picker's disabled-with-reason rule — no cross-section lookup.
+// Publish Now is uncapped, so its imports never touch the paid cap.
+export const PublishNowImportRequestSchema = z.object({
+  accountIds: z.array(z.string().uuid()).min(1).max(50),
+});
+export type PublishNowImportRequest = z.infer<typeof PublishNowImportRequestSchema>;
+
+export const PublishNowImportedPageSchema = z.object({
+  fbPageId: z.string().min(1).max(100),
+  pageName: z.string().min(1).max(255),
+  profilePictureUrl: z.string().url().nullable().optional().default(null),
+  category: z.string().nullable().optional(),
+  followers: z.number().int().nonnegative().default(0),
+  status: z.string(),
+});
+export type PublishNowImportedPage = z.infer<typeof PublishNowImportedPageSchema>;
+
+export const PublishNowImportGroupSchema = z.object({
+  accountId: z.string().uuid(),
+  accountName: z.string(),
+  pages: z.array(PublishNowImportedPageSchema),
+});
+export type PublishNowImportGroup = z.infer<typeof PublishNowImportGroupSchema>;
+
+export const PublishNowImportResponseSchema = z.object({
+  groups: z.array(PublishNowImportGroupSchema),
+  failures: z.array(z.string()),
+});
+export type PublishNowImportResponse = z.infer<typeof PublishNowImportResponseSchema>;
+
 // One posting time applied by the Add Page flow, step 4. The time is
 // the narrowed HH:MM shape the native time input produces, and every
 // time must cover at least one post type (the same rule the dedicated

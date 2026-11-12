@@ -244,6 +244,7 @@ function buildPageWhere(
   const conditions = [
     'd.workspace_id = $1',
     "d.platform = 'facebook'",
+    "d.section = 'schedule'",
     "(d.status != 'disconnected' OR d.metadata->>'fb_status' = 'paused')",
   ];
   const nextParam = () => `$${params.length + 1}`;
@@ -533,7 +534,8 @@ function buildSupabasePageQuery(
   ) as unknown as SupabaseDestinationsQuery;
   query = query
     .eq('workspace_id', workspaceId)
-    .eq('platform', 'facebook');
+    .eq('platform', 'facebook')
+    .eq('section', 'schedule');
   query = applySupabasePageGroup(query, group, freshThresholdIso);
   // Spec 155: the detail Select narrows within every rank group, so
   // the per-group counts and the row slices narrow together.
@@ -642,6 +644,7 @@ async function fetchSupabasePagesPage(
         .select(SUPABASE_PAGE_COLUMNS)
         .eq('workspace_id', workspaceId)
         .eq('platform', 'facebook')
+        .eq('section', 'schedule')
         .order('created_at', { ascending: false })
         .range(from, from + CHUNK_SIZE - 1);
       if (error) {

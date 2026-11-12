@@ -32,7 +32,7 @@ export async function GET(
   }
   const { data: destinations, error: destError } = await supabase
     .from('destinations')
-    .select('id, account_id, external_destination_id, name, avatar_url, status, metadata')
+    .select('id, account_id, external_destination_id, name, avatar_url, status, metadata, section')
     .eq('workspace_id', workspaceId)
     .eq('platform', 'instagram')
     .order('name')
@@ -41,6 +41,14 @@ export async function GET(
     console.error(`IG ADU options destinations failed: code=${destError.code ?? 'unknown'}`);
     return NextResponse.json({ error: 'Could not load Instagram accounts.' }, { status: 500 });
   }
+  // One picker entry per account (spec 174 1B): the destination IS the
+  // account for Instagram, and an account can hold one row per section
+  // now. The adu copy is the entry when it exists (it is the row a new
+  // config attaches to); otherwise any row serves as the identity
+  // source — createOne creates the adu copy from it.
+  const dedupedDestinations = dedupeDestinationsByAccount(
+    (destinations ?? []) as Array<Record<string, unknown>>
+  );
   const { data: configured } = await supabase
     .from('adu_configs')
     .select('destination_id, source_platform, source_username')
@@ -51,8 +59,8 @@ export async function GET(
     if (aduMissingTable(error)) {
       return NextResponse.json({
         accounts: accounts ?? [],
-        pages: destinations ?? [],
-        destinations: destinations ?? [],
+        pages: dedupedDestinations,
+        destinations: dedupedDestinations,
         configured: [],
         migrationMissing: true,
       });
@@ -60,8 +68,22 @@ export async function GET(
   }
   return NextResponse.json({
     accounts: accounts ?? [],
-    pages: destinations ?? [],
-    destinations: destinations ?? [],
+    pages: dedupedDestinations,
+    destinations: dedupedDestinations,
     configured: configured ?? [],
   });
+}
+
+function dedupeDestinationsByAccount(
+  rows: Array<Record<string, unknown>>
+): Array<Record<string, unknown>> {
+  const rank = (row: Record<string, unknown>): number =>
+    row.section === 'adu' ? 0 : row.section === null || row.section === undefined ? 1 : 2;
+  const byAccount = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    const accountId = String(row.account_id ?? '');
+    const prev = byAccount.get(accountId);
+    if (!prev || rank(row) < rank(prev)) byAccount.set(accountId, row);
+  }
+  return [...byAccount.values()];
 }

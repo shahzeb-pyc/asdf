@@ -116,7 +116,12 @@ describe('threads-schedule helpers', () => {
         destinationRow({ id: `dest-${i}`, metadata: { threads_schedule_added_at: '2026-01-01T00:00:00.000Z' } })
       );
     }
-    db.destinations.push(destinationRow({ id: 'dest-not-added', metadata: {} }));
+    db.destinations.push(
+      // Spec 174 1B: membership is the section column now, not the
+      // flag — a never-imported row (NULL section, no flag) is the
+      // non-member here, not a schedule copy without the flag.
+      destinationRow({ id: 'dest-not-added', section: null, metadata: {} })
+    );
     const rows = await fetchScheduleDestinations(fakeSupabase(db) as never, 'ws-1');
     expect(rows).toHaveLength(1005);
     expect(rows.some((r) => r.id === 'dest-not-added')).toBe(false);
@@ -293,7 +298,9 @@ describe('handleThreadsQueueItemAction', () => {
   });
 
   it('returns 404 for a non-schedule destination and for a missing item, without touching other rows', async () => {
-    const db = dbWith({ dest: { metadata: {} } });
+    // Spec 174 1B: non-schedule means the section is not 'schedule'
+    // — a never-imported row (NULL section, no flag).
+    const db = dbWith({ dest: { section: null, metadata: {} } });
     const notAdded = await handleThreadsQueueItemAction(
       fakeSupabase(db) as never, 'ws-1', 'user-1', 'dest-1', 'item-1', 'publish-now', req()
     );

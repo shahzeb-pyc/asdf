@@ -13,7 +13,7 @@ import {
   UpdateInstagramScheduleTimezoneRequestSchema,
 } from '@/lib/api/schemas/instagram-schedule';
 import {
-  isScheduledDestination,
+  isScheduleListMember,
   isValidTimezone,
   normalizeScheduleSlotFormats,
   parseDestinationMetadata,
@@ -46,15 +46,17 @@ async function loadDestination(
   dbClient: InstagramScheduleDbClient | undefined,
   workspaceId: string,
   destinationId: string
-): Promise<{ id: string; timezone: string; metadata: unknown } | null> {
+): Promise<{ id: string; timezone: string; section: string | null; status: string | null; metadata: unknown } | null> {
   if (dbClient && 'query' in dbClient) {
     const rows = await (dbClient as DatabaseClient).query<{
       id: string;
       timezone: string;
+      section: string | null;
+      status: string | null;
       metadata: unknown;
     }>(
-      `SELECT id, timezone, metadata FROM destinations
-       WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' LIMIT 1`,
+      `SELECT id, timezone, section, status, metadata FROM destinations
+       WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' AND section = 'schedule' LIMIT 1`,
       [destinationId, workspaceId]
     );
     return rows[0] ?? null;
@@ -65,10 +67,11 @@ async function loadDestination(
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('destinations')
-    .select('id, timezone, metadata')
+    .select('id, timezone, section, status, metadata')
     .eq('id', destinationId)
     .eq('workspace_id', workspaceId)
     .eq('platform', 'instagram')
+    .eq('section', 'schedule')
     .maybeSingle();
   if (error || !data) return null;
   return data;
@@ -104,7 +107,11 @@ export async function handleListInstagramScheduleSlots(
     const destination = await loadDestination(dbClient, auth.workspaceId, destinationId);
     if (
       !destination ||
-      !isScheduledDestination(parseDestinationMetadata(destination.metadata))
+      !isScheduleListMember({
+        section: destination.section,
+        status: destination.status,
+        metadata: parseDestinationMetadata(destination.metadata),
+      })
     ) {
       return NextResponse.json(
         { error: 'Scheduled account not found.' },
@@ -182,7 +189,11 @@ export async function handleCreateInstagramScheduleSlot(
     const destination = await loadDestination(dbClient, auth.workspaceId, destinationId);
     if (
       !destination ||
-      !isScheduledDestination(parseDestinationMetadata(destination.metadata))
+      !isScheduleListMember({
+        section: destination.section,
+        status: destination.status,
+        metadata: parseDestinationMetadata(destination.metadata),
+      })
     ) {
       return NextResponse.json(
         { error: 'Scheduled account not found.' },
@@ -285,7 +296,11 @@ export async function handleUpdateInstagramScheduleTimezone(
     const destination = await loadDestination(dbClient, auth.workspaceId, destinationId);
     if (
       !destination ||
-      !isScheduledDestination(parseDestinationMetadata(destination.metadata))
+      !isScheduleListMember({
+        section: destination.section,
+        status: destination.status,
+        metadata: parseDestinationMetadata(destination.metadata),
+      })
     ) {
       return NextResponse.json(
         { error: 'Scheduled account not found.' },

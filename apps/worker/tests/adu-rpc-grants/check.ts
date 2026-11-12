@@ -191,8 +191,10 @@ async function seed(pool: Pool): Promise<void> {
   ];
   for (const [id, name, ext] of dests) {
     await pool.query(
-      `INSERT INTO public.destinations (id, workspace_id, account_id, platform, external_destination_id, name)
-       VALUES ($1, $2, $3, 'facebook', $4, $5)`,
+      // Spec 174 1B: the hub RPCs only return `adu` rows, so the
+      // seeded destinations must carry the section the rig asserts on.
+      `INSERT INTO public.destinations (id, workspace_id, account_id, platform, external_destination_id, name, section)
+       VALUES ($1, $2, $3, 'facebook', $4, $5, 'adu')`,
       [id, WS_ID, ACCT_ID, ext, name],
     );
   }

@@ -70,6 +70,7 @@ type Row = Record<string, unknown>;
 interface CallRecord {
   table: string;
   filters: Array<[string, unknown]>;
+  or: string | null;
   range: [number, number] | null;
   head: boolean;
   kind: string;
@@ -96,6 +97,9 @@ function makeDest(
     platform: 'instagram',
     timezone: 'Asia/Karachi',
     status: 'active',
+    // Spec 174 1B: a scheduled destination is the schedule copy;
+    // a merely-connected one is the NULL-section connect row.
+    section: scheduled ? 'schedule' : null,
     metadata: scheduled ? { scheduled: true } : {},
     name: `Account ${accountId.slice(0, 8)}`,
     handle: null,
@@ -142,6 +146,13 @@ class Builder {
 
   eq(col: string, val: unknown) {
     this.filters.push([col, val]);
+    return this;
+  }
+
+  orExpr: string | null = null;
+
+  or(expr: string) {
+    this.orExpr = expr;
     return this;
   }
 
@@ -214,6 +225,23 @@ class Builder {
       }
       rows = rows.filter((r) => r[col] === val);
     }
+    if (this.orExpr) {
+      // Spec 174 1B cap count: the row counts when ANY clause
+      // holds — status is not disconnected, or the scheduled flag
+      // is still set (the removed-stub tiebreaker).
+      const clauses = this.orExpr.split(',');
+      rows = rows.filter((r) =>
+        clauses.some((clause) => {
+          if (clause === 'status.neq.disconnected') {
+            return r.status !== 'disconnected';
+          }
+          if (clause === 'metadata->>scheduled.eq.true') {
+            return (r.metadata as Row | null)?.scheduled === true;
+          }
+          return false;
+        })
+      );
+    }
     if (this.orderAsc !== null && this.table === 'destinations') {
       rows = [...rows].sort((a, b) => {
         const diff =
@@ -240,6 +268,7 @@ class Builder {
     this.state.calls.push({
       table: this.table,
       filters: [...this.filters],
+      or: this.orExpr,
       range: this.rangeArgs,
       head: this.selectOpts?.head === true,
       kind,
@@ -280,6 +309,7 @@ class Builder {
       this.state.calls.push({
         table: this.table,
         filters: [...this.filters],
+        or: this.orExpr,
         range: null,
         head: false,
         kind: 'insert',
@@ -400,16 +430,21 @@ describe('Instagram Schedule API — Supabase path', () => {
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.error).toMatch(/limit of 1/);
-    // The cap count query itself must filter scheduled-only.
+    // The cap count query itself must filter scheduled-only:
+    // section = 'schedule' plus the .or() tiebreaker (not a
+    // removed stub), never the bare scheduled flag.
     const countCall = state.calls.find(
       (c) => c.table === 'destinations' && c.head
     );
     expect(countCall).toBeDefined();
     expect(
       countCall?.filters.some(
-        ([col, val]) => col === 'metadata->>scheduled' && val === 'true'
+        ([col, val]) => col === 'section' && val === 'schedule'
       )
     ).toBe(true);
+    expect(countCall?.or).toBe(
+      'status.neq.disconnected,metadata->>scheduled.eq.true'
+    );
     // No destination or slot was created or changed.
     expect(
       state.calls.some(
@@ -532,10 +567,13 @@ describe('Instagram Schedule API — Supabase path', () => {
     );
     expect(destFetches.length).toBeGreaterThan(0);
     expect(destFetches.every((c) => c.range !== null)).toBe(true);
+    // Spec 174 1B: scheduled-only now means section = 'schedule'
+    // on the query (the flag is only the disconnected tiebreaker,
+    // applied in memory by isScheduleListMember).
     expect(
       destFetches.every((c) =>
         c.filters.some(
-          ([col, val]) => col === 'metadata->>scheduled' && val === 'true'
+          ([col, val]) => col === 'section' && val === 'schedule'
         )
       )
     ).toBe(true);

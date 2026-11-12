@@ -6,7 +6,10 @@ import {
   type IdempotencyScope,
 } from '@/lib/publishing/idempotency';
 import { logServerError } from '@/lib/server-analytics';
-import { isThreadsScheduleAdded, isThreadsSchedulePaused } from '@/lib/server/threads-schedule';
+import {
+  isThreadsScheduleListMember,
+  isThreadsSchedulePaused,
+} from '@/lib/server/threads-schedule';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -65,24 +68,27 @@ export async function handleThreadsQueueItemAction(
   try {
     const { data: destination, error: destError } = await supabase
       .from('destinations')
-      .select('id, account_id, status, metadata')
+      .select('id, account_id, status, section, metadata')
       .eq('id', scheduleId)
       .eq('workspace_id', workspaceId)
       .eq('platform', 'threads')
+      .eq('section', 'schedule')
       .maybeSingle();
     if (destError) throw new Error(destError.message);
-    if (
-      !destination ||
-      !isThreadsScheduleAdded(
-        (destination as { metadata: Record<string, unknown> | null }).metadata
-      )
-    ) {
+    // Membership is the section column now (spec 174 1B): a removed
+    // stub is not a member and reads as not found here.
+    if (!destination || !isThreadsScheduleListMember(destination as {
+      section: string | null;
+      status: string;
+      metadata: Record<string, unknown> | null;
+    })) {
       return NextResponse.json({ error: 'Scheduled account not found' }, { status: 404 });
     }
     const dest = destination as {
       id: string;
       account_id: string;
       status: string;
+      section: string | null;
       metadata: Record<string, unknown> | null;
     };
     if (isThreadsSchedulePaused(dest.metadata) || dest.status !== 'active') {
