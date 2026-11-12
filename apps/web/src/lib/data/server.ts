@@ -59,7 +59,10 @@ function stripTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
-/** Origin the server variant calls back into our own API on. */
+/** Origin the server variant calls back into our own API on.
+ * Fallback only — see `getRequestBaseUrl()`: on Vercel this is a
+ * `*.vercel.app` deployment URL, which Vercel Authentication gates,
+ * so it must never be the loopback origin when a request host exists. */
 export function getServerBaseUrl(): string {
   // The current deployment's own URL must win: on Vercel previews
   // NEXT_PUBLIC_APP_URL is the production URL, so preferring it would
@@ -70,6 +73,48 @@ export function getServerBaseUrl(): string {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
   if (appUrl) return stripTrailingSlashes(appUrl);
   return 'http://localhost:3000';
+}
+
+/**
+ * Loopback origin for server-side API calls (spec 170 F1).
+ *
+ * The incoming request's own host wins over `getServerBaseUrl()`:
+ * on Vercel `VERCEL_URL` is a `*.vercel.app` deployment URL gated by
+ * Vercel Authentication, so a loopback there is 302-redirected to the
+ * SSO wall, which answers 200 HTML — `serverApiFetch` then fails JSON
+ * parsing and the prefetch silently dehydrates nothing (the browser
+ * refetches on mount). The request arrived on an unwalled host (the
+ * tenant custom domain), so looping back to that same host reaches
+ * the app. No request context (tests, scripts) falls back to
+ * `getServerBaseUrl()`; an explicit `baseUrl` still wins everywhere.
+ */
+export async function getRequestBaseUrl(): Promise<string> {
+  try {
+    const { headers } = await import('next/headers');
+    const store = await headers();
+    const host = store.get('host');
+    if (host) {
+      const forwardedProto = store
+        .get('x-forwarded-proto')
+        ?.split(',')[0]
+        ?.trim();
+      const isLocal =
+        host.startsWith('localhost') ||
+        host.startsWith('127.') ||
+        host.startsWith('[::1]');
+      const protocol = forwardedProto ?? (isLocal ? 'http' : 'https');
+      return stripTrailingSlashes(`${protocol}://${host}`);
+    }
+  } catch {
+    // No request context (tests, scripts, static generation): the
+    // env fallback is the designed default, not an error, so nothing
+    // is reported here. A prefetch that then fails on the fallback
+    // origin is still reported once, with its query key, by
+    // prefetchServerQueries — that is the single report per failure
+    // this module's contract promises.
+    return getServerBaseUrl();
+  }
+  return getServerBaseUrl();
 }
 
 async function resolveCookieHeader(explicit: string | undefined): Promise<string> {
@@ -135,10 +180,11 @@ export async function serverApiFetch(
   options: ServerApiFetchOptions = {}
 ): Promise<unknown> {
   const fetchFn = options.fetchFn ?? globalThis.fetch;
-  const baseUrl = options.baseUrl ?? getServerBaseUrl();
+  // Absolute URLs skip the loopback origin entirely; relative paths
+  // loop back to the request's own host (getRequestBaseUrl).
   const url = path.startsWith('http')
     ? path
-    : `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+    : `${options.baseUrl ?? (await getRequestBaseUrl())}${path.startsWith('/') ? path : `/${path}`}`;
   const method = options.method ?? (options.body !== undefined ? 'POST' : 'GET');
   const cookieHeader = await resolveCookieHeader(options.cookieHeader);
 
@@ -265,6 +311,13 @@ export interface ServerPrefetchEntry {
 /**
  * Prefetch a route's initial data set (in parallel) into the server
  * client and return the dehydrated state for `<DataHydration>`.
+ *
+ * Never throws: a failed entry leaves its key out of the dehydrated
+ * state and the client island fetches on mount instead. The failure
+ * is still reported through `reportError` — a prefetch that dies
+ * silently is how the accounts prefetch stayed dead (spec 170 F1:
+ * the Vercel Authentication wall on the loopback origin) with
+ * nothing in the server logs to show for it.
  */
 export async function prefetchServerQueries(
   client: QueryClient,
@@ -278,5 +331,14 @@ export async function prefetchServerQueries(
       })
     )
   );
+  for (const entry of entries) {
+    const state = client.getQueryState(entry.queryKey as unknown[]);
+    if (state?.status === 'error') {
+      reportError(state.error, {
+        source: 'data-server-prefetch',
+        queryKey: entry.queryKey,
+      });
+    }
+  }
   return dehydrate(client);
 }

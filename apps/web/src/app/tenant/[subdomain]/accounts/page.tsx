@@ -22,6 +22,8 @@
  * simply leaves the key out of the dehydrated state and the shell's
  * query fetches on mount instead, where its error state is the
  * ladder rung (retry banner / load-error state, never silent).
+ * The failure is also reported to the server logs via `reportError`
+ * (spec 170 F1), so a dead prefetch no longer goes unnoticed.
  *
  * The shell reads search params (OAuth-return notices), so it is
  * mounted inside a Suspense boundary below — under Next 16 the
