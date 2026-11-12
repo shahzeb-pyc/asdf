@@ -8,7 +8,7 @@
  * stub is reactivated by the import, an active copy keeps its follower
  * baseline, and pages without a Graph token are skipped, never imported.
  */
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { NextRequest } from 'next/server';
 import { encryptToken, signSessionToken } from '@fbuploadpro/contracts';
 import { handleImportPublishNowPages } from '../../src/app/api/tenant/[subdomain]/publishing/publish-now/import/route';
@@ -127,7 +127,7 @@ describe('Publish Now import (POST /publishing/publish-now/import)', () => {
   let db: Record<string, Row[]>;
   let calls: { upserts: Row[][]; updates: Row[] };
   let failUpsert = false;
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let fetchMock: Mock<typeof fetch>;
   const originalFetch = global.fetch;
 
   beforeEach(async () => {
@@ -153,7 +153,7 @@ describe('Publish Now import (POST /publishing/publish-now/import)', () => {
     db = { social_accounts: [], destinations: [] };
     calls = { upserts: [], updates: [] };
     failUpsert = false;
-    fetchMock = vi.fn();
+    fetchMock = vi.fn<typeof fetch>();
     global.fetch = fetchMock;
   });
 
@@ -241,7 +241,8 @@ describe('Publish Now import (POST /publishing/publish-now/import)', () => {
       expect(row.platform).toBe('facebook');
       expect(row.workspace_id).toBe(WS_ID);
       expect(row.account_id).toBe(ACCOUNT_ID);
-      expect(row.metadata).toMatchObject({ starting_followers: row.metadata.current_followers });
+      const meta = row.metadata as Record<string, unknown>;
+      expect(meta).toMatchObject({ starting_followers: meta.current_followers });
     }
     const { decryptToken } = await import('@fbuploadpro/contracts');
     const pageToken = await decryptToken(
@@ -275,8 +276,9 @@ describe('Publish Now import (POST /publishing/publish-now/import)', () => {
     );
     expect(res.status).toBe(200);
     const row = calls.upserts[0][0];
-    expect(row.metadata.starting_followers).toBe(800);
-    expect(row.metadata.current_followers).toBe(53000);
+    const meta = row.metadata as Record<string, unknown>;
+    expect(meta.starting_followers).toBe(800);
+    expect(meta.current_followers).toBe(53000);
   });
 
   it('reactivates a disconnected stub and resets its baseline', async () => {
@@ -299,9 +301,10 @@ describe('Publish Now import (POST /publishing/publish-now/import)', () => {
     );
     expect(res.status).toBe(200);
     const row = calls.upserts[0][0];
+    const meta = row.metadata as Record<string, unknown>;
     expect(row.status).toBe('active');
-    expect(row.metadata.starting_followers).toBe(53000);
-    expect(row.metadata.current_followers).toBe(53000);
+    expect(meta.starting_followers).toBe(53000);
+    expect(meta.current_followers).toBe(53000);
   });
 
   it('skips pages without a Graph token and non-page nodes', async () => {
