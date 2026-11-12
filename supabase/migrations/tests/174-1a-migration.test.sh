@@ -40,6 +40,14 @@ mkdir -p "$WORKDIR" "$SOCKDIR"
 chown -R postgres:postgres "$WORKDIR"
 chmod 700 "$WORKDIR"
 
+# The postgres user cannot read the worktree (/home/hatch is not
+# world-traversable), so stage the migration files where it can read them.
+cp "$MIGRATION" "$WORKDIR/forward.sql"
+cp "$REVERSE" "$WORKDIR/reverse.sql"
+chown postgres:postgres "$WORKDIR/forward.sql" "$WORKDIR/reverse.sql"
+MIGRATION="$WORKDIR/forward.sql"
+REVERSE="$WORKDIR/reverse.sql"
+
 su postgres -c "$PG_BIN/initdb -D '$WORKDIR/data' -U postgres --auth=trust" >/dev/null
 su postgres -c "$PG_BIN/pg_ctl -D '$WORKDIR/data' -o \"-k '$SOCKDIR' -p $PORT -c listen_addresses=''\" -l '$WORKDIR/log' start" >/dev/null
 su postgres -c "$PG_BIN/createdb -h '$SOCKDIR' -p $PORT $DB" >/dev/null
@@ -273,14 +281,14 @@ begin
   select count(*) into v from destinations c
   where (c.metadata ->> 'split_from_destination_id')::uuid = '10000000-0000-0000-0000-000000000009'
     and c.encrypted_destination_token is not null;
-  if v <> 0 then raise exception 'NULL-token copy gained a token', v; end if;
+  if v <> 0 then raise exception 'NULL-token copy gained a token'; end if;
   -- followers copied byte-for-byte on the D6 ADU copy
   select count(*) into v from destinations c
   where (c.metadata ->> 'split_from_destination_id')::uuid = '10000000-0000-0000-0000-000000000006'
     and c.section = 'adu'
     and c.metadata ->> 'starting_followers' = '5'
     and c.metadata ->> 'current_followers' = '7';
-  if v <> 1 then raise exception 'D6 ADU copy lost its follower counts', v; end if;
+  if v <> 1 then raise exception 'D6 ADU copy lost its follower counts'; end if;
 
   -- ADU configs moved to the ADU copies; single-section configs stayed
   select count(*) into v from adu_configs ac join destinations d on d.id = ac.destination_id
@@ -308,10 +316,10 @@ begin
   select count(*) into v from posting_slots where destination_id not in (
     '10000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000006',
     '10000000-0000-0000-0000-000000000008','10000000-0000-0000-0000-000000000009');
-  if v <> 0 then raise exception 'posting_slots moved off the Schedule rows', v; end if;
+  if v <> 0 then raise exception 'posting_slots moved off the Schedule rows'; end if;
   select count(*) into v from queue_items where publish_now_requested_at is not null
     and destination_id <> '10000000-0000-0000-0000-000000000002';
-  if v <> 1 then raise exception 'publish-now queue row moved', v; end if;
+  if v <> 0 then raise exception 'publish-now queue row moved'; end if;
 
   -- the new unique key holds: same page + same section conflicts,
   -- same page + different section is allowed
@@ -348,11 +356,11 @@ begin
   -- the section column is gone
   select count(*) into v from information_schema.columns
   where table_schema = 'public' and table_name = 'destinations' and column_name = 'section';
-  if v <> 0 then raise exception 'after reverse: section column still present', v; end if;
+  if v <> 0 then raise exception 'after reverse: section column still present'; end if;
   -- the old unique key is back
   select count(*) into v from pg_constraint
   where conrelid = 'public.destinations'::regclass and conname = 'uq_destinations_account_external';
-  if v <> 1 then raise exception 'after reverse: old unique key not restored', v; end if;
+  if v <> 1 then raise exception 'after reverse: old unique key not restored'; end if;
   -- children are back on the originals
   select count(*) into v from adu_configs
   where destination_id in ('10000000-0000-0000-0000-000000000006','10000000-0000-0000-0000-000000000008','10000000-0000-0000-0000-000000000009');
