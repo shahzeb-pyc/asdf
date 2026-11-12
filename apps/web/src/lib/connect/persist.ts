@@ -475,7 +475,6 @@ async function propagateRevocationSideEffects(
         await (client as DatabaseClient).query(
           `UPDATE social_accounts
            SET encrypted_access_token = NULL, encrypted_refresh_token = NULL, updated_at = now()
-           encrypted_refresh_token = NULL,
            WHERE id = $1`,
           [accountId]
         );
