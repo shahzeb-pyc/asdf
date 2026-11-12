@@ -14,10 +14,7 @@ pub fn is_clean_http_url(url: &str) -> bool {
         return false;
     }
     let authority = rest.split('/').next().unwrap_or("");
-    if authority.is_empty() || authority.contains('@') {
-        return false;
-    }
-    true
+    !(authority.is_empty() || authority.contains('@'))
 }
 
 pub fn validate_clean_http_url(url: &str) -> BridgeResult<()> {
