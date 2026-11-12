@@ -162,9 +162,9 @@ function mockImportResponse(body: unknown): {
       pages: DISCOVERED.map((page) => ({
         fbPageId: page.fbPageId,
         pageName: page.pageName,
-        profilePictureUrl: page.profilePictureUrl ?? null,
-        category: page.category ?? null,
-        followers: page.currentFollowers ?? page.followersCount ?? 0,
+        profilePictureUrl: page.profilePictureUrl,
+        category: page.category,
+        followers: page.currentFollowers,
         status: 'active',
       })),
     })),

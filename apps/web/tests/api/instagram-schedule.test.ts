@@ -107,7 +107,7 @@ function mockDb(
       // section, status, metadata — a schedule copy by default.
       if (sql.includes('SELECT section, status, metadata FROM destinations')) {
         return Promise.resolve(
-          (overrides.destRows as unknown[]) ?? [detailRow]
+          (overrides.destRows as unknown[] | undefined) ?? [detailRow]
         );
       }
       if (sql.includes('FROM destinations d')) {
