@@ -756,7 +756,8 @@ export async function handleAddInstagramSchedule(
             billingClient,
             auth.session.userId,
             'instagram',
-            [destinationKey]
+            [destinationKey],
+            'schedule',
           );
         } catch (err) {
           const gateResponse = subscriptionGateResponse(err);

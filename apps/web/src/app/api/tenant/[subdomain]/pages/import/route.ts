@@ -104,7 +104,8 @@ export async function handleImportPages(
           billingClient,
           session.userId,
           'facebook',
-          selectedPageIds
+          selectedPageIds,
+          'schedule',
         );
       } catch (err) {
         const gateResponse = subscriptionGateResponse(err);

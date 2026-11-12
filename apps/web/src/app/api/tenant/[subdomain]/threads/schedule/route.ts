@@ -249,7 +249,8 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
             billingClient,
             session.userId,
             'threads',
-            [targetRow?.external_destination_id ?? accountRow.external_account_id ?? accountId]
+            [targetRow?.external_destination_id ?? accountRow.external_account_id ?? accountId],
+            'schedule',
           );
         } catch (err) {
           const gateResponse = subscriptionGateResponse(err);

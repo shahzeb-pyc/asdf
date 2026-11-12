@@ -1654,6 +1654,7 @@ export async function handleCreateMirror(
             session.userId,
             targetPlatform,
             [destination.external_destination_id ?? destination.id],
+            'mirror',
             undefined,
             sharedEntitlement
           );

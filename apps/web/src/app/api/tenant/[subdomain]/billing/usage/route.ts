@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { UsageRegisterRequestSchema } from '@fbuploadpro/contracts';
+import { sectionForUsageFeature, UsageRegisterRequestSchema } from '@fbuploadpro/contracts';
 import { authenticateTenantRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
@@ -16,7 +16,8 @@ import { getBillingAdminClient } from '@/lib/billing/route-helpers';
  * Generic usage registry for features: a feature calls this when
  * it starts using a destination, and the cap is enforced here,
  * server-side, across all features. The same destination in a
- * second feature counts once. Future features (auto
+ * second section counts again (two rows, two units — spec 174
+ * PR 2B). Future features (auto
  * download-upload, auto repost) call this same route — they do
  * not need their own cap logic.
  */
@@ -57,6 +58,15 @@ export async function POST(
   if (isLegacyUncappedUsageFeature(parsed.data.feature)) {
     return NextResponse.json(
       { error: 'INVALID_REQUEST', message: 'Publish Now does not register usage.' },
+      { status: 400 }
+    );
+  }
+  // Spec 174 PR 2B: the section is derived from the feature, so an
+  // unknown feature has no section — refused loudly as a 400 here
+  // instead of surfacing as a 500 from registerUsage's own refusal.
+  if (sectionForUsageFeature(parsed.data.feature) === null) {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'Unknown usage feature.' },
       { status: 400 }
     );
   }

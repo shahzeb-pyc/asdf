@@ -406,6 +406,7 @@ export async function POST(
             resolved.context.userId,
             'instagram',
             keys,
+            'adu',
             undefined,
             sharedEntitlement
           );
@@ -480,6 +481,7 @@ export async function POST(
           resolved.context.userId,
           'instagram',
           keys,
+          'adu',
           undefined,
           sharedEntitlement
         );

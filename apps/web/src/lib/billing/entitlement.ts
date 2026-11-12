@@ -6,10 +6,12 @@ import {
   isPeriodActive,
   quoteDowngrade,
   quoteUpgrade,
+  sectionForUsageFeature,
   totalPricePkr,
   SUBSCRIPTION_PERIOD_DAYS,
   SUBSCRIPTION_PLATFORMS,
   type PlatformCounts,
+  type Section,
   type SubscriptionPlatform,
 } from '@fbuploadpro/contracts';
 import { logServerError } from '@/lib/server-analytics';
@@ -25,7 +27,10 @@ import { cancelPendingRefundsForSupersededPeriods } from './refund-cancel';
  *
  * The usage registry is the single source of truth for the cap:
  * one row per distinct destination a user has used in a feature,
- * per platform. Connecting an account/page never writes here.
+ * per platform, per section (spec 174 PR 2B): a page used in
+ * Schedule and in Auto Download registers two rows and counts
+ * twice; Publish Now is uncapped and registers nothing.
+ * Connecting an account/page never writes here.
  * Posting gates call assertCanPost/registerUsage; future features
  * (auto download-upload, auto repost) call the same functions
  * through the usage-register API route.
@@ -332,7 +337,11 @@ export async function hasPendingPayment(
  *
  * Link rule: a usage row links to a destinations row ONLY through
  * `subscription_usage.destination_id` (= `destinations.id`; every
- * current registerUsage call site passes the row id). The
+ * current registerUsage call site passes the row id). The row id
+ * is the SECTION copy's id, so the link is per-section: a usage
+ * row counts for its section only, and disconnecting one
+ * section's copy excludes only that section's row (see
+ * countUsageForPlatform). The
  * `destination_key` column is NOT a link — it carries
  * `external_destination_id ?? id`, a platform id in the common
  * case — so it is never matched against `destinations.id`. Rows
@@ -399,12 +408,18 @@ async function getDisconnectedDestinationIdsByPlatform(
  * Exact usage count for one platform, via count queries — never a
  * row list. A row list would silently truncate at PostgREST's
  * 1,000-row limit and under-report usage; the count queries do not.
- * When disconnected destination ids are supplied, usage rows linked
+ * The count is the TOTAL across sections: a page used in two
+ * sections holds two rows and counts twice (spec 174 PR 2B). When
+ * disconnected destination ids are supplied, usage rows linked
  * to them are subtracted (same publish-now exclusions on both
  * counts, so a disconnected destination's legacy publish-now row
- * can never over-subtract). The result is clamped at zero: a
- * registry that somehow holds more disconnected-linked rows than
- * total rows must never report a negative count.
+ * can never over-subtract). The subtraction is per-section
+ * because the link is per-section (see
+ * getDisconnectedDestinationIdsByPlatform): disconnecting one
+ * section's copy excludes only that section's row. The result is
+ * clamped at zero: a registry that somehow holds more
+ * disconnected-linked rows than total rows must never report a
+ * negative count.
  */
 async function countUsageForPlatform(
   client: SupabaseClient,
@@ -498,7 +513,10 @@ export async function getUsageCounts(
  * row list. A row list would silently truncate at PostgREST's
  * 1,000-row limit and under-report usage; the count query does not.
  * Usage rows linked to a 'disconnected' destinations row are
- * excluded (see getDisconnectedDestinationIdsByPlatform).
+ * excluded (see getDisconnectedDestinationIdsByPlatform). The
+ * count is the total across sections: a page used in two sections
+ * counts twice, and disconnecting one section's copy excludes
+ * only that section's row.
  */
 export async function getUsageCount(
   client: SupabaseClient,
@@ -518,12 +536,18 @@ export async function getUsageCount(
   );
 }
 
-/** Single-row existence check for one destination in the registry. */
+/** Single-row existence check for one destination in one section
+ * of the registry. The section filter is what makes the check
+ * per-section: a page registered in Auto Download only is NOT
+ * "already used" for Schedule. Legacy publish-now rows need no
+ * separate exclusion — they live in section 'publish_now', so
+ * they never match a capped section. */
 export async function isDestinationUsed(
   client: SupabaseClient,
   userId: string,
   platform: SubscriptionPlatform,
-  destinationKey: string
+  destinationKey: string,
+  section: Section
 ): Promise<boolean> {
   const { data, error } = await client
     .from('subscription_usage')
@@ -531,11 +555,7 @@ export async function isDestinationUsed(
     .eq('user_id', userId)
     .eq('platform', platform)
     .eq('destination_key', destinationKey)
-    // A destination used ONLY via Publish Now does not count as
-    // used for any cap: Publish Now grants no queueing rights.
-    .neq('feature', 'publish-now')
-    .neq('feature', 'instagram-publish-now')
-    .neq('feature', 'threads-publish-now')
+    .eq('section', section)
     .limit(1);
   if (error) {
     logServerError('[billing] destination existence query failed', error, {
@@ -1202,6 +1222,7 @@ export async function assertCanPost(
   userId: string,
   platform: SubscriptionPlatform,
   destinationKey: string,
+  section: Section,
   now: Date = new Date(),
   sharedEntitlement?: Entitlement
 ): Promise<SubscriptionPeriodRow> {
@@ -1221,7 +1242,7 @@ export async function assertCanPost(
   // usage and fail the cap open. Decide from the exact count
   // (already fetched with the entitlement) plus a single-row
   // existence check for this destination instead.
-  if (await isDestinationUsed(client, userId, platform, destinationKey)) {
+  if (await isDestinationUsed(client, userId, platform, destinationKey, section)) {
     return entitlement.period;
   }
   if (entitlement.usage[platform] >= allowed) {
@@ -1367,6 +1388,17 @@ export async function registerUsage(
       'Publish Now does not register usage.'
     );
   }
+  // Spec 174 PR 2B: the section comes from the feature via the
+  // single contracts mapping (sectionForUsageFeature) — one
+  // mapping, not one per call site — so every register path
+  // derives the same section for the same feature. An unknown
+  // feature has no section: fail loud instead of inventing one.
+  // The generic usage route pre-checks this too, so it surfaces
+  // as a 400 there; direct callers get the same refusal here.
+  const section = sectionForUsageFeature(feature);
+  if (!section) {
+    throw new SubscriptionGateError('INVALID_REQUEST', 'Unknown usage feature.');
+  }
   // R3 + C1 (rework): resolve the gate read once here and hand it
   // to the gate — a caller that already read the entitlement for
   // this user passes it in and no second full read happens;
@@ -1377,7 +1409,7 @@ export async function registerUsage(
   const gateEntitlement = sharedEntitlement
     ? assertSharedEntitlementOwner(userId, sharedEntitlement)
     : await getEntitlement(client, userId, now);
-  await assertCanPost(client, userId, platform, destinationKey, now, gateEntitlement);
+  await assertCanPost(client, userId, platform, destinationKey, section, now, gateEntitlement);
   // R5: no second isDestinationUsed lookup here. assertCanPost
   // already did one, and a pre-check can never be a race guard —
   // the race happens after the check. The INSERT's 23505 handler
@@ -1410,7 +1442,7 @@ export async function registerUsage(
   const allowed = gateEntitlement.counts[platform];
   const freshUsage = await getUsageCount(client, userId, platform);
   if (freshUsage >= allowed) {
-    if (!(await isDestinationUsed(client, userId, platform, destinationKey))) {
+    if (!(await isDestinationUsed(client, userId, platform, destinationKey, section))) {
       throw new SubscriptionGateError(
         'SUBSCRIPTION_CAP_REACHED',
         `You have reached your limit of ${allowed} ${platform === 'facebook' ? 'pages' : 'accounts'} on ${platform}. Upgrade your plan to use more.`
@@ -1422,13 +1454,22 @@ export async function registerUsage(
     platform,
     destination_key: destinationKey,
     feature,
+    section,
     destination_id: destinationId,
   });
   if (error) {
-    // 23505 = unique violation: another request registered this
-    // destination in the meantime, or a legacy publish-now row is
-    // still there. A capped row means already-used. A legacy row
-    // is deleted and the capped row inserted instead (see above).
+    // 23505 = unique violation on (user_id, platform, section,
+    // destination_key): another request registered this
+    // destination in THIS section in the meantime, or a legacy
+    // publish-now row is still there in this section. A capped
+    // row means already-used. A legacy row is deleted and the
+    // capped row inserted instead (see above). Post-backfill a
+    // legacy row lives in section 'publish_now' and can never
+    // collide with a capped registration, so the legacy branch
+    // below is a defensive backstop only — it is kept because
+    // the 23505 handler must never turn a collision into a hard
+    // failure, and it is section-scoped so it can never mistake
+    // a row from another section for this section's row.
     if (error.code === '23505') {
       const { data: existing, error: existingError } = await client
         .from('subscription_usage')
@@ -1436,6 +1477,7 @@ export async function registerUsage(
         .eq('user_id', userId)
         .eq('platform', platform)
         .eq('destination_key', destinationKey)
+        .eq('section', section)
         .limit(1);
       if (existingError) {
         logServerError('[billing] usage row lookup failed', existingError, {
@@ -1454,6 +1496,7 @@ export async function registerUsage(
           .eq('user_id', userId)
           .eq('platform', platform)
           .eq('destination_key', destinationKey)
+          .eq('section', section)
           .eq('feature', existingRow['feature']);
         if (deleteError) {
           logServerError('[billing] legacy usage row delete failed', deleteError, {
@@ -1469,6 +1512,7 @@ export async function registerUsage(
           platform,
           destination_key: destinationKey,
           feature,
+          section,
           destination_id: destinationId,
         });
         if (retryError) {
@@ -1548,10 +1592,11 @@ export async function registerUsage(
  * Release a worker-feature usage unit (audit fix 2026-11-01: cap at
  * add). Deleting an ADU config, mirror, or auto-repost config frees
  * its unit — but ONLY when the registry row still carries that
- * feature. The registry holds one row per destination, shared
- * across features: if queueing registered the destination first
- * (or later replaced a legacy row), the row's feature differs and
- * the destination is still in use, so the row must stay.
+ * feature in that section. The registry holds one row per
+ * destination per section: if queueing registered the destination
+ * first in the same section (or later replaced a legacy row), the
+ * row's feature differs and the destination is still in use, so
+ * the row must stay. A row in another section is never touched.
  */
 export async function releaseUsageForFeature(
   client: SupabaseClient,
@@ -1560,12 +1605,21 @@ export async function releaseUsageForFeature(
   destinationKey: string,
   feature: string
 ): Promise<boolean> {
+  // Spec 174 PR 2B: the section comes from the feature via the
+  // single contracts mapping, same as registerUsage. An unknown
+  // feature has no section: fail loud instead of releasing a row
+  // in the wrong section — or any row at all.
+  const section = sectionForUsageFeature(feature);
+  if (!section) {
+    throw new SubscriptionGateError('INVALID_REQUEST', 'Unknown usage feature.');
+  }
   const { data, error } = await client
     .from('subscription_usage')
     .delete()
     .eq('user_id', userId)
     .eq('platform', platform)
     .eq('destination_key', destinationKey)
+    .eq('section', section)
     .eq('feature', feature)
     .select('id');
   if (error) {
@@ -1589,17 +1643,21 @@ export async function releaseUsageForFeature(
  * writes NOTHING: adding a destination does not consume the cap —
  * only using it in a feature does (queue/publish). The check refuses
  * the add when the destinations it would newly expose (keys not
- * already in the registry) would push usage past the purchased
- * count. Already-registered destinations always pass, and a request
- * that adds only already-registered destinations never fails the
- * cap. Admins are not gated — callers skip this check for role
- * 'admin', exactly like the posting gates.
+ * already in the registry IN THIS SECTION) would push usage past
+ * the purchased count. Already-registered destinations always
+ * pass, and a request that adds only already-registered
+ * destinations never fails the cap — but "already registered"
+ * is per-section (spec 174 PR 2B): a page registered in Auto
+ * Download only still counts as new for Schedule. Admins are not
+ * gated — callers skip this check for role 'admin', exactly like
+ * the posting gates.
  */
 export async function assertFeatureAddWithinCap(
   client: SupabaseClient,
   userId: string,
   platform: SubscriptionPlatform,
   destinationKeys: string[],
+  section: Section,
   now: Date = new Date(),
   sharedEntitlement?: Entitlement
 ): Promise<{ allowed: number; used: number; newCount: number }> {
@@ -1633,14 +1691,15 @@ export async function assertFeatureAddWithinCap(
       .select('destination_key')
       .eq('user_id', userId)
       .eq('platform', platform)
-      // A destination used ONLY via Publish Now (legacy rows) does
-      // NOT count as registered here — matching isDestinationUsed
-      // and the queue gate. Without this, an add would pass at cap
-      // for a publish-now-only destination and queueing would then
-      // refuse it: display, add-gate, and queue-gate must agree.
-      .neq('feature', 'publish-now')
-      .neq('feature', 'instagram-publish-now')
-      .neq('feature', 'threads-publish-now')
+      // Per-section (spec 174 PR 2B): only rows in this section
+      // count as registered here. A destination used ONLY via
+      // Publish Now (legacy rows) does NOT count as registered —
+      // legacy rows live in section 'publish_now', so they never
+      // match a capped section; without the section filter an
+      // add would pass at cap for a publish-now-only destination
+      // and queueing would then refuse it: display, add-gate,
+      // and queue-gate must agree.
+      .eq('section', section)
       .in('destination_key', uniqueKeys);
     if (error) {
       logServerError('[billing] feature-add cap check failed', error, { source: 'billing' });

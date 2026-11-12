@@ -10,13 +10,13 @@ import {
   type InstagramAccountStatus,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import { propagateExpiredAccountDestinations } from '@/lib/publishing/account-expiry-propagation';
 import {
   paginateItems,
   paginateMeta,
   parsePaginationParams,
   type PaginationMeta,
 } from '@/lib/server/pagination';
-import type { PostgrestError } from '@supabase/supabase-js';
 import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -100,44 +100,78 @@ function mapAccountRowToView(row: AccountRow) {
   };
 }
 
-function syncExpiredAccountStatus(
+/**
+ * Spec 174 PR 2B — expiry gap, web half: when an Instagram account
+ * is seen expired in the list, flip the account AND propagate to
+ * its destinations. propagateExpiredAccountDestinations flips
+ * every 'active' destination for the account (account-wide by
+ * design, no section/platform filter), which with split rows
+ * means every section's copy — Schedule, ADU, mirror, Publish
+ * Now — flips from 'active' to 'error' together. Best-effort:
+ * a flip or propagation failure is logged loudly and never fails
+ * the list read, and the function never throws, so list call
+ * sites fire-and-forget it with `void` and tests can await it
+ * directly.
+ *
+ * Live note: Instagram has no live expiry signal today — the one
+ * Instagram account on prod carries a NULL token_expires_at, and
+ * BISU tokens carry no expiry — so this is a no-op live today.
+ * The wiring is the gap being closed, not a live behaviour change.
+ */
+export async function syncExpiredAccountStatus(
   accountId: string,
   workspaceId: string,
   dbClient?: DatabaseClient | SupabaseClient
-): void {
+): Promise<void> {
+  const propagate = async (client: unknown): Promise<void> => {
+    try {
+      await propagateExpiredAccountDestinations(
+        client as Parameters<typeof propagateExpiredAccountDestinations>[0],
+        accountId
+      );
+    } catch (err: unknown) {
+      console.error(
+        '[handleListInstagramAccounts] Failed to propagate expired account destinations:',
+        err
+      );
+    }
+  };
+
   if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
-    dbClient
-      .query(
+    try {
+      await dbClient.query(
         `UPDATE social_accounts
          SET status = 'expired', updated_at = now()
          WHERE id = $1 AND workspace_id = $2`,
         [accountId, workspaceId]
-      )
-      .catch((err: unknown) => {
-        console.error(
-          '[handleListInstagramAccounts] Failed to persist expired account status:',
-          err
-        );
-      });
+      );
+    } catch (err: unknown) {
+      console.error(
+        '[handleListInstagramAccounts] Failed to persist expired account status:',
+        err
+      );
+      return;
+    }
+    await propagate(dbClient);
     return;
   }
   const supabase = (
     dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()
   ) as SupabaseClient | null;
   if (!supabase) return;
-  supabase
+  const { error } = await supabase
     .from('social_accounts')
     .update({ status: 'expired', updated_at: new Date().toISOString() })
     .eq('id', accountId)
-    .eq('workspace_id', workspaceId)
-    .then(({ error }: { error: PostgrestError | null }) => {
-      if (error) {
-        console.error(
-          '[handleListInstagramAccounts] Failed to persist expired account status via Supabase:',
-          error
-        );
-      }
-    });
+    .eq('workspace_id', workspaceId);
+  if (error) {
+    console.error(
+      '[handleListInstagramAccounts] Failed to persist expired account status via Supabase:',
+      error
+    );
+    return;
+  }
+  await propagate(supabase);
 }
 
 export interface InstagramAccountListFilters {
@@ -501,7 +535,7 @@ export async function handleListInstagramAccounts(
     accounts = result.rows.map((row) => {
       const view = mapAccountRowToView(row);
       if (row.status === 'active' && view.status === 'expired') {
-        syncExpiredAccountStatus(view.id, workspaceId, dbClient);
+        void syncExpiredAccountStatus(view.id, workspaceId, dbClient);
       }
       return view;
     });
@@ -532,7 +566,7 @@ export async function handleListInstagramAccounts(
     const mapped = (res.rows || []).map((row) => {
       const view = mapAccountRowToView(row);
       if (row.status === 'active' && view.status === 'expired') {
-        syncExpiredAccountStatus(view.id, workspaceId, dbClient);
+        void syncExpiredAccountStatus(view.id, workspaceId, dbClient);
       }
       return view;
     });

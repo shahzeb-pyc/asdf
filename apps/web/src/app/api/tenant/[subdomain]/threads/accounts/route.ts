@@ -7,6 +7,7 @@ import {
   type ThreadsAccountView,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import { propagateExpiredAccountDestinations } from '@/lib/publishing/account-expiry-propagation';
 import {
   paginateMeta,
   parsePaginationParams,
@@ -109,30 +110,49 @@ function mapRowToView(
   };
 }
 
-function syncExpiredStatus(
+/**
+ * Spec 174 PR 2B — expiry gap, web half: same as Instagram's
+ * syncExpiredAccountStatus — when a Threads account's token has
+ * passed, flip the account AND propagate to its destinations
+ * (every section's copy, via propagateExpiredAccountDestinations,
+ * which is account-wide by design and already section-correct
+ * with split rows). Best-effort, never throws, never fails the
+ * list read.
+ *
+ * Live note: Threads has zero accounts on prod today, so this is
+ * unexercised live — the wiring is the gap being closed.
+ */
+export async function syncExpiredStatus(
   supabase: SupabaseClient,
   row: ThreadsAccountRow,
   workspaceId: string
-): void {
+): Promise<void> {
   // Fire-and-forget, like the Facebook list route: an active row whose
   // token has passed is marked expired so later reads see it directly.
   // A failure here must not fail the list read itself.
   if (row.status !== 'active') return;
   if (!row.token_expires_at) return;
   if (Date.parse(row.token_expires_at) > Date.now()) return;
-  void supabase
+  const { error } = await supabase
     .from('social_accounts')
     .update({ status: 'expired', updated_at: new Date().toISOString() })
     .eq('id', row.id)
-    .eq('workspace_id', workspaceId)
-    .then((res: { error: unknown }) => {
-      if (res.error) {
-        console.error(
-          '[threads/accounts] Failed to persist expired account status:',
-          res.error
-        );
-      }
-    });
+    .eq('workspace_id', workspaceId);
+  if (error) {
+    console.error(
+      '[threads/accounts] Failed to persist expired account status:',
+      error
+    );
+    return;
+  }
+  try {
+    await propagateExpiredAccountDestinations(supabase, row.id);
+  } catch (err: unknown) {
+    console.error(
+      '[threads/accounts] Failed to propagate expired account destinations:',
+      err
+    );
+  }
 }
 
 export async function handleListThreadsAccounts(
@@ -333,7 +353,7 @@ export async function handleListThreadsAccounts(
     }
 
     for (const row of rows) {
-      syncExpiredStatus(supabase, row, workspaceId);
+      void syncExpiredStatus(supabase, row, workspaceId);
     }
 
     // Per-account destination info (bounded to the page slice):
