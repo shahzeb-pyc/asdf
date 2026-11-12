@@ -181,7 +181,7 @@ describe('Threads Schedule list + add', () => {
 
   it('adds an account with slots, and rejects duplicates, expired and disconnected accounts', async () => {
     const db = baseDb({
-      destinations: [destinationRow({ id: ADD_DEST, metadata: {} })],
+      destinations: [destinationRow({ id: ADD_DEST, section: null, metadata: {} })],
       posting_slots: [],
     });
     useFake(db);
@@ -212,7 +212,7 @@ describe('Threads Schedule list + add', () => {
     expect((await duplicate.json()).error).toBe('ALREADY_ADDED');
 
     const db2 = baseDb({
-      destinations: [destinationRow({ id: EXP_DEST, metadata: {} })],
+      destinations: [destinationRow({ id: EXP_DEST, section: null, metadata: {} })],
       social_accounts: [accountRow({ id: 'acct-1', status: 'expired' })],
     });
     useFake(db2);
@@ -228,7 +228,7 @@ describe('Threads Schedule list + add', () => {
     expect((await expired.json()).error).toBe('ACCOUNT_EXPIRED');
 
     const db3 = baseDb({
-      destinations: [destinationRow({ id: DISC_DEST, metadata: {}, status: 'disconnected' })],
+      destinations: [destinationRow({ id: DISC_DEST, section: null, metadata: {}, status: 'disconnected' })],
     });
     useFake(db3);
     const disconnected = await listPost(
@@ -244,7 +244,7 @@ describe('Threads Schedule list + add', () => {
   });
 
   it('rejects invalid add bodies and duplicate posting times before touching the store', async () => {
-    const db = baseDb({ destinations: [destinationRow({ id: ADD_DEST, metadata: {} })], posting_slots: [] });
+    const db = baseDb({ destinations: [destinationRow({ id: ADD_DEST, section: null, metadata: {} })], posting_slots: [] });
     useFake(db);
     const invalid = await listPost(
       req('http://localhost:3000/api/tenant/acme/threads/schedule', {
@@ -271,7 +271,7 @@ describe('Threads Schedule list + add', () => {
   it('rolls back flag, timezone, status AND pre-existing slots when the slot insert fails', async () => {
     const oldSlot = { id: 'slot-old', destination_id: ADD_DEST, time_of_day: '08:00', is_active: true, kind: ['text'], created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' };
     const db = baseDb({
-      destinations: [destinationRow({ id: ADD_DEST, metadata: {}, timezone: 'UTC', status: 'rate_limited' })],
+      destinations: [destinationRow({ id: ADD_DEST, section: null, metadata: {}, timezone: 'UTC', status: 'rate_limited' })],
       posting_slots: [oldSlot],
     });
     // Fail the new-slot insert exactly once: the rollback re-insert
@@ -303,7 +303,7 @@ describe('Threads Schedule detail, pause/resume/remove', () => {
     expect(json.item.slots).toHaveLength(1);
     expect(json.item.slots[0].slotTime).toBe('09:00');
 
-    useFake(baseDb({ destinations: [destinationRow({ metadata: {} })] }));
+    useFake(baseDb({ destinations: [destinationRow({ section: null, metadata: {} })] }));
     const missing = await detailGet(req('http://localhost:3000/api/tenant/acme/threads/schedule/dest-1'), params('acme', { scheduleId: DEST }));
     expect(missing.status).toBe(404);
   });
@@ -377,7 +377,7 @@ describe('Threads Schedule detail, pause/resume/remove', () => {
     expect((await expRes.json()).error).toBe('ACCOUNT_EXPIRED');
   });
 
-  it('removes cancel-first: queued items are cancelled, others untouched, and a paused account returns to active', async () => {
+  it('removes cancel-first: queued items are cancelled, others untouched, and the copy is disconnected with flag and paused marker stripped', async () => {
     const db = baseDb({
       destinations: [destinationRow({ status: 'disconnected', metadata: { threads_schedule_added_at: '2026-01-01T00:00:00.000Z', threads_schedule_status: 'paused' } })],
       queue_items: [
@@ -393,7 +393,8 @@ describe('Threads Schedule detail, pause/resume/remove', () => {
     expect(db.queue_items.find((i) => i.id === 'item-2')?.status).toBe('published');
     expect(db.queue_items.find((i) => i.id === 'item-3')?.status).toBe('failed');
     expect((db.destinations[0]?.metadata as Record<string, unknown>)?.threads_schedule_added_at).toBeUndefined();
-    expect(db.destinations[0]?.status).toBe('active');
+    expect((db.destinations[0]?.metadata as Record<string, unknown>)?.threads_schedule_status).toBeUndefined();
+    expect(db.destinations[0]?.status).toBe('disconnected');
   });
 
   it('remove fails loud and leaves flag and queued items untouched when the cancel fails', async () => {
