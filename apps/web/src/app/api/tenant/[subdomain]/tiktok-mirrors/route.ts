@@ -665,7 +665,7 @@ export async function loadDestinationsByExternalIds(
   if (isLegacyClient(db)) {
     const rows = (await db.query(
       `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status, metadata
-       FROM destinations WHERE workspace_id = $1 AND platform = $2 AND external_destination_id = ANY($3::text[])
+       FROM destinations WHERE workspace_id = $1 AND platform = $2 AND section = 'mirror' AND external_destination_id = ANY($3::text[])
        ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, created_at ASC`,
       [workspaceId, platform, externalIds]
     )) as unknown[];
@@ -683,6 +683,7 @@ export async function loadDestinationsByExternalIds(
     .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status, metadata')
     .eq('workspace_id', workspaceId)
     .eq('platform', platform)
+    .eq('section', 'mirror')
     .in('external_destination_id', externalIds);
   if (error) throw new Error(`Failed to load destinations: ${error.message}`);
   const ordered = (data ?? []).slice().sort((a, b) => {
@@ -1051,7 +1052,7 @@ async function resolveDestination(
   if (isLegacyClient(db)) {
     const rows = (await db.query(
       `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
-       FROM destinations WHERE account_id = $1 AND external_destination_id = $2 LIMIT 1`,
+       FROM destinations WHERE account_id = $1 AND external_destination_id = $2 AND section = 'mirror' LIMIT 1`,
       [accountId, String(page.id)]
     )) as unknown[];
     existing = asDestinationRow(rows[0]);
@@ -1062,6 +1063,7 @@ async function resolveDestination(
       .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
       .eq('account_id', accountId)
       .eq('external_destination_id', String(page.id))
+      .eq('section', 'mirror')
       .maybeSingle();
     if (error) throw new Error(`Failed to load destination: ${error.message}`);
     existing = asDestinationRow(data);
@@ -1098,12 +1100,13 @@ async function resolveDestination(
   if (isLegacyClient(db)) {
     const rows = (await db.query(
       `INSERT INTO destinations (
-         workspace_id, account_id, platform, external_destination_id, name, avatar_url,
+         workspace_id, account_id, platform, section, external_destination_id, name, avatar_url,
          encrypted_destination_token, status, metadata, updated_at
-       ) VALUES ($1, $2, 'facebook', $3, $4, $5, $6, 'active',
+       ) VALUES ($1, $2, 'facebook', 'mirror', $3, $4, $5, $6, 'active',
          jsonb_build_object('category', $7::text), now())
-       ON CONFLICT (account_id, external_destination_id) DO UPDATE SET
+       ON CONFLICT (account_id, external_destination_id, section) DO UPDATE SET
          workspace_id = EXCLUDED.workspace_id,
+         section = EXCLUDED.section,
          name = EXCLUDED.name,
          avatar_url = EXCLUDED.avatar_url,
          encrypted_destination_token = EXCLUDED.encrypted_destination_token,
@@ -1131,6 +1134,7 @@ async function resolveDestination(
         workspace_id: workspaceId,
         account_id: accountId,
         platform: 'facebook',
+        section: 'mirror',
         external_destination_id: String(page.id),
         name: String(page.name),
         avatar_url: pictureUrl,
@@ -1152,6 +1156,7 @@ async function resolveDestination(
       .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
       .eq('account_id', accountId)
       .eq('external_destination_id', String(page.id))
+      .eq('section', 'mirror')
       .maybeSingle();
     if (racedError) throw new Error(`Failed to load destination: ${racedError.message}`);
     const racedDest = asDestinationRow(raced);
@@ -1215,7 +1220,7 @@ async function resolveInstagramDestination(
     if (isLegacyClient(db)) {
       const rows = (await db.query(
         `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
-         FROM destinations WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' LIMIT 1`,
+         FROM destinations WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' AND section = 'mirror' LIMIT 1`,
         [input.targetDestinationId, workspaceId]
       )) as unknown[];
       dest = asDestinationRow(rows[0]);
@@ -1227,6 +1232,7 @@ async function resolveInstagramDestination(
         .eq('id', input.targetDestinationId)
         .eq('workspace_id', workspaceId)
         .eq('platform', 'instagram')
+        .eq('section', 'mirror')
         .maybeSingle();
       if (error) throw new Error(`Failed to load destination: ${error.message}`);
       dest = asDestinationRow(data);
@@ -1310,7 +1316,7 @@ async function resolveInstagramDestination(
   if (isLegacyClient(db)) {
     const rows = (await db.query(
       `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
-       FROM destinations WHERE account_id = $1 AND external_destination_id = $2 AND platform = 'instagram' LIMIT 1`,
+       FROM destinations WHERE account_id = $1 AND external_destination_id = $2 AND platform = 'instagram' AND section = 'mirror' LIMIT 1`,
       [accountId, targetExternalId]
     )) as unknown[];
     existing = asDestinationRow(rows[0]);
@@ -1322,6 +1328,7 @@ async function resolveInstagramDestination(
       .eq('account_id', accountId)
       .eq('external_destination_id', targetExternalId)
       .eq('platform', 'instagram')
+      .eq('section', 'mirror')
       .maybeSingle();
     if (error) throw new Error(`Failed to load destination: ${error.message}`);
     existing = asDestinationRow(data);
@@ -1335,9 +1342,9 @@ async function resolveInstagramDestination(
   if (isLegacyClient(db)) {
     const rows = (await db.query(
       `INSERT INTO destinations (
-         workspace_id, account_id, platform, external_destination_id, name, avatar_url, status, metadata, updated_at
-       ) VALUES ($1, $2, 'instagram', $3, $4, $5, 'active', '{}'::jsonb, now())
-       ON CONFLICT (account_id, external_destination_id) DO NOTHING
+         workspace_id, account_id, platform, section, external_destination_id, name, avatar_url, status, metadata, updated_at
+       ) VALUES ($1, $2, 'instagram', 'mirror', $3, $4, $5, 'active', '{}'::jsonb, now())
+       ON CONFLICT (account_id, external_destination_id, section) DO NOTHING
        RETURNING id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status`,
       [workspaceId, accountId, targetExternalId, account.display_name, account.avatar_url]
     )) as unknown[];
@@ -1345,7 +1352,7 @@ async function resolveInstagramDestination(
     if (created) return { destination: created, accountToken };
     const raced = (await db.query(
       `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
-       FROM destinations WHERE account_id = $1 AND external_destination_id = $2 AND platform = 'instagram' LIMIT 1`,
+       FROM destinations WHERE account_id = $1 AND external_destination_id = $2 AND platform = 'instagram' AND section = 'mirror' LIMIT 1`,
       [accountId, targetExternalId]
     )) as unknown[];
     const racedDest = asDestinationRow(raced[0]);
@@ -1359,6 +1366,7 @@ async function resolveInstagramDestination(
       workspace_id: workspaceId,
       account_id: accountId,
       platform: 'instagram',
+      section: 'mirror',
       external_destination_id: targetExternalId,
       name: account.display_name,
       avatar_url: account.avatar_url,
@@ -1374,6 +1382,7 @@ async function resolveInstagramDestination(
       .eq('account_id', accountId)
       .eq('external_destination_id', targetExternalId)
       .eq('platform', 'instagram')
+      .eq('section', 'mirror')
       .maybeSingle();
     if (racedError) throw new Error(`Failed to load destination: ${racedError.message}`);
     const racedDest = asDestinationRow(raced);
@@ -1470,7 +1479,7 @@ export async function loadDestinationById(
   if (isLegacyClient(db)) {
     const rows = (await db.query(
       `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
-       FROM destinations WHERE id = $1 AND workspace_id = $2 LIMIT 1`,
+       FROM destinations WHERE id = $1 AND workspace_id = $2 AND section = 'mirror' LIMIT 1`,
       [id, workspaceId]
     )) as unknown[];
     return asDestinationRow(rows[0]);
@@ -1481,6 +1490,7 @@ export async function loadDestinationById(
     .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
     .eq('id', id)
     .eq('workspace_id', workspaceId)
+    .eq('section', 'mirror')
     .maybeSingle();
   if (error) throw new Error(`Failed to load destination: ${error.message}`);
   return asDestinationRow(data);
