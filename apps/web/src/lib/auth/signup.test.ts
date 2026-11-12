@@ -14,9 +14,10 @@ import {
 } from '@fbuploadpro/contracts';
 import {
   _setMockSupabaseServiceClient,
+  _setMockSupabaseAuthClient,
   _resetMockSupabaseClients,
 } from './clients';
-import { verifySignupOtpViaSupabase } from './signup';
+import { signUpTenantUser, verifySignupOtpViaSupabase } from './signup';
 
 vi.mock('@/lib/server-analytics', () => ({
   logServerError: vi.fn(),
@@ -166,5 +167,12 @@ describe('verifySignupOtpViaSupabase mints the workspaceId claim (S3)', () => {
       expect.anything(),
       expect.objectContaining({ source: 'signup' })
     );
+  });
+
+  it('throws loudly when the auth client is unavailable (spec 168)', async () => {
+    _setMockSupabaseServiceClient(new FakeSupabase({ users: [], workspaces: [] }) as unknown as SupabaseClient);
+    _setMockSupabaseAuthClient(null);
+    await expect(signUpTenantUser({ name: 'Test User', email: 'fresh@gmail.com', phone: '+15555550199', password: 'Password123!' })).rejects.toThrow('Supabase auth client is unavailable');
+    await expect(verifySignupOtpViaSupabase({ email: 'client@gmail.com', otp: '123456' })).rejects.toThrow('Supabase auth client is unavailable');
   });
 });

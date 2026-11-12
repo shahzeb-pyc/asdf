@@ -10,6 +10,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 let mockSupabaseClientForTesting: SupabaseClient | null = null;
 let mockSupabaseServiceClientForTesting: SupabaseClient | null = null;
+let mockSupabaseAuthClientForTesting: SupabaseClient | null = null;
 
 /**
  * Default per-request timeout for the admin (service-role) client
@@ -58,15 +59,22 @@ export function assertTestDoubleAllowed(caller: string): void {
 export function _setMockSupabaseClient(client: SupabaseClient | null): void {
   assertTestDoubleAllowed('_setMockSupabaseClient');
   mockSupabaseClientForTesting = client;
+  mockSupabaseAuthClientForTesting = client;
 }
 
 export function _setMockSupabaseServiceClient(client: SupabaseClient | null): void {
   assertTestDoubleAllowed('_setMockSupabaseServiceClient');
   mockSupabaseServiceClientForTesting = client;
+  mockSupabaseAuthClientForTesting = client;
+}
+
+export function _setMockSupabaseAuthClient(client: SupabaseClient | null): void {
+  assertTestDoubleAllowed('_setMockSupabaseAuthClient');
+  mockSupabaseAuthClientForTesting = client;
 }
 
 /**
- * Clears both mock clients and the cached admin client. Called by
+ * Clears all three mock clients and the cached admin client. Called by
  * `_resetAuthStores` (stores.ts) — this is the seam tests use between
  * cases, so clearing the cache here keeps env-swapping tests correct:
  * after a reset, the next getSupabaseAdminClient() re-resolves the
@@ -75,6 +83,7 @@ export function _setMockSupabaseServiceClient(client: SupabaseClient | null): vo
 export function _resetMockSupabaseClients(): void {
   mockSupabaseClientForTesting = null;
   mockSupabaseServiceClientForTesting = null;
+  mockSupabaseAuthClientForTesting = null;
   cachedAdminClient = null;
   cachedAdminClientConfig = null;
 }
@@ -195,6 +204,32 @@ export function getSupabaseAdminClient(): SupabaseClient | null {
     }
     return null;
   }
+}
+
+/**
+ * Auth-only client factory (spec 168). Session calls run here, never on the admin singleton: a
+ * sign-in there poisons later DB/RPC calls on that warm instance (service_role becomes
+ * `authenticated` — ADU hub 500 / cross-user workspace 404). Fresh per call, never cached, one
+ * instance per flow (the session lives in that instance). Null without config; call sites fail
+ * loud (admin present + auth null = throw).
+ */
+export function getSupabaseAuthClient(): SupabaseClient | null {
+  if (isTestDoubleAllowed() && mockSupabaseAuthClientForTesting) {
+    return mockSupabaseAuthClientForTesting;
+  }
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey || url.includes('placeholder') || anonKey.includes('placeholder')) {
+    return null;
+  }
+  // No try/catch here by design (spec 168, fail loud): malformed config throws instead of
+  // silently returning null — the regression guardrails ban bare-catch-return.
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
 }
 
 export function getCookieDomain(requestHost?: string | null): string | undefined {

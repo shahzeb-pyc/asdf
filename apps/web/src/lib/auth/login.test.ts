@@ -16,6 +16,7 @@ import {
 } from '@fbuploadpro/contracts';
 import {
   _setMockSupabaseServiceClient,
+  _setMockSupabaseAuthClient,
   _resetMockSupabaseClients,
 } from './clients';
 import { loginTenantUser } from './login';
@@ -231,5 +232,11 @@ describe('loginTenantUser mints the workspaceId claim (S3)', () => {
     );
     // The failing select was attempted exactly once — no retry loop.
     expect(fake.selectCalls.filter((c) => c.columns === 'id, subdomain')).toHaveLength(1);
+  });
+
+  it('throws loudly when the auth client is unavailable (spec 168)', async () => {
+    installFake(USER_ROW, WORKSPACE_ROWS);
+    _setMockSupabaseAuthClient(null);
+    await expect(loginTenantUser({ email: 'client@gmail.com', password: 'correct-password' })).rejects.toThrow('Supabase auth client is unavailable');
   });
 });

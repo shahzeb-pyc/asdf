@@ -15,7 +15,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { resolveAdminLoginRedirect, sanitizeAuthRedirectUrl } from '@/lib/auth-redirect';
 import { logServerError } from '../server-analytics';
-import { getSupabaseAdminClient } from './clients';
+import { getSupabaseAdminClient, getSupabaseAuthClient } from './clients';
 import { verifyPassword } from './passwords';
 import { localPasswordStore } from './stores';
 import { findUserByEmail, type AuthUser } from './users';
@@ -37,7 +37,11 @@ export async function loginTenantUser(params: {
 
   const supabase = getSupabaseAdminClient();
   if (supabase) {
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+    const authClient = getSupabaseAuthClient();
+    if (!authClient) {
+      throw new Error('Supabase auth client is unavailable: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required for password login.');
+    }
+    const { data: authData, error: authError } = await authClient.auth.signInWithPassword({
       email: user?.email || canonicalEmail,
       password: params.password,
     });
