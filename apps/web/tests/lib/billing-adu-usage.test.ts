@@ -293,6 +293,7 @@ describe('registerAduConfigUsage', () => {
       platform: 'facebook',
       destination_key: 'page-1',
       feature: 'auto-download-upload',
+      section: 'adu',
       destination_id: 'dest-1',
     });
     expect(deletedConfigIds).toHaveLength(0);
@@ -324,6 +325,7 @@ describe('registerAduConfigUsage', () => {
         platform: 'facebook',
         destination_key: 'page-1',
         feature: 'destination-queue',
+        section: 'schedule',
       },
     ];
     // A capped registration colliding with nothing fails here via a
@@ -345,12 +347,14 @@ describe('releaseAduConfigUsage', () => {
         platform: 'facebook',
         destination_key: 'page-1',
         feature: 'auto-download-upload',
+        section: 'adu',
       },
       {
         user_id: 'user-1',
         platform: 'facebook',
         destination_key: 'page-1',
         feature: 'destination-queue',
+        section: 'schedule',
       },
     ];
     deletedConfigIds = [];
@@ -409,6 +413,7 @@ describe('releaseAduConfigUsage failure branch', () => {
         platform: 'facebook',
         destination_key: 'page-1',
         feature: 'auto-download-upload',
+        section: 'adu',
       },
     ];
     deletedConfigIds = [];

@@ -90,14 +90,12 @@ create index idx_subscription_usage_user_platform
   on public.subscription_usage (user_id, platform);
 SQL
 
-# Seed: page-a in TWO sections (the counts-twice shape), one row per
-# other feature, one legacy publish-now row, one NULL destination_id.
-# page-a's two rows carry explicit created_at so the reverse
-# collapse survivor is predictable (the earlier, schedule row).
+# Seed: one row per feature (the old key forbids two rows per key —
+# the counts-twice shape can only exist AFTER the migration), one
+# legacy publish-now row, one NULL destination_id.
 PSQL_A <<'SQL'
 insert into public.subscription_usage (user_id, platform, destination_key, feature, destination_id, created_at) values
   ('55555555-5555-5555-5555-555555555555', 'facebook', 'page-a', 'destination-queue', '10000000-0000-0000-0000-000000000001', '2026-11-01 10:00:00+00'),
-  ('55555555-5555-5555-5555-555555555555', 'facebook', 'page-a', 'auto-download-upload', '10000000-0000-0000-0000-000000000001', '2026-11-01 11:00:00+00'),
   ('55555555-5555-5555-5555-555555555555', 'facebook', 'page-b', 'tiktok-mirror', '10000000-0000-0000-0000-000000000002', now()),
   ('55555555-5555-5555-5555-555555555555', 'facebook', 'page-c', 'auto-repost', '10000000-0000-0000-0000-000000000003', now()),
   ('55555555-5555-5555-5555-555555555555', 'facebook', 'page-d', 'publish-now', '10000000-0000-0000-0000-000000000004', now()),
@@ -105,7 +103,7 @@ insert into public.subscription_usage (user_id, platform, destination_key, featu
   ('55555555-5555-5555-5555-555555555555', 'facebook', 'page-e', 'destination-queue', null, now());
 SQL
 
-echo "seeded: usage=$(PSQL_TA_A 'select count(*) from subscription_usage') (expect 7)"
+echo "seeded: usage=$(PSQL_TA_A 'select count(*) from subscription_usage') (expect 6)"
 
 # --- apply the forward migration (its own assertions run inside) --------
 su postgres -c "$PG_BIN/psql -h '/var/lib/postgresql/16/test-174-2b-a/sock' -p 55434 -d test174b -v ON_ERROR_STOP=1 -q -f '$STAGE/forward.sql'"
@@ -119,14 +117,18 @@ begin
   select count(*) into v from subscription_usage where section = 'schedule';
   if v <> 2 then raise exception 'schedule rows % <> 2', v; end if;
   select count(*) into v from subscription_usage where section = 'adu';
-  if v <> 2 then raise exception 'adu rows % <> 2', v; end if;
+  if v <> 1 then raise exception 'adu rows % <> 1', v; end if;
   select count(*) into v from subscription_usage where section = 'mirror';
   if v <> 2 then raise exception 'mirror rows % <> 2', v; end if;
   select count(*) into v from subscription_usage where section = 'publish_now';
   if v <> 1 then raise exception 'publish_now rows % <> 1', v; end if;
   select count(*) into v from subscription_usage where section is null;
   if v <> 0 then raise exception '% rows left with NULL section', v; end if;
-  -- page-a spans two sections under one key (the counts-twice shape)
+  -- the counts-twice shape: the same key registers in a SECOND
+  -- section only after the migration (the old key forbade it
+  -- before). This row stays, so the reverse must collapse it.
+  insert into subscription_usage (user_id, platform, destination_key, feature, destination_id, section)
+  values ('55555555-5555-5555-5555-555555555555', 'facebook', 'page-a', 'auto-download-upload', '10000000-0000-0000-0000-000000000001', 'adu');
   select count(distinct section) into v from subscription_usage
   where destination_key = 'page-a';
   if v <> 2 then raise exception 'page-a spans % sections <> 2', v; end if;

@@ -25,6 +25,7 @@ import {
   SubscriptionGateError,
   type SubscriptionPaymentRow,
 } from '@/lib/billing/entitlement';
+import { sectionForUsageFeature } from '@fbuploadpro/contracts';
 import { logServerError } from '@/lib/server-analytics';
 
 /**
@@ -167,8 +168,17 @@ interface FakeState {
   loseCryptoClaimOnce: boolean;
 }
 
+// Phase 2B: usage rows are section-scoped. Fixtures written before
+// the split carry no section (and sometimes no feature) — normalize
+// them the way the migration backfills them, so old tests keep
+// pinning the same behaviour in the schedule section.
+function normalizeUsageRow(row: Row): Row {
+  const feature = (row['feature'] as string | undefined) ?? 'destination-queue';
+  return { ...row, feature, section: row['section'] ?? sectionForUsageFeature(feature) };
+}
+
 function baseState(overrides: Partial<FakeState> = {}): FakeState {
-  return {
+  const state: FakeState = {
     periods: [],
     workspaces: [],
     destinations: [],
@@ -192,6 +202,8 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
     loseCryptoClaimOnce: false,
     ...overrides,
   };
+  state.usageRows = state.usageRows.map(normalizeUsageRow);
+  return state;
 }
 
 type Filter = { op: 'eq' | 'is' | 'lte' | 'gt' | 'neq' | 'in'; col: string; val: unknown };
@@ -332,7 +344,7 @@ class FakeBuilder {
       if (this.table === 'subscription_periods') this.state.periodInsertError = null;
       if (err) return { data: null, error: err };
       if (this.table === 'subscription_usage' && this.insertRow) {
-        // Mirror the unique index on (user_id, platform,
+        // Mirror the unique index on (user_id, platform, section,
         // destination_key): a duplicate insert fails with 23505
         // and inserts nothing — this is the real race guard now
         // that registerUsage no longer pre-checks the destination
@@ -341,6 +353,7 @@ class FakeBuilder {
           (existing) =>
             existing['user_id'] === this.insertRow?.['user_id'] &&
             existing['platform'] === this.insertRow?.['platform'] &&
+            existing['section'] === this.insertRow?.['section'] &&
             existing['destination_key'] === this.insertRow?.['destination_key']
         );
         if (clash) return { data: null, error: { code: '23505' } };
@@ -348,6 +361,7 @@ class FakeBuilder {
           user_id: this.insertRow['user_id'],
           platform: this.insertRow['platform'],
           destination_key: this.insertRow['destination_key'],
+          section: this.insertRow['section'],
           feature: this.insertRow['feature'],
         });
       }
@@ -730,10 +744,10 @@ describe('getUsageCounts / getUsageCount / isDestinationUsed', () => {
       ],
     });
     await expect(
-      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-a')
+      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule')
     ).resolves.toBe(true);
     await expect(
-      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-b')
+      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-b', 'schedule')
     ).resolves.toBe(false);
   });
 
@@ -748,7 +762,7 @@ describe('getUsageCounts / getUsageCount / isDestinationUsed', () => {
       code: 'ENTITLEMENT_UNAVAILABLE',
     });
     await expect(
-      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-a')
+      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule')
     ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
     expect(mockedLogServerError).toHaveBeenCalledWith(
       '[billing] usage counts query failed',
@@ -792,7 +806,7 @@ describe('Publish Now uncapped (owner decision 2026-10-31)', () => {
       ],
     });
     await expect(
-      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-a')
+      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule')
     ).resolves.toBe(false);
   });
 
@@ -819,7 +833,13 @@ describe('Publish Now uncapped (owner decision 2026-10-31)', () => {
     const state = baseState({
       periods: [periodRow()],
       usageRows: [
-        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'publish-now' },
+        // Defensive strand: the legacy row is stranded in the same
+        // section ('schedule') the capped registration targets, so
+        // the section-scoped lookup finds it and the delete+retry
+        // path runs. Post-backfill legacy rows live in section
+        // 'publish_now' and coexist instead (pinned in
+        // entitlement-section.test.ts).
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'publish-now', section: 'schedule' },
       ],
       usageInsertError: { code: '23505' },
     });
@@ -1085,7 +1105,7 @@ describe('Cap scope: per user across workspaces (owner decision 2026-10-31)', ()
       ],
     });
     await expect(
-      assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-c', NOW)
+      assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-c', 'schedule', NOW)
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
   });
 
@@ -1097,7 +1117,7 @@ describe('Cap scope: per user across workspaces (owner decision 2026-10-31)', ()
         { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b', destination_id: 'dest-workspace-b', feature: 'destination-queue' },
       ],
     });
-    const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-c', NOW);
+    const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-c', 'schedule', NOW);
     expect(period.id).toBe('period-1');
   });
 });
@@ -1208,7 +1228,7 @@ describe('Disconnected destinations do not count (owner decision 2026-11-02)', (
       destinations: [destinationRow('dest-disc', 'disconnected')],
       usageRows: [usageRow('page-b', 'dest-disc')],
     });
-    const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-c', NOW);
+    const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-c', 'schedule', NOW);
     expect(period.id).toBe('period-1');
   });
 
@@ -1325,7 +1345,7 @@ describe('assertCanPost', () => {
   it('refuses a Free user', async () => {
     const state = baseState();
     await expect(
-      assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-a', NOW)
+      assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule', NOW)
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_REQUIRED' });
   });
 
@@ -1336,10 +1356,10 @@ describe('assertCanPost', () => {
       usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
     });
     await expect(
-      assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-b', NOW)
+      assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-b', 'schedule', NOW)
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
     try {
-      await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-b', NOW);
+      await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-b', 'schedule', NOW);
       expect.unreachable();
     } catch (err) {
       expect((err as Error).message).toContain('limit of 1 pages');
@@ -1353,7 +1373,7 @@ describe('assertCanPost', () => {
       usageRows: [{ user_id: 'user-1', platform: 'instagram', destination_key: 'acct-a' }],
     });
     try {
-      await assertCanPost(fakeClient(state), 'user-1', 'instagram', 'acct-b', NOW);
+      await assertCanPost(fakeClient(state), 'user-1', 'instagram', 'acct-b', 'schedule', NOW);
       expect.unreachable();
     } catch (err) {
       expect((err as Error).message).toContain('limit of 1 accounts');
@@ -1365,13 +1385,13 @@ describe('assertCanPost', () => {
       periods: [periodRow({ facebook_count: 1 })],
       usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
     });
-    const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-a', NOW);
+    const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule', NOW);
     expect(period.id).toBe('period-1');
   });
 
   it('allows a new destination under the cap', async () => {
     const state = baseState({ periods: [periodRow()] });
-    const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-a', NOW);
+    const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule', NOW);
     expect(period.id).toBe('period-1');
   });
 });
@@ -1380,7 +1400,7 @@ describe('assertFeatureAddWithinCap', () => {
   it('refuses a Free user', async () => {
     const state = baseState();
     await expect(
-      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-a'], NOW)
+      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-a'], 'schedule', NOW)
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_REQUIRED' });
   });
 
@@ -1397,6 +1417,7 @@ describe('assertFeatureAddWithinCap', () => {
       'user-1',
       'facebook',
       ['page-c', 'page-d'],
+      'schedule',
       NOW
     );
     expect(result).toEqual({ allowed: 5, used: 2, newCount: 2 });
@@ -1417,6 +1438,7 @@ describe('assertFeatureAddWithinCap', () => {
       'user-1',
       'facebook',
       ['page-a', 'page-e'],
+      'schedule',
       NOW
     );
     expect(result).toEqual({ allowed: 5, used: 4, newCount: 1 });
@@ -1437,6 +1459,7 @@ describe('assertFeatureAddWithinCap', () => {
       'user-1',
       'facebook',
       ['page-e', 'page-e'],
+      'schedule',
       NOW
     );
     expect(result.newCount).toBe(1);
@@ -1453,7 +1476,7 @@ describe('assertFeatureAddWithinCap', () => {
       ],
     });
     await expect(
-      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-e', 'page-f'], NOW)
+      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-e', 'page-f'], 'schedule', NOW)
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
   });
 
@@ -1467,6 +1490,7 @@ describe('assertFeatureAddWithinCap', () => {
       'user-1',
       'facebook',
       ['page-a'],
+      'schedule',
       NOW
     );
     expect(result).toEqual({ allowed: 1, used: 1, newCount: 0 });
@@ -1477,7 +1501,7 @@ describe('assertFeatureAddWithinCap', () => {
       periods: [periodRow({ facebook_count: 1 })],
       usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
     });
-    const result = await assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', [], NOW);
+    const result = await assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', [], 'schedule', NOW);
     expect(result.newCount).toBe(0);
   });
 
@@ -1486,7 +1510,7 @@ describe('assertFeatureAddWithinCap', () => {
       periods: [periodRow({ facebook_count: 5 })],
       usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
     });
-    await assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-b'], NOW);
+    await assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-b'], 'schedule', NOW);
     expect(state.inserted.filter((entry) => entry.table === 'subscription_usage')).toEqual([]);
   });
 
@@ -1496,7 +1520,7 @@ describe('assertFeatureAddWithinCap', () => {
       usageListError: { message: 'db down' },
     });
     await expect(
-      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-a'], NOW)
+      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-a'], 'schedule', NOW)
     ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
     expect(mockedLogServerError).toHaveBeenCalledWith(
       '[billing] feature-add cap check failed',
@@ -1521,7 +1545,7 @@ describe('registerUsage', () => {
       'user-1',
       'facebook',
       'page-a',
-      'schedule',
+      'destination-queue',
       null,
       NOW
     );
@@ -1542,7 +1566,7 @@ describe('registerUsage', () => {
       'user-1',
       'facebook',
       'page-a',
-      'schedule',
+      'destination-queue',
       null,
       NOW
     );
@@ -1559,7 +1583,7 @@ describe('registerUsage', () => {
         user_id: 'user-1',
         platform: 'facebook',
         destination_key: 'page-a',
-        feature: 'schedule',
+        feature: 'destination-queue',
       }),
     });
   });
@@ -1571,12 +1595,12 @@ describe('registerUsage', () => {
     const state = baseState({
       periods: [periodRow()],
       usageRows: [
-        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'schedule' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'destination-queue' },
       ],
       usageInsertError: { code: '23505' },
     });
     await expect(
-      registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule', null, NOW)
+      registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'destination-queue', null, NOW)
     ).resolves.toMatchObject({ alreadyUsed: true, usedCount: 1 });
   });
 
@@ -1586,7 +1610,7 @@ describe('registerUsage', () => {
       usageInsertError: { code: '42501' },
     });
     await expect(
-      registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule', null, NOW)
+      registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'destination-queue', null, NOW)
     ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
     expect(mockedLogServerError).toHaveBeenCalledWith(
       '[billing] usage insert failed',
@@ -2237,7 +2261,7 @@ describe('assertFeatureAddWithinCap Publish-Now exclusion (audit fix 2026-11-01,
         { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'publish-now' },
       ],
     });
-    const result = await assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-a'], NOW);
+    const result = await assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-a'], 'schedule', NOW);
     expect(result).toEqual({ allowed: 1, used: 0, newCount: 1 });
   });
 
@@ -2249,7 +2273,7 @@ describe('assertFeatureAddWithinCap Publish-Now exclusion (audit fix 2026-11-01,
       ],
     });
     await expect(
-      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-c'], NOW)
+      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-c'], 'schedule', NOW)
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
   });
 });

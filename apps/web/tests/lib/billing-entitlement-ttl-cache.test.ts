@@ -16,6 +16,7 @@ import {
   registerUsage,
   releaseUsageForFeature,
 } from '@/lib/billing/entitlement';
+import { sectionForUsageFeature } from '@fbuploadpro/contracts';
 import { logServerError } from '@/lib/server-analytics';
 import { POST as decidePayment } from '@/app/api/admin/payments/[paymentId]/route';
 import { POST as postZeroDue } from '@/app/api/tenant/[subdomain]/billing/payments/zero-due/route';
@@ -256,8 +257,17 @@ interface FakeState {
   redemptionSeq: number;
 }
 
+// Phase 2B: usage rows are section-scoped. Fixtures written before
+// the split carry no section (and sometimes no feature) — normalize
+// them the way the migration backfills them, so old tests keep
+// pinning the same behaviour in the schedule section.
+function normalizeUsageRow(row: Row): Row {
+  const feature = (row['feature'] as string | undefined) ?? 'destination-queue';
+  return { ...row, feature, section: row['section'] ?? sectionForUsageFeature(feature) };
+}
+
 function baseState(overrides: Partial<FakeState> = {}): FakeState {
-  return {
+  const state: FakeState = {
     periods: [],
     payments: [],
     usageRows: [],
@@ -278,6 +288,8 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
     redemptionSeq: 0,
     ...overrides,
   };
+  state.usageRows = state.usageRows.map(normalizeUsageRow);
+  return state;
 }
 
 type Filter = { op: 'eq' | 'is' | 'lte' | 'gt' | 'gte' | 'neq' | 'in'; col: string; val: unknown };
@@ -471,6 +483,7 @@ class FakeBuilder {
           (existing) =>
             existing['user_id'] === row['user_id'] &&
             existing['platform'] === row['platform'] &&
+            existing['section'] === row['section'] &&
             existing['destination_key'] === row['destination_key']
         );
         if (clash) return { data: null, error: { code: '23505' } };
@@ -759,7 +772,7 @@ describe('clone isolation (criterion 11)', () => {
     const state = baseState({
       periods: [periodRow()],
       usageRows: [
-        { user_id: 'user-1', platform: 'facebook', destination_key: 'dest-1', feature: 'queue' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'dest-1', feature: 'destination-queue' },
       ],
     });
     const client = fakeClient(state);
@@ -957,14 +970,14 @@ describe('invalidation on each plan write (criterion 2)', () => {
     await expect(getEntitlementCached(client, 'user-1')).resolves.toMatchObject({ plan: 'paid' });
     expect(state.rpcCalls).toBe(1);
 
-    const registered = await registerUsage(client, 'user-1', 'facebook', 'dest-1', 'queue');
+    const registered = await registerUsage(client, 'user-1', 'facebook', 'dest-1', 'destination-queue');
     expect(registered.alreadyUsed).toBe(false);
     expect(registered.usedCount).toBe(1);
     const afterRegister = await getEntitlementCached(client, 'user-1');
     expect(afterRegister.usage.facebook).toBe(1);
     expect(state.rpcCalls).toBe(3);
 
-    const released = await releaseUsageForFeature(client, 'user-1', 'facebook', 'dest-1', 'queue');
+    const released = await releaseUsageForFeature(client, 'user-1', 'facebook', 'dest-1', 'destination-queue');
     expect(released).toBe(true);
     const afterRelease = await getEntitlementCached(client, 'user-1');
     expect(afterRelease.usage.facebook).toBe(0);
@@ -983,11 +996,11 @@ describe('gates never read the cache (criterion 6)', () => {
     state.periods.push(periodRow());
 
     const before = state.rpcCalls;
-    const period = await assertCanPost(client, 'user-1', 'facebook', 'dest-1');
+    const period = await assertCanPost(client, 'user-1', 'facebook', 'dest-1', 'schedule');
     expect(period.id).toBe('period-1');
     expect(state.rpcCalls).toBeGreaterThan(before);
 
-    const add = await assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['dest-2']);
+    const add = await assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['dest-2'], 'schedule');
     expect(add).toEqual({ allowed: 10, used: 0, newCount: 1 });
     expect(state.rpcCalls).toBeGreaterThan(before + 1);
 
@@ -997,7 +1010,7 @@ describe('gates never read the cache (criterion 6)', () => {
     expect(stillCached.plan).toBe('free');
     expect(state.rpcCalls).toBe(before + 2);
 
-    const registered = await registerUsage(client, 'user-1', 'facebook', 'dest-1', 'queue');
+    const registered = await registerUsage(client, 'user-1', 'facebook', 'dest-1', 'destination-queue');
     expect(registered.alreadyUsed).toBe(false);
     expect(state.rpcCalls).toBeGreaterThan(before + 2);
 
@@ -1018,16 +1031,16 @@ describe('gates never read the cache (criterion 6)', () => {
     state.periods[0]!['superseded_at'] = T0.toISOString();
 
     const before = state.rpcCalls;
-    await expect(assertCanPost(client, 'user-1', 'facebook', 'dest-1')).rejects.toMatchObject({
+    await expect(assertCanPost(client, 'user-1', 'facebook', 'dest-1', 'schedule')).rejects.toMatchObject({
       code: 'SUBSCRIPTION_REQUIRED',
     });
     expect(state.rpcCalls).toBeGreaterThan(before);
 
     await expect(
-      assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['dest-2'])
+      assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['dest-2'], 'schedule')
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_REQUIRED' });
     await expect(
-      registerUsage(client, 'user-1', 'facebook', 'dest-1', 'queue')
+      registerUsage(client, 'user-1', 'facebook', 'dest-1', 'destination-queue')
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_REQUIRED' });
     await expect(assertPaidPlan(client, 'user-1')).rejects.toMatchObject({
       code: 'SUBSCRIPTION_REQUIRED',

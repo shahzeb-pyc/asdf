@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { sectionForUsageFeature } from '@fbuploadpro/contracts';
 import {
   assertFeatureAddWithinCap,
   getCachedEntitlement,
@@ -283,10 +284,14 @@ class FakeQuery {
       }
       const rows = Array.isArray(this.payload) ? this.payload : [this.payload as Row];
       for (const row of rows) {
+        // Spec 174 PR 2B: the fake unique index mirrors the real one —
+        // (user, platform, section, key). A second feature for the
+        // same destination is a second row, not a clash.
         const clash = this.table.some(
           (existing) =>
             existing['user_id'] === row['user_id'] &&
             existing['platform'] === row['platform'] &&
+            existing['section'] === row['section'] &&
             existing['destination_key'] === row['destination_key']
         );
         if (clash) return { data: null, error: { code: '23505' } };
@@ -446,6 +451,10 @@ function seedUsage(
     platform,
     destination_key: key,
     feature,
+    // Spec 174 PR 2B: seeded rows carry the section their feature
+    // maps to, exactly like the migration backfill — the fake's
+    // unique index is (user, platform, section, key).
+    section: sectionForUsageFeature(feature),
     destination_id: destinationId,
   });
 }
@@ -491,7 +500,7 @@ async function gateOutcome(
   sharedEntitlement?: Awaited<ReturnType<typeof getEntitlement>>
 ): Promise<string> {
   try {
-    await assertFeatureAddWithinCap(client, userId, platform, keys, NOW, sharedEntitlement);
+    await assertFeatureAddWithinCap(client, userId, platform, keys, 'schedule', NOW, sharedEntitlement);
     return 'ok';
   } catch (err) {
     if (err instanceof SubscriptionGateError) return err.code;
@@ -536,7 +545,7 @@ describe('R3 — one shared entitlement read for check-then-register', () => {
     const rpcCallsAfterRouteRead = countRpcCalls(queryLog);
     expect(rpcCallsAfterRouteRead).toBe(1);
 
-    await assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['page-1'], NOW, shared);
+    await assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['page-1'], 'schedule', NOW, shared);
     const result = await registerUsage(
       client,
       'user-1',
@@ -558,7 +567,7 @@ describe('R3 — one shared entitlement read for check-then-register', () => {
     seedPaidPeriod(tables);
     seedDestination(tables, 'dest-1', 'active');
 
-    await assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['page-1'], NOW);
+    await assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['page-1'], 'schedule', NOW);
     await registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW);
     // C1 rework: no shared read was passed in, and the gates'
     // default read is the raw one — React `cache()` does not
@@ -669,7 +678,7 @@ describe('R3 — one shared entitlement read for check-then-register', () => {
     expect(otherUsersEntitlement.period?.userId).toBe('user-1');
 
     await expect(
-      assertFeatureAddWithinCap(client, 'user-3', 'facebook', ['page-1'], NOW, otherUsersEntitlement)
+      assertFeatureAddWithinCap(client, 'user-3', 'facebook', ['page-1'], 'schedule', NOW, otherUsersEntitlement)
     ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
     await expect(
       registerUsage(
@@ -696,6 +705,7 @@ describe('R3 — one shared entitlement read for check-then-register', () => {
         'user-1',
         'facebook',
         ['page-1'],
+        'schedule',
         NOW,
         freeEntitlement
       )
@@ -723,6 +733,7 @@ describe('R3 — one shared entitlement read for check-then-register', () => {
         'user-1',
         'facebook',
         ['page-1'],
+        'schedule',
         NOW,
         expiredEntitlement
       )
@@ -751,14 +762,18 @@ describe('R5 — the register stops checking the same destination twice', () => 
     expect(countUsageExistenceSelects(queryLog)).toBe(1);
   });
 
-  it('concurrent double-register still yields one unit and both calls report already-used', async () => {
+  it('concurrent double-register of the same section still yields one unit and both calls report already-used', async () => {
     const { client, tables } = makeClient();
     seedPaidPeriod(tables);
     seedDestination(tables, 'dest-1', 'active');
 
+    // Spec 174 PR 2B: the race guard is per-section now — the same
+    // feature twice (same section) still collapses to one row.
+    // Registering the same destination in a SECOND section is a
+    // second unit, pinned in entitlement-section.test.ts.
     const [first, second] = await Promise.all([
       registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW),
-      registerUsage(client, 'user-1', 'facebook', 'page-1', 'auto-download-upload', 'dest-1', NOW),
+      registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW),
     ]);
     expect(tables['subscription_usage']).toHaveLength(1);
     expect([first.alreadyUsed, second.alreadyUsed].sort()).toEqual([false, true]);
@@ -766,9 +781,13 @@ describe('R5 — the register stops checking the same destination twice', () => 
     expect(second.usedCount).toBe(1);
   });
 
-  it('a legacy publish-now row is still replaced, never double-counted', async () => {
+  it('a legacy publish-now row coexists with the capped row, never double-counted (spec 174 PR 2B)', async () => {
     const { client, tables } = makeClient();
     seedPaidPeriod(tables);
+    // The legacy row lives in section 'publish_now' (the migration
+    // backfill); the capped registration lands in 'schedule', so
+    // the two rows coexist under the section-scoped key instead of
+    // the old delete-and-replace. The legacy row never counts.
     seedUsage(tables, 'user-1', 'facebook', 'page-1', 'publish-now', 'dest-1');
 
     const result = await registerUsage(
@@ -782,8 +801,15 @@ describe('R5 — the register stops checking the same destination twice', () => 
     );
     expect(result.alreadyUsed).toBe(false);
     expect(result.usedCount).toBe(1);
-    expect(tables['subscription_usage']).toHaveLength(1);
-    expect(tables['subscription_usage'][0]?.['feature']).toBe('destination-queue');
+    expect(tables['subscription_usage']).toHaveLength(2);
+    const features = tables['subscription_usage']
+      .map((row) => row['feature'] as string)
+      .sort();
+    expect(features).toEqual(['destination-queue', 'publish-now']);
+    const sections = tables['subscription_usage']
+      .map((row) => row['section'] as string)
+      .sort();
+    expect(sections).toEqual(['publish_now', 'schedule']);
   });
 });
 
@@ -1020,6 +1046,7 @@ describe('C1 rework — one entitlement read per bulk request, through explicit 
       'user-1',
       'facebook',
       ['page-1', 'page-2', 'page-3'],
+      'schedule',
       NOW,
       shared
     );
@@ -1126,7 +1153,7 @@ describe('C1 rework — one entitlement read per bulk request, through explicit 
     // The route's single read, shared with the gate and the
     // register — the bulk shape — taken while usage is 0 of 1.
     const shared = await getEntitlement(client, 'user-1', NOW);
-    await assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['page-1'], NOW, shared);
+    await assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['page-1'], 'schedule', NOW, shared);
 
     // The competitor: another request registers a different
     // destination after the gate read and before this register.
