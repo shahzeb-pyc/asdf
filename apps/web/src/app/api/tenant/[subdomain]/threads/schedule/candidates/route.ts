@@ -12,10 +12,12 @@ import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 /**
  * GET /threads/schedule/candidates — connected Threads accounts with
  * their Threads destination, for the Add dialog. An account with no
- * destination yet has destinationId null (it cannot be added until
- * its destination exists); an already-added destination is flagged
- * so the dialog disables it instead of duplicating it. Bounded:
- * accounts and destinations are paged in 1,000-row chunks.
+ * destination yet has destinationId null (spec 174 2A: the Add dialog
+ * posts the accountId and the import creates the schedule copy, so a
+ * null destination is addable, not blocked); an already-added
+ * destination is flagged so the dialog disables it instead of
+ * duplicating it. Bounded: accounts and destinations are paged in
+ * 1,000-row chunks.
  */
 export async function GET(request: NextRequest, props: { params: Promise<{ subdomain: string }> }) {
   const { subdomain } = await props.params;
