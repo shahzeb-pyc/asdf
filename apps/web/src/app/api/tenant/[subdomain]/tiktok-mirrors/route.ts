@@ -1828,8 +1828,11 @@ export async function handleCreateMirror(
     //    the same claim discipline as the hourly tick, so a
     //    failure is recorded as `failed` with the error (mirror
     //    error) and stays manually retryable — the next tick does
-    //    not auto-retry the post. A resolve failure claims a
-    //    failed row with the error, never silently skipped.
+    //    not auto-retry the post. A resolve failure falls back to
+    //    the feed's no-watermark play URL for the reel (mirror
+    //    E02) and posts with it; only a reel with no feed play
+    //    URL claims a failed row with the error, never silently
+    //    skipped.
     const latest = selectLatestReel(videos);
     let immediatePost: {
       attempted: boolean;
@@ -1850,8 +1853,17 @@ export async function handleCreateMirror(
         resolvedUrl = resolved.playUrl;
         caption = resolved.title || caption;
       } catch (err) {
-        resolveError =
-          err instanceof Error ? err.message : 'The latest reel could not be resolved.';
+        // Resolve-first fallback (mirror E02): the free resolver
+        // refused this video, but the paid feed already gave us a
+        // live no-watermark play URL for it — post with that
+        // instead of failing. Only record the resolve failure
+        // when the feed item carries no play URL at all.
+        if (latest.play) {
+          resolvedUrl = latest.play;
+        } else {
+          resolveError =
+            err instanceof Error ? err.message : 'The latest reel could not be resolved.';
+        }
       }
       const coverUrl = latest.cover ?? null;
       const sourceCreatedAt =

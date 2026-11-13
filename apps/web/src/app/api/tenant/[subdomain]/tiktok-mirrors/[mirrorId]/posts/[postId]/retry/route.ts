@@ -8,7 +8,12 @@ import {
 } from '@fbuploadpro/contracts';
 import { isLegacyClient } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
-import { resolveTikwmVideo } from '@/lib/server/tikwm';
+import {
+  buildTikwmPauseStore,
+  fetchTikwmUserPosts,
+  getTikwmApiKeys,
+  resolveTikwmVideo,
+} from '@/lib/server/tikwm';
 import { FacebookReelError, publishFacebookReel } from '@/lib/server/facebook-reel';
 import { InstagramReelError, publishInstagramReel } from '@/lib/server/instagram-reel';
 import { authenticate, loadMirror } from '../../../route';
@@ -39,8 +44,10 @@ import type { DatabaseClient } from '@fbuploadpro/contracts';
  *   post are workspace-scoped (foreign ids 404).
  * - A stored `video_url` publishes as-is with the stored caption;
  *   a null one (an earlier resolve failure) is re-resolved via the
- *   free tikwm POST endpoint first, and a resolve failure keeps
- *   the row `failed` with the error.
+ *   free tikwm POST endpoint first; a resolve failure falls back to
+ *   the paid feed's no-watermark play URL for this video (mirror
+ *   E02), and only when the video aged out of the feed window does
+ *   the row stay `failed` with the resolve error.
  * - A missing target token keeps the row `failed` with the same
  *   reconnect message setup uses.
  * - Success moves the row to `posted` with the platform post id.
@@ -64,6 +71,8 @@ export interface RetryMirrorPostDeps {
   publishReel?: typeof publishFacebookReel;
   publishInstagramReel?: typeof publishInstagramReel;
   resolveTikwmVideo?: typeof resolveTikwmVideo;
+  /** Paid-feed re-fetch for the resolve-failure fallback (mirror E02). */
+  fetchTikwmPosts?: typeof fetchTikwmUserPosts;
 }
 
 export interface MirrorPostDetailRow {
@@ -300,6 +309,38 @@ function respond(
   return NextResponse.json(parsed.data);
 }
 
+/**
+ * Feed fallback for a failed resolve (mirror E02): re-fetch the
+ * paid feed for the mirror's source username (latest 30, same key
+ * rotation + pause store as setup) and return the no-watermark play
+ * URL for this video — or null when the video aged out of the feed
+ * window, the feed item carries no play URL (watermarked-only), or
+ * the feed fetch itself fails. Null keeps the row failed with the
+ * original resolve error; it is never an error of its own.
+ */
+async function findFeedPlayUrl(
+  db: Db,
+  username: string,
+  sourcePostId: string,
+  deps: RetryMirrorPostDeps
+): Promise<string | null> {
+  const fetchPosts = deps.fetchTikwmPosts ?? fetchTikwmUserPosts;
+  try {
+    const videos = await fetchPosts(username, {
+      count: 30,
+      apiKeys: getTikwmApiKeys(),
+      pauseStore: buildTikwmPauseStore(db, isLegacyClient(db)),
+    });
+    const item = videos.find((video) => video.video_id === sourcePostId);
+    return item?.play && item.play.length > 0 ? item.play : null;
+  } catch (err) {
+    logServerError('[mirror-retry] feed fallback fetch failed', err, {
+      source: 'mirror-retry',
+    });
+    return null;
+  }
+}
+
 export async function handleRetryMirrorPost(
   request: NextRequest,
   subdomain: string,
@@ -342,8 +383,10 @@ export async function handleRetryMirrorPost(
     }
 
     // Resolve the publishable video URL: the stored one, or a fresh
-    // resolve when the earlier attempt never resolved one. A
-    // resolve failure keeps the row failed with the error.
+    // resolve when the earlier attempt never resolved one. A resolve
+    // failure falls back to the paid feed's no-watermark play URL
+    // for this video (mirror E02); only when the video aged out of
+    // the feed window does the row stay failed with the error.
     let videoUrl = post.video_url;
     let caption = post.caption;
     if (!videoUrl) {
@@ -355,17 +398,25 @@ export async function handleRetryMirrorPost(
         videoUrl = resolved.playUrl;
         caption = resolved.title || caption;
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : 'The reel could not be resolved.';
-        await updateMirrorPostOutcome(db, post.id, {
-          status: 'failed',
-          publishedPostId: null,
-          error: message,
-          videoUrl: null,
-          caption,
-        });
-        await stampMirrorAfterRetry(db, mirror, { ok: false, error: message });
-        return respond(post.id, 'failed', null, message);
+        videoUrl = await findFeedPlayUrl(
+          db,
+          mirror.source_username,
+          post.source_post_id,
+          deps
+        );
+        if (!videoUrl) {
+          const message =
+            err instanceof Error ? err.message : 'The reel could not be resolved.';
+          await updateMirrorPostOutcome(db, post.id, {
+            status: 'failed',
+            publishedPostId: null,
+            error: message,
+            videoUrl: null,
+            caption,
+          });
+          await stampMirrorAfterRetry(db, mirror, { ok: false, error: message });
+          return respond(post.id, 'failed', null, message);
+        }
       }
     }
 

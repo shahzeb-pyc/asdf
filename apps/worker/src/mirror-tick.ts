@@ -610,8 +610,12 @@ export async function processMirrorCheck(
       // Post new reels oldest-first (a catch-up tick posts only
       // the newest, above). Each reel is resolved via the FREE
       // tikwm POST endpoint (no-watermark URL + verbatim title)
-      // before claiming; a resolve failure claims a failed row
-      // with the error (mirror error, stop this mirror) — never
+      // before claiming; a resolve failure falls back to the
+      // no-watermark play URL the paid feed already gave us for
+      // this reel (mirror E02: the free resolver refuses some
+      // accounts' videos outright) and posts with it — only a
+      // reel with no feed play URL at all claims a failed row
+      // with the error (mirror error, stop this mirror), never
       // silently skipped, and the resolved URL is what posts.
       for (const reel of reelsToPost) {
         if (!isTikwmReelItem(reel) || !reel.play) continue;
@@ -622,21 +626,34 @@ export async function processMirrorCheck(
             videoId: reel.video_id,
           });
         } catch (err) {
-          const message = errorMessage(err);
-          const failedId = await deps.claimPost(mirror.id, {
-            sourcePostId: reel.video_id,
-            caption: reel.title ?? '',
-            videoUrl: null,
-            coverUrl: reel.cover ?? null,
-            sourceCreatedAt: toIso(reel.create_time),
-            status: 'failed',
-            error: message,
-          });
-          if (failedId) {
-            mirrorError = message;
-            result.failed += 1;
+          // Resolve-first fallback (mirror E02): the free resolver
+          // refused this video, but the paid feed already handed us
+          // a live no-watermark play URL for it — use it instead of
+          // failing the post. Only fail when the feed item carries
+          // no play URL at all (unreachable past the loop guard
+          // above — kept as the fail-loud contract).
+          if (reel.play) {
+            console.info(
+              `[mirror-tick] mirror=${mirror.id} resolve failed for ${reel.video_id}; using feed play URL`
+            );
+            resolved = { playUrl: reel.play, title: reel.title ?? '' };
+          } else {
+            const message = errorMessage(err);
+            const failedId = await deps.claimPost(mirror.id, {
+              sourcePostId: reel.video_id,
+              caption: reel.title ?? '',
+              videoUrl: null,
+              coverUrl: reel.cover ?? null,
+              sourceCreatedAt: toIso(reel.create_time),
+              status: 'failed',
+              error: message,
+            });
+            if (failedId) {
+              mirrorError = message;
+              result.failed += 1;
+            }
+            break;
           }
-          break;
         }
         let caption = resolved.title || reel.title || '';
         // Threads-only rule (owner decision): a caption over
