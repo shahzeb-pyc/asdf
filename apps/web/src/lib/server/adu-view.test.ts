@@ -263,6 +263,182 @@ describe('buildAduConfigView alert wording follows the destination platform (B5)
   });
 });
 
+describe('buildAduConfigView hub view (adu-opt-a F7)', () => {
+  const counts: CountSetup = {
+    pipeline: 3,
+    published: 1,
+    failed: 2,
+    failedInPipeline: 1,
+    publishedToday: 1,
+    failedToday: 2,
+  };
+  const dropped = [
+    'scheduleType',
+    'postingTimes',
+    'syncStatus',
+    'alert',
+    'displayName',
+    'updatedAt',
+    'destinationHandle',
+    'destinationPlatform',
+    'accountAvatarUrl',
+    'destinationStatus',
+  ] as const;
+
+  it('omits exactly the fields the hub card never renders, keeping the rest identical', async () => {
+    const db = makeFakeSupabase(counts);
+    const full = await buildAduConfigView(db, configRow());
+    const hub = await buildAduConfigView(db, configRow(), { hub: true });
+    for (const key of dropped) {
+      expect(hub).not.toHaveProperty(key);
+      expect(full).toHaveProperty(key);
+    }
+    // Every kept field carries the same value as the full view.
+    for (const key of Object.keys(full) as Array<keyof typeof full>) {
+      if ((dropped as readonly string[]).includes(key)) continue;
+      expect(hub).toHaveProperty(key, full[key]);
+    }
+    expect(hub.pendingCount).toBe(2);
+    expect(hub.failedCount).toBe(2);
+    expect(hub.postedCount).toBe(1);
+    expect(hub.accountName).toBe('Test Account');
+  });
+
+  it('trims the hub destination select: no handle, account display name only', async () => {
+    const db = makeFakeSupabase(counts);
+    await buildAduConfigView(db, configRow(), { hub: true });
+    const destCall = (
+      db as unknown as { calls: Array<{ table: string; ops: Op[] }> }
+    ).calls.find((c) => c.table === 'destinations');
+    const selectArg = destCall?.ops.find((o) => o.kind === 'select')?.args[0] as string;
+    expect(selectArg).toContain('social_accounts(display_name)');
+    expect(selectArg).not.toContain('handle');
+    expect(selectArg).not.toContain('social_accounts(display_name, avatar_url)');
+  });
+
+  it('keeps the full destination select for the detail shape', async () => {
+    const db = makeFakeSupabase(counts);
+    await buildAduConfigView(db, configRow());
+    const destCall = (
+      db as unknown as { calls: Array<{ table: string; ops: Op[] }> }
+    ).calls.find((c) => c.table === 'destinations');
+    const selectArg = destCall?.ops.find((o) => o.kind === 'select')?.args[0] as string;
+    expect(selectArg).toContain('handle');
+    expect(selectArg).toContain('social_accounts(display_name, avatar_url)');
+  });
+});
+
+describe('buildAduConfigView counts run concurrently (adu-opt-a F3)', () => {
+  it('issues all six counts before any of them resolves', async () => {
+    const started: string[] = [];
+    let openGate: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const poll = setInterval(() => {
+      if (started.length >= 6) {
+        clearInterval(poll);
+        openGate?.();
+      }
+    }, 0);
+    try {
+      const counts: CountSetup = {
+        pipeline: 3,
+        published: 1,
+        failed: 2,
+        failedInPipeline: 1,
+        publishedToday: 1,
+        failedToday: 2,
+      };
+      const destination: Row = {
+        id: 'dest-1',
+        name: 'Test Page',
+        external_destination_id: 'page-1',
+        avatar_url: null,
+        status: 'active',
+        account_id: 'acc-1',
+        handle: null,
+        platform: 'facebook',
+        social_accounts: { display_name: 'Test Account', avatar_url: null },
+      };
+      const db = {
+        from: (table: string) => {
+          const ops: Op[] = [];
+          const query = {
+            select(...args: unknown[]) {
+              ops.push({ kind: 'select', args });
+              return query;
+            },
+            eq(col: string, val: unknown) {
+              ops.push({ kind: 'eq', args: [col, val] });
+              return query;
+            },
+            in(col: string, val: unknown[]) {
+              ops.push({ kind: 'in', args: [col, val] });
+              return query;
+            },
+            gte(col: string, val: unknown) {
+              ops.push({ kind: 'gte', args: [col, val] });
+              return query;
+            },
+            maybeSingle() {
+              ops.push({ kind: 'maybeSingle', args: [] });
+              return query;
+            },
+            then(resolve: (value: unknown) => void) {
+              if (ops.some((o) => o.kind === 'maybeSingle')) {
+                resolve({ data: destination, error: null });
+                return;
+              }
+              // A count query: record the start and wait for the gate.
+              // Sequential code would start one count and wait on it
+              // forever — the gate only opens once all six started.
+              started.push(table);
+              void gate.then(() => {
+                const hasReelFilter = ops.some(
+                  (o) => o.kind === 'in' && o.args[0] === 'adu_reels.status',
+                );
+                const hasGte = ops.some((o) => o.kind === 'gte');
+                const inStatus = ops.find(
+                  (o) => o.kind === 'in' && o.args[0] === 'status',
+                )?.args[1] as string[] | undefined;
+                const eqStatus = ops.find(
+                  (o) => o.kind === 'eq' && o.args[0] === 'status',
+                )?.args[1] as string | undefined;
+                let count = 0;
+                if (table === 'adu_reels') count = counts.pipeline;
+                else if (hasReelFilter) count = counts.failedInPipeline;
+                else if (inStatus) count = hasGte ? counts.failedToday : counts.failed;
+                else if (eqStatus === 'published') {
+                  count = hasGte ? counts.publishedToday : counts.published;
+                }
+                resolve({ count, error: null });
+              });
+            },
+          };
+          return query;
+        },
+      } as unknown as SupabaseClient;
+      const view = await Promise.race([
+        buildAduConfigView(db, configRow()),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('counts ran serially: gate never opened')),
+            3000,
+          ),
+        ),
+      ]);
+      expect(started.length).toBe(6);
+      expect(view.pendingCount).toBe(2);
+      expect(view.failedCount).toBe(2);
+      expect(view.postedCount).toBe(1);
+      expect(view.pendingToday).toBe(1);
+    } finally {
+      clearInterval(poll);
+    }
+  });
+});
+
 describe('buildAduConfigView follower last-updated (spec 162)', () => {
   const zeroCounts: CountSetup = {
     pipeline: 0,
