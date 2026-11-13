@@ -398,6 +398,8 @@ describe('workspaceCanPublishForDestination — one RPC gate (S2)', () => {
         p_platform: 'facebook',
         p_destination_key: 'ext-dest-1',
         p_at: '2026-06-01T00:00:00.000Z',
+        // No section passed: the legacy unfiltered call.
+        p_section: null,
       },
     });
     expect(periodSelects(db)).toHaveLength(0);

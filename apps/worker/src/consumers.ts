@@ -97,10 +97,22 @@ export interface RowQueryBuilder {
   // Audit BG5: the stale page-token fallback persists a
   // re-discovered page token through the same supabase-style
   // chain the refresh job uses (update().eq() resolves to
-  // { data, error }).
-  update(values: Record<string, unknown>): {
-    eq(column: string, value: unknown): Promise<{ data: unknown; error: unknown }>;
-  };
+  // { data, error }). Spec 174 3A: the fan-out needs more
+  // than one filter, so the update builder is chainable
+  // (eq/neq, awaitable) — exactly what the real
+  // PostgrestFilterBuilder already supports.
+  update(values: Record<string, unknown>): UpdateQueryBuilder;
+}
+
+export interface UpdateQueryBuilder {
+  eq(column: string, value: unknown): UpdateQueryBuilder;
+  neq(column: string, value: unknown): UpdateQueryBuilder;
+  then<TResult1 = { data: unknown; error: unknown }, TResult2 = never>(
+    onfulfilled?:
+      | ((value: { data: unknown; error: unknown }) => TResult1 | PromiseLike<TResult1>)
+      | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+  ): Promise<TResult1 | TResult2>;
 }
 
 export interface ConsumerDeps {
