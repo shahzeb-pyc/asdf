@@ -4,7 +4,7 @@
  * Button — shadcn base (cva variants + Radix Slot for asChild), adapted:
  * - Styling: token-backed utilities only. Primary is the Snap Yellow-on-black
  *   pairing (bg-primary / text-on-primary); the 1px border-link border keeps
- *   the fill visible against the light canvas (spec 181 — #FFFC00 vs canvas
+ *   the fill visible against the light canvas (spec 181 — Snap Yellow vs canvas
  *   is ~1.05:1; in dark mode the border is the fill colour, so invisible).
  *   shadcn's default theme is gone.
  * - Sizes: the compact control-height family (component tokens —
