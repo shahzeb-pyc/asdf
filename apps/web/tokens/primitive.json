@@ -1,5 +1,5 @@
 {
-  "$description": "Primitive design tokens — Cyber Yellow + Manrope identity (spec 177, 2026-11-13). Hand-edit ONLY files in apps/web/tokens/; everything else is generated. Never reference primitives directly from component code — consume semantic tokens. Neutral and status scales are Tailwind stone / green / red steps (see spec); brand steps are HSL derivations of #FFD300 (see spec).",
+  "$description": "Primitive design tokens — Snap Yellow + Manrope identity (spec 181, 2026-11-13). Hand-edit ONLY files in apps/web/tokens/; everything else is generated. Never reference primitives directly from component code — consume semantic tokens. Neutral and status scales are Tailwind stone / green / red / orange / blue steps (see spec); brand steps are the official Snapchat palette #FFFC00 (see spec).",
   "breakpoint": {
     "$description": "One breakpoint set, replacing the ad-hoc 440/639/767/768/1023 scatter. Boundaries align to the shipped media queries (max-width 639/767, min-width 768, max-width 1023).",
     "lg": {
@@ -73,15 +73,10 @@
         "$type": "color",
         "$value": "rgba(74, 222, 128, 0.50)"
       },
-      "goldFocus": {
-        "$description": "Pre-computed focus ring / focus border (both modes) — cyber yellow at the existing 0.35 focus alpha",
-        "$type": "color",
-        "$value": "rgba(255, 211, 0, 0.35)"
-      },
       "goldHalo": {
-        "$description": "Queued status halo — cyber yellow at the existing 0.50 halo alpha",
+        "$description": "Queued status halo — Snap Yellow at the existing 0.50 halo alpha",
         "$type": "color",
-        "$value": "rgba(255, 211, 0, 0.50)"
+        "$value": "rgba(255, 252, 0, 0.50)"
       },
       "idleHalo": {
         "$description": "Idle status halo — Tailwind stone-500 at the existing 0.40 halo alpha",
@@ -101,9 +96,9 @@
         "$value": "#44403c"
       },
       "lightStrong": {
-        "$description": "Tailwind stone-300 — light strong border",
+        "$description": "Official Snapchat Light Grey — light strong border (one of the four palette colours)",
         "$type": "color",
-        "$value": "#d6d3d1"
+        "$value": "#D9D9D9"
       },
       "darkHairline": {
         "$description": "Tailwind stone-800 — dark hairline, one tonal step above the dark panel",
@@ -114,6 +109,16 @@
         "$description": "Tailwind stone-200 — light hairline",
         "$type": "color",
         "$value": "#e7e5e4"
+      },
+      "darkInput": {
+        "$description": "Tailwind stone-400 — dark-mode input border. 6.01:1 vs dark panel (passes AA non-text 3:1).",
+        "$type": "color",
+        "$value": "#A8A29E"
+      },
+      "lightInput": {
+        "$description": "Tailwind stone-500 — light-mode input border. 4.80:1 vs white panel (passes AA non-text 3:1).",
+        "$type": "color",
+        "$value": "#78716C"
       }
     },
     "brand": {
@@ -123,9 +128,9 @@
         "$value": "#1877f2"
       },
       "bronze": {
-        "$description": "Deep yellow — RETAINED from the old palette for one reason only: light-mode link text. Pure #FFD300 on white is 1.44:1 (fails); bronze on white is 6.08:1 (passes AA).",
+        "$description": "Deep yellow — light-mode link text and light-mode focus ring. Pure #FFFC00 on white is 1.05:1 (fails); #716400 on canvas is 5.70:1 (passes AA).",
         "$type": "color",
-        "$value": "#766018"
+        "$value": "#716400"
       },
       "emerald": {
         "$description": "Legacy Binance trading-up green — RETAINED only so the generated PALETTE shape is unchanged (generator requires color.brand.emerald). Semantic status no longer references it; see color.status.",
@@ -133,14 +138,19 @@
         "$value": "#0ecb81"
       },
       "gold": {
-        "$description": "Cyber Yellow — primary brand colour, primary buttons, active moments (Direction 4). Buttons use dark #181a20 text on it (12.07:1); white text on it (1.44:1) is never used.",
+        "$description": "Snap Yellow — primary brand colour, primary buttons, active moments (official Snapchat palette, spec 181). Buttons use black #000000 text on it (19.18:1); white text on it (1.10:1) is never used.",
         "$type": "color",
-        "$value": "#FFD300"
+        "$value": "#FFFC00"
       },
       "peru": {
-        "$description": "Cyber Yellow shade — hover/pressed state of the primary. HSL derivation of #FFD300: hue 50, saturation 100%, lightness 50% -> 40% (one 10-point step down).",
+        "$description": "Snapchat Yellow Dark — hover/pressed state of the primary in light mode (official Snapchat spectrum).",
         "$type": "color",
-        "$value": "#cca900"
+        "$value": "#FCF000"
+      },
+      "pale": {
+        "$description": "Snapchat Yellow Pale — hover/pressed state of the primary in dark mode (official Snapchat spectrum; lighter, not darker).",
+        "$type": "color",
+        "$value": "#FEFF85"
       },
       "rose": {
         "$description": "Tailwind red-600 — light-mode critical/error. 4.83:1 on white (passes AA). Dark-mode critical uses color.status.criticalDark instead (red-600 is only 4.09:1 on dark canvas).",
@@ -256,9 +266,9 @@
         "$value": "#1c1917"
       },
       "onPrimary": {
-        "$description": "Dark ink on the cyber-yellow primary — RETAINED exact value #181a20 from the old lightPrimary so primary buttons keep their checked 12.07:1 ratio in both modes",
+        "$description": "Black ink on the Snap Yellow primary — 19.18:1 in both modes; white on the accent (1.10:1) is never used.",
         "$type": "color",
-        "$value": "#181a20"
+        "$value": "#000000"
       }
     },
     "status": {
@@ -286,6 +296,106 @@
         "$description": "Tailwind red-700 — light critical text ON a tinted/subtle/hover background. red-600 is only 4.13:1 on a 10% tint, 3.81:1 on a 15% tint and 4.43:1 on stone-100 (fails AA); red-700 is 5.54:1 on the 10% tint, 5.10:1 on the 15% tint and 5.93:1 on stone-100",
         "$type": "color",
         "$value": "#b91c1c"
+      },
+      "warningLight": {
+        "$description": "Tailwind orange-700 — light warning text (spec 181 §3; warning is orange because the accent owns yellow).",
+        "$type": "color",
+        "$value": "#C2410C"
+      },
+      "warningDark": {
+        "$description": "Tailwind orange-400 — dark warning text (spec 181 §3).",
+        "$type": "color",
+        "$value": "#FB923C"
+      },
+      "warningSoftLight": {
+        "$description": "Tailwind orange-50 — light warning soft background (spec 181 §3).",
+        "$type": "color",
+        "$value": "#FFF7ED"
+      },
+      "warningSoftDark": {
+        "$description": "Dark warning soft background (spec 181 §3).",
+        "$type": "color",
+        "$value": "#422E22"
+      },
+      "warningSolidLight": {
+        "$description": "Tailwind orange-600 — light warning solid (spec 181 §3).",
+        "$type": "color",
+        "$value": "#EA580C"
+      },
+      "warningSolidDark": {
+        "$description": "Tailwind orange-500 — dark warning solid (spec 181 §3).",
+        "$type": "color",
+        "$value": "#F97316"
+      },
+      "infoLight": {
+        "$description": "Tailwind blue-700 — light info text (spec 181 §3; no info tokens existed before).",
+        "$type": "color",
+        "$value": "#1D4ED8"
+      },
+      "infoDark": {
+        "$description": "Tailwind blue-400 — dark info text (spec 181 §3).",
+        "$type": "color",
+        "$value": "#60A5FA"
+      },
+      "infoSoftLight": {
+        "$description": "Tailwind blue-50 — light info soft background (spec 181 §3).",
+        "$type": "color",
+        "$value": "#EFF6FF"
+      },
+      "infoSoftDark": {
+        "$description": "Dark info soft background (spec 181 §3).",
+        "$type": "color",
+        "$value": "#30343E"
+      },
+      "infoSolidLight": {
+        "$description": "Tailwind blue-600 — light info solid (spec 181 §3).",
+        "$type": "color",
+        "$value": "#2563EB"
+      },
+      "infoSolidDark": {
+        "$description": "Tailwind blue-500 — dark info solid (spec 181 §3).",
+        "$type": "color",
+        "$value": "#3B82F6"
+      },
+      "successSoftLight": {
+        "$description": "Tailwind green-50 — light success soft background (spec 181 §3).",
+        "$type": "color",
+        "$value": "#F0FDF4"
+      },
+      "successSoftDark": {
+        "$description": "Dark success soft background (spec 181 §3).",
+        "$type": "color",
+        "$value": "#2D3B2F"
+      },
+      "successSolidLight": {
+        "$description": "Tailwind green-600 — light success solid (spec 181 §3).",
+        "$type": "color",
+        "$value": "#16A34A"
+      },
+      "successSolidDark": {
+        "$description": "Tailwind green-500 — dark success solid (spec 181 §3).",
+        "$type": "color",
+        "$value": "#22C55E"
+      },
+      "criticalSoftLight": {
+        "$description": "Tailwind red-50 — light critical soft background (spec 181 §3).",
+        "$type": "color",
+        "$value": "#FEF2F2"
+      },
+      "criticalSoftDark": {
+        "$description": "Dark critical soft background (spec 181 §3).",
+        "$type": "color",
+        "$value": "#422E2D"
+      },
+      "criticalSolidLight": {
+        "$description": "Tailwind red-600 — light critical solid; same value as brand.rose (spec 181 §3).",
+        "$type": "color",
+        "$value": "#DC2626"
+      },
+      "criticalSolidDark": {
+        "$description": "Tailwind red-500 — dark critical solid (spec 181 §3).",
+        "$type": "color",
+        "$value": "#EF4444"
       }
     }
   },

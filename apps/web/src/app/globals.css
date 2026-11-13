@@ -48,6 +48,7 @@
   /* Brand + primitive colours (generated names, re-exported as utilities) */
   --color-brand-gold: var(--color-brand-gold);
   --color-brand-peru: var(--color-brand-peru);
+  --color-brand-pale: var(--color-brand-pale);
   --color-brand-bronze: var(--color-brand-bronze);
   --color-brand-rose: var(--color-brand-rose);
   --color-brand-emerald: var(--color-brand-emerald);
@@ -67,7 +68,6 @@
   --color-surface-light-active: var(--color-surface-light-active);
   --color-border-dark-strong: var(--color-border-dark-strong);
   --color-border-light-strong: var(--color-border-light-strong);
-  --color-alpha-gold-focus: var(--color-alpha-gold-focus);
   --color-alpha-gold-halo: var(--color-alpha-gold-halo);
   --color-alpha-rose-halo: var(--color-alpha-rose-halo);
   --color-alpha-emerald-halo: var(--color-alpha-emerald-halo);
@@ -289,7 +289,7 @@
   }
 
   /* Focus-visible baseline (UI Rule 17): 2px outline + 2px offset, ≥3:1 in
-     both modes (gold on dark ≈13.6:1 on the Binance canvas; bronze on light ≈6.1:1).
+     both modes (Snap Yellow on dark ≈16.95:1; deep yellow on light ≈5.70:1).
      Component focus treatments live in the components layer and override
      this baseline. */
   :focus-visible {
@@ -300,9 +300,11 @@
     outline-color: var(--color-brand-bronze);
   }
 
-  /* Selection basic (spec 129 §5.3): the pre-computed gold focus alpha. */
+  /* Selection basic (spec 129 §5.3): the accent halo alpha (spec 181 —
+     the translucent goldFocus token was deleted with the focus ring
+     going solid; selection keeps the same accent tint). */
   ::selection {
-    background-color: var(--color-alpha-gold-focus);
+    background-color: var(--color-alpha-gold-halo);
   }
 }
 

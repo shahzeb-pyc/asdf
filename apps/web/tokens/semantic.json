@@ -5,7 +5,7 @@
       "border": {
         "focus": {
           "$type": "color",
-          "$value": "{color.alpha.goldFocus}"
+          "$value": "{color.brand.gold}"
         },
         "hairline": {
           "$type": "color",
@@ -125,7 +125,7 @@
       "border": {
         "focus": {
           "$type": "color",
-          "$value": "{color.alpha.goldFocus}"
+          "$value": "{color.brand.bronze}"
         },
         "hairline": {
           "$type": "color",
