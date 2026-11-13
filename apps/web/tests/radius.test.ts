@@ -85,7 +85,7 @@ const SURFACES: Array<[string, string]> = [
   // Avatar tiles → xs (4px).
   [
     'src/components/workspace/workspace-switcher.tsx',
-    'rounded-xs bg-primary text-body font-bold text-on-primary',
+    'rounded-xs border border-link bg-primary text-body font-bold text-on-primary',
   ],
   [
     'src/components/workspace/workspace-switcher-list.tsx',
