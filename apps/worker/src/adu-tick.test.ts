@@ -265,6 +265,227 @@ describe('runAduTick', () => {
     );
   });
 
+  it('publishes live jobs behind 100+ dead-head jobs instead of starving them', async () => {
+    // Head-of-line regression (spec adu-publish-head-of-line): the old
+    // code loaded only the oldest 100 pending jobs, so 100+ dead jobs
+    // on error destinations filled the window and live jobs behind
+    // them never published. The scan must page past the dead head and
+    // publish the live jobs; the dead jobs stay pending_publish.
+    const deadCount = ADU_TICK_PAGE_SIZE + 1;
+    const base = new Date('2026-10-30T00:00:00.000Z').getTime();
+    const at = (i: number) => new Date(base + i * 60_000).toISOString();
+    const deadJobs = Array.from({ length: deadCount }, (_, i) => ({
+      id: `dead-${String(i).padStart(4, '0')}`,
+      config_id: 'c-dead',
+      reel_id: `reel-dead-${i}`,
+      publish_retries: 0,
+      graph_post_id: null,
+      status: 'pending_publish',
+      created_at: at(i),
+      adu_reels: { caption: 'dead', media_url: 'https://example.invalid/dead.mp4' },
+    }));
+    const liveJobs = [0, 1].map((k) => ({
+      id: `live-${k}`,
+      config_id: 'c-live',
+      reel_id: `reel-live-${k}`,
+      publish_retries: 0,
+      graph_post_id: null,
+      status: 'pending_publish',
+      created_at: at(deadCount + k),
+      adu_reels: { caption: 'live', media_url: 'https://example.invalid/live.mp4' },
+    }));
+    const jobs = [...deadJobs, ...liveJobs] as Row[];
+    const configs = [
+      {
+        id: 'c-dead',
+        workspace_id: 'ws-1',
+        destination_id: 'dest-dead',
+        timezone: 'UTC',
+        posts_per_day: 1,
+        posting_times: [],
+        status: 'active',
+        sync_status: 'synced',
+      },
+      {
+        id: 'c-live',
+        workspace_id: 'ws-1',
+        destination_id: 'dest-live',
+        timezone: 'UTC',
+        posts_per_day: 1,
+        posting_times: [],
+        status: 'active',
+        sync_status: 'synced',
+      },
+    ] as Row[];
+    const destinations = [
+      {
+        id: 'dest-dead',
+        account_id: 'acc-dead',
+        workspace_id: 'ws-1',
+        platform: 'facebook',
+        status: 'error',
+        encrypted_destination_token: null,
+      },
+      {
+        id: 'dest-live',
+        account_id: 'acc-live',
+        workspace_id: 'ws-1',
+        platform: 'facebook',
+        status: 'active',
+        encrypted_destination_token: null,
+      },
+    ] as Row[];
+    const encryptedAccess = await encryptToken('access', MASTER_KEY);
+    const accounts = [
+      {
+        id: 'acc-dead',
+        status: 'active',
+        encrypted_access_token: encryptedAccess,
+        encrypted_refresh_token: null,
+      },
+      {
+        id: 'acc-live',
+        status: 'active',
+        encrypted_access_token: encryptedAccess,
+        encrypted_refresh_token: null,
+      },
+    ] as Row[];
+    const claimed = new Set<string>();
+    const publisher = fakePublisher(async () => ({
+      status: 'published',
+      externalPostId: 'fb-post',
+    }));
+    const inList = (ops: Op[], col: string): string[] => {
+      const op = ops.find((o) => o.kind === 'in' && o.args[0] === col);
+      if (!op) return [];
+      return op.args[1] as string[];
+    };
+    // Regression guardrail: never stringify a possibly-falsy id
+    // without a guard. Every row in this fake carries an id by
+    // construction; a missing one fails loudly instead of matching
+    // the string "undefined".
+    const requireId = (row: Row): string => {
+      if (!row.id) throw new InternalError('head-of-line test: row without id');
+      return String(row.id);
+    };
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        const ids = inList(ops, 'id');
+        return {
+          data: jobs.filter((j) => ids.includes(requireId(j)) && j.status === 'pending_publish'),
+          error: null,
+        };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'update')) {
+        const payload = ops.find((o) => o.kind === 'update')!.args[0] as Row;
+        const id = opValue(ops, 'eq', 'id') as string | undefined;
+        const job = jobs.find((j) => j.id === id);
+        if (payload.status === 'publishing' && job) {
+          if (job.status === 'pending_publish' && id !== undefined && !claimed.has(id)) {
+            claimed.add(id);
+            job.status = 'publishing';
+            return { data: [{ id }], error: null };
+          }
+          return { data: [], error: null };
+        }
+        if (job) Object.assign(job, payload);
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs') {
+        // Scan load (eq pending_publish) or stale reset (eq publishing).
+        if (opValue(ops, 'eq', 'status') === 'publishing') return { data: [], error: null };
+        const gte = ops.find((o) => o.kind === 'gte' && o.args[0] === 'created_at');
+        const limitOp = ops.find((o) => o.kind === 'limit');
+        const limit = limitOp ? (limitOp.args[0] as number) : jobs.length;
+        const sorted = [...jobs]
+          .filter((j) => j.status === 'pending_publish')
+          .sort(
+            (a, b) =>
+              String(a.created_at).localeCompare(String(b.created_at)) ||
+              requireId(a).localeCompare(requireId(b)),
+          );
+        const after = gte
+          ? sorted.filter((j) => String(j.created_at) >= String(gte.args[1]))
+          : sorted;
+        return { data: after.slice(0, limit), error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        const ids = inList(ops, 'id');
+        return { data: configs.filter((c) => ids.includes(requireId(c))), error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return {
+          data: configs.find((c) => c.id === opValue(ops, 'eq', 'id')) ?? null,
+          error: null,
+        };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'update')) {
+        return { error: null };
+      }
+      if (table === 'adu_configs') {
+        // Intake / recovery list loads: respect the eq filters.
+        const filtered = configs.filter((c) =>
+          ops.every((o) => o.kind !== 'eq' || c[o.args[0] as string] === o.args[1]),
+        );
+        return { data: pageOf(filtered, ops), error: null };
+      }
+      if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        const ids = inList(ops, 'id');
+        return {
+          data: destinations.filter((d) => ids.includes(requireId(d))),
+          error: null,
+        };
+      }
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return {
+          data: destinations.find((d) => d.id === opValue(ops, 'eq', 'id')) ?? null,
+          error: null,
+        };
+      }
+      if (table === 'destinations') return { data: [], error: null };
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        const ids = inList(ops, 'id');
+        return { data: accounts.filter((a) => ids.includes(requireId(a))), error: null };
+      }
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return {
+          data: accounts.find((a) => a.id === opValue(ops, 'eq', 'id')) ?? null,
+          error: null,
+        };
+      }
+      if (table === 'social_accounts') return { data: [], error: null };
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(publisher),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(result.published).toBe(2);
+    expect(result.retried).toBe(0);
+    expect(publisher.publish).toHaveBeenCalledTimes(2);
+    // The dead head was never claimed and never bounced: it stays
+    // pending_publish, untouched, for a later tick (recoverable).
+    expect(deadJobs.every((j) => j.status === 'pending_publish')).toBe(true);
+    expect([...claimed].some((id) => id.startsWith('dead-'))).toBe(false);
+    expect(liveJobs.every((j) => j.status === 'published')).toBe(true);
+    // The scan paged past the first 500-row page to reach the live jobs.
+    const scanLoads = db.calls.filter(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some(
+          (o) => o.kind === 'eq' && o.args[0] === 'status' && o.args[1] === 'pending_publish',
+        ) &&
+        !c.ops.some((o) => o.kind === 'in') &&
+        !c.ops.some((o) => o.kind === 'update'),
+    );
+    expect(scanLoads.length).toBe(2);
+  });
+
   it('intake dedupe (23505) continues without throwing', async () => {
     const config = configRow('c1', ['09:00']);
     const db = makeDb((table, ops) => {
@@ -395,6 +616,9 @@ describe('runAduTick', () => {
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
         return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return { data: [{ id: 'c1', destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }], error: null };
+      }
       if (table === 'adu_configs') return { data: [], error: null };
       // The single-row load uses maybeSingle; the invalid-token
       // cascade's list select gets an empty page (no sibling pages).
@@ -411,7 +635,35 @@ describe('runAduTick', () => {
           error: null,
         };
       }
+      if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'dest-1',
+              account_id: 'acc-1',
+              workspace_id: 'ws-1',
+              platform: 'facebook',
+              status: 'active',
+              encrypted_destination_token: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'destinations') return { data: [], error: null };
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'acc-1',
+              status: 'active',
+              encrypted_access_token: encryptedAccess,
+              encrypted_refresh_token: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'social_accounts') {
         return {
           data: {
@@ -487,7 +739,25 @@ describe('runAduTick', () => {
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
         return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return { data: [{ id: 'c1', destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }], error: null };
+      }
       if (table === 'adu_configs') return { data: [], error: null };
+      if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'dest-1',
+              account_id: 'acc-1',
+              workspace_id: 'ws-1',
+              platform: 'threads',
+              status: 'active',
+              encrypted_destination_token: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'destinations') {
         return {
           data: {
@@ -498,6 +768,19 @@ describe('runAduTick', () => {
             status: 'active',
             encrypted_destination_token: null,
           },
+          error: null,
+        };
+      }
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'acc-1',
+              status: 'active',
+              encrypted_access_token: encryptedAccess,
+              encrypted_refresh_token: null,
+            },
+          ],
           error: null,
         };
       }
@@ -615,6 +898,21 @@ describe('runAduTick', () => {
       if (table === 'adu_reels' && ops.some((o) => o.kind === 'maybeSingle')) {
         return { data: reel, error: null };
       }
+      if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'dest-1',
+              account_id: 'acc-1',
+              workspace_id: 'ws-1',
+              platform: 'threads',
+              status: 'active',
+              encrypted_destination_token: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'destinations') {
         return {
           data: {
@@ -625,6 +923,19 @@ describe('runAduTick', () => {
             status: 'active',
             encrypted_destination_token: null,
           },
+          error: null,
+        };
+      }
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'acc-1',
+              status: 'active',
+              encrypted_access_token: encryptedAccess,
+              encrypted_refresh_token: encryptedRefresh,
+            },
+          ],
           error: null,
         };
       }
@@ -660,6 +971,12 @@ describe('runAduTick', () => {
         c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'processing'),
     );
     expect(processing).toBeDefined();
+    // The claim also clears the downloader's stale claim timestamp, so
+    // the per-loop stale reset cannot flip the reel back to pending and
+    // re-mint it at the next slot (duplicate jobs, Nov 9–13 2026).
+    expect(
+      (processing!.ops.find((o) => o.kind === 'update')!.args[0] as Row).download_claimed_at,
+    ).toBeNull();
     const posted = db.calls.find(
       (c) =>
         c.table === 'adu_reels' &&
@@ -725,7 +1042,25 @@ describe('runAduTick', () => {
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
         return { data: { destination_id: 'dest-ig-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return { data: [{ id: 'c1', destination_id: 'dest-ig-1', workspace_id: 'ws-1', status: 'active' }], error: null };
+      }
       if (table === 'adu_configs') return { data: [], error: null };
+      if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'dest-ig-1',
+              account_id: 'acc-1',
+              workspace_id: 'ws-1',
+              platform: 'instagram',
+              status: 'active',
+              encrypted_destination_token: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'destinations') {
         return {
           data: {
@@ -736,6 +1071,19 @@ describe('runAduTick', () => {
             status: 'active',
             encrypted_destination_token: null,
           },
+          error: null,
+        };
+      }
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'acc-1',
+              status: 'active',
+              encrypted_access_token: encryptedAccess,
+              encrypted_refresh_token: encryptedRefresh,
+            },
+          ],
           error: null,
         };
       }
@@ -814,7 +1162,25 @@ describe('runAduTick', () => {
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
         return { data: { destination_id: 'dest-x-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return { data: [{ id: 'c1', destination_id: 'dest-x-1', workspace_id: 'ws-1', status: 'active' }], error: null };
+      }
       if (table === 'adu_configs') return { data: [], error: null };
+      if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'dest-x-1',
+              account_id: 'acc-1',
+              workspace_id: 'ws-1',
+              platform: 'youtube',
+              status: 'active',
+              encrypted_destination_token: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'destinations') {
         return {
           data: {
@@ -825,6 +1191,19 @@ describe('runAduTick', () => {
             status: 'active',
             encrypted_destination_token: null,
           },
+          error: null,
+        };
+      }
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'acc-1',
+              status: 'active',
+              encrypted_access_token: encryptedAccess,
+              encrypted_refresh_token: encryptedRefresh,
+            },
+          ],
           error: null,
         };
       }
@@ -960,6 +1339,9 @@ describe('runAduTick', () => {
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
         return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return { data: [{ id: 'c1', destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }], error: null };
+      }
       if (table === 'adu_configs') return { data: [], error: null };
       // S2: the gate loads the destination row before the claim;
       // without it the job would pause and never reach the claim
@@ -969,6 +1351,26 @@ describe('runAduTick', () => {
           data: { platform: 'facebook', external_destination_id: 'ext-dest-1' },
           error: null,
         };
+      }
+      if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'dest-1',
+              account_id: 'acc-1',
+              platform: 'facebook',
+              external_destination_id: 'ext-dest-1',
+              status: 'active',
+            },
+          ],
+          error: null,
+        };
+      }
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        // The scan only reads id/status; this test never loads the
+        // account row itself (the claim is lost first), so no token
+        // is modelled here.
+        return { data: [{ id: 'acc-1', status: 'active' }], error: null };
       }
       return { data: [], error: null };
     });
@@ -1253,6 +1655,9 @@ describe('runAduTick', () => {
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
         return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return { data: [{ id: 'c1', destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }], error: null };
+      }
       if (table === 'adu_configs') return { data: [], error: null };
       if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
         return {
@@ -1271,7 +1676,39 @@ describe('runAduTick', () => {
           error: null,
         };
       }
+      if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data:
+            opts.destinationRow === null
+              ? []
+              : [
+                  {
+                    id: 'dest-1',
+                    account_id: 'acc-1',
+                    workspace_id: 'ws-1',
+                    platform: 'facebook',
+                    status: 'active',
+                    encrypted_destination_token: encryptedDestination,
+                    ...opts.destinationRow,
+                  },
+                ],
+          error: null,
+        };
+      }
       if (table === 'destinations') return { data: [], error: null };
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'acc-1',
+              status: 'active',
+              encrypted_access_token: encryptedAccess,
+              encrypted_refresh_token: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'social_accounts') {
         return {
           data: {
@@ -1338,7 +1775,6 @@ describe('runAduTick', () => {
   });
 
   it('S2: missing destination row stays pending_publish without calling the RPC', async () => {
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const rpcCapture: Array<Record<string, unknown>> = [];
     const { result, db, publisher } = await s2GateTick({
       rpcResult: true,
@@ -1354,10 +1790,9 @@ describe('runAduTick', () => {
         c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'publishing'),
     );
     expect(claim).toBeUndefined();
-    expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining('job=job-1 paused: owning workspace cannot publish for this destination'),
-    );
-    errSpy.mockRestore();
+    // The scan filters a missing-destination job before the loop, so
+    // the loop's "paused" log no longer fires for it — the job stays
+    // pending silently, recoverable if the destination reappears.
   });
 
   // --- ADU reel publish stores the Facebook error detail (PR #171
@@ -1425,6 +1860,9 @@ describe('runAduTick', () => {
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
         return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return { data: [{ id: 'c1', destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }], error: null };
+      }
       if (table === 'adu_configs') return { data: [], error: null };
       // The single-row load uses maybeSingle; the invalid-token
       // cascade's list select gets an empty page (no sibling pages).
@@ -1441,7 +1879,35 @@ describe('runAduTick', () => {
           error: null,
         };
       }
+      if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'dest-1',
+              account_id: 'acc-1',
+              workspace_id: 'ws-1',
+              platform: 'facebook',
+              status: 'active',
+              encrypted_destination_token: encryptedDestination,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'destinations') return { data: [], error: null };
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'acc-1',
+              status: 'active',
+              encrypted_access_token: encryptedAccess,
+              encrypted_refresh_token: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'social_accounts') {
         return {
           data: {
@@ -1681,6 +2147,9 @@ describe('runAduTick', () => {
           error: null,
         };
       }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return { data: [{ id: 'c1', destination_id: 'dest-1', workspace_id: 'ws-1', status: opts.gateStatus ?? 'active' }], error: null };
+      }
       if (
         table === 'adu_configs' &&
         ops.some((o) => o.kind === 'in' && o.args[0] === 'destination_id')
@@ -1701,7 +2170,35 @@ describe('runAduTick', () => {
           error: null,
         };
       }
+      if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'dest-1',
+              account_id: 'acc-1',
+              workspace_id: 'ws-1',
+              platform: 'facebook',
+              status: 'active',
+              encrypted_destination_token: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'destinations') return { data: opts.cascadeDestinations ?? [], error: null };
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'acc-1',
+              status: 'active',
+              encrypted_access_token: encryptedAccess,
+              encrypted_refresh_token: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'social_accounts') {
         return {
           data: {
@@ -1763,18 +2260,19 @@ describe('runAduTick', () => {
     expect(flippedTo(db, 'adu_configs', 'invalid_token', 'c2')).toBeDefined();
     // The cascade queries only currently-active rows — that filter is
     // the scope pin (error/paused/rate-limited rows keep their own
-    // status because the database never returns them here).
+    // status because the database never returns them here). The find
+    // must pin the eq status='active' itself: the publish scan's bulk
+    // destinations load is also a select without maybeSingle, and it
+    // runs first.
     const cascadeDestCall = db.calls.find(
       (c) =>
         c.table === 'destinations' &&
         !c.ops.some((o) => o.kind === 'maybeSingle') &&
-        c.ops.some((o) => o.kind === 'select'),
+        c.ops.some(
+          (o) => o.kind === 'eq' && o.args[0] === 'status' && o.args[1] === 'active',
+        ),
     );
-    expect(
-      cascadeDestCall?.ops.some(
-        (o) => o.kind === 'eq' && o.args[0] === 'status' && o.args[1] === 'active',
-      ),
-    ).toBe(true);
+    expect(cascadeDestCall).toBeDefined();
     // Terminal settlement marks the reel failed too.
     expect(flippedTo(db, 'adu_reels', 'failed', 'reel-1')).toBeDefined();
   });
