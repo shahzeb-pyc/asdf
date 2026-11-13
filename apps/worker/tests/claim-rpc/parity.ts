@@ -872,8 +872,8 @@ async function caseS2Explain(ctx: Ctx): Promise<void> {
   // Scale the usage + periods tables so the planner cannot prefer
   // a sequential scan for a selective (user_id, platform) lookup.
   await ctx.client.query(
-    `INSERT INTO public.subscription_usage (user_id, platform, destination_key, feature)
-     SELECT md5('s2-scale-user-' || g)::uuid, 'facebook', 'key-' || g, 'schedule'
+    `INSERT INTO public.subscription_usage (user_id, platform, destination_key, feature, section)
+     SELECT md5('s2-scale-user-' || g)::uuid, 'facebook', 'key-' || g, 'schedule', 'schedule'
      FROM generate_series(1, 5000) AS g`
   );
   await ctx.client.query(

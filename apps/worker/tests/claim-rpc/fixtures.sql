@@ -194,6 +194,11 @@ $$;
 -- Insert one subscription_usage row for the rig owner. The id is
 -- md5-derived from (platform, key, feature), so a case's usage set
 -- is deterministic; distinct keys per case keep the insert unique.
+-- Section is derived from the feature with the same mapping as the
+-- spec 174 Phase 2B backfill: the rig's 'schedule' placeholder
+-- feature stands for a schedule-context registration, so it maps to
+-- 'schedule'. An unmapped feature yields NULL and fails loud on the
+-- NOT NULL constraint — the rig must never invent a section.
 CREATE OR REPLACE FUNCTION public.claim138_usage(
   p_platform TEXT,
   p_destination_key TEXT,
@@ -207,9 +212,20 @@ DECLARE
   v_id UUID := md5('claim138-usage-' || p_platform || '-' || p_destination_key || '-' || p_feature)::uuid;
 BEGIN
   INSERT INTO public.subscription_usage
-    (id, user_id, platform, destination_key, feature, destination_id)
+    (id, user_id, platform, destination_key, feature, destination_id, section)
   VALUES
-    (v_id, public.claim138_test_id('user', 1), p_platform, p_destination_key, p_feature, p_destination_id);
+    (v_id, public.claim138_test_id('user', 1), p_platform, p_destination_key, p_feature, p_destination_id,
+     CASE p_feature
+       WHEN 'auto-download-upload' THEN 'adu'
+       WHEN 'destination-queue' THEN 'schedule'
+       WHEN 'tiktok-mirror' THEN 'mirror'
+       WHEN 'auto-repost' THEN 'mirror'
+       WHEN 'publish-now' THEN 'publish_now'
+       WHEN 'instagram-publish-now' THEN 'publish_now'
+       WHEN 'threads-publish-now' THEN 'publish_now'
+       WHEN 'schedule' THEN 'schedule'
+       ELSE NULL
+     END);
   RETURN v_id;
 END;
 $$;
