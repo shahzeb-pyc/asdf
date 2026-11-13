@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { aduContext, aduMissingTable } from '@/lib/server/adu';
+import { aduContext } from '@/lib/server/adu';
+import { loadAduOptionsListsForPlatform, type AduOptionsLists } from '@/lib/adu-hub-helpers';
 
 /**
  * Instagram accounts + their destinations for the Add Account picker.
@@ -20,57 +21,33 @@ export async function GET(
   const resolved = await aduContext(request, subdomain);
   if ('errorResponse' in resolved) return resolved.errorResponse;
   const { workspaceId, supabase } = resolved.context;
-  // Explicit 1,000-row bounds on every list here (PostgREST silently
-  // truncates past 1,000 rows) and fail-loud 500s, never an empty
-  // picker that invites duplicate configs — the #56 pattern for the
-  // Facebook picker, applied to the Instagram picker.
-  const { data: accounts, error: accountError } = await supabase
-    .from('social_accounts')
-    .select('id, external_account_id, display_name, avatar_url, status')
-    .eq('workspace_id', workspaceId)
-    .eq('platform', 'instagram')
-    .order('display_name')
-    .limit(1000);
-  if (accountError) {
-    console.error(`IG ADU options accounts failed: code=${accountError.code ?? 'unknown'}`);
+  // One shared paged loader (Stream D, F23): the three selects are
+  // range-paged past 1,000 rows instead of silently truncating, and
+  // run concurrently. A fatal load failure is a loud 500, never an
+  // empty picker that invites duplicate configs.
+  let lists: AduOptionsLists;
+  try {
+    lists = await loadAduOptionsListsForPlatform(supabase, workspaceId, 'instagram');
+  } catch (err) {
+    console.error(`IG ADU options failed: ${err instanceof Error ? err.message : 'unknown'}`);
     return NextResponse.json({ error: 'Could not load Instagram accounts.' }, { status: 500 });
   }
-  const { data: destinations, error: destError } = await supabase
-    .from('destinations')
-    .select('id, account_id, external_destination_id, name, avatar_url, status, metadata, section')
-    .eq('workspace_id', workspaceId)
-    .eq('platform', 'instagram')
-    .order('name')
-    .limit(1000);
-  if (destError) {
-    console.error(`IG ADU options destinations failed: code=${destError.code ?? 'unknown'}`);
-    return NextResponse.json({ error: 'Could not load Instagram accounts.' }, { status: 500 });
-  }
+  const { accounts, destinations, configured } = lists;
   // One picker entry per account (spec 174 1B): the destination IS the
   // account for Instagram, and an account can hold one row per section
   // now. The adu copy is the entry when it exists (it is the row a new
   // config attaches to); otherwise any row serves as the identity
   // source — createOne creates the adu copy from it.
-  const dedupedDestinations = dedupeDestinationsByAccount(
-    (destinations ?? []) as Array<Record<string, unknown>>
-  );
-  const { data: configured } = await supabase
-    .from('adu_configs')
-    .select('destination_id, source_platform, source_username')
-    .eq('workspace_id', workspaceId)
-    .limit(1000);
-  if (configured === null) {
-    const { error } = await supabase.from('adu_configs').select('id').limit(1);
-    if (aduMissingTable(error)) {
-      return NextResponse.json({
-        accounts: accounts ?? [],
-        pages: dedupedDestinations,
-        destinations: dedupedDestinations,
-        configured: [],
-        configuredAccountIds: [],
-        migrationMissing: true,
-      });
-    }
+  const dedupedDestinations = dedupeDestinationsByAccount(destinations);
+  if (lists.migrationMissing) {
+    return NextResponse.json({
+      accounts,
+      pages: dedupedDestinations,
+      destinations: dedupedDestinations,
+      configured: [],
+      configuredAccountIds: [],
+      migrationMissing: true,
+    });
   }
   // The accounts that already have an ADU config (spec 174 2A): a
   // config's destination_id is an adu-copy id, so the join goes
@@ -78,19 +55,19 @@ export async function GET(
   // out these accounts instead of submitting into the adu_configs
   // UNIQUE(destination_id) 23505.
   const accountIdByDestinationId = new Map<string, string>();
-  for (const row of (destinations ?? []) as Array<{ id: string; account_id: string }>) {
+  for (const row of destinations as Array<{ id: string; account_id: string }>) {
     accountIdByDestinationId.set(row.id, row.account_id);
   }
   const configuredAccountIds = [...new Set(
-    (configured ?? [])
+    configured
       .map((c) => accountIdByDestinationId.get(c.destination_id as string))
       .filter((id): id is string => typeof id === 'string' && id.length > 0)
   )];
   return NextResponse.json({
-    accounts: accounts ?? [],
+    accounts,
     pages: dedupedDestinations,
     destinations: dedupedDestinations,
-    configured: configured ?? [],
+    configured,
     configuredAccountIds,
   });
 }

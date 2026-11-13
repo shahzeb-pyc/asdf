@@ -14,9 +14,11 @@ import {
   ensureAduDestinationCopy,
   registerAduConfigUsage,
   aduMissingTable,
+  aduRpcMissing,
   buildAduConfigView,
   type AduConfigView,
 } from '@/lib/server/adu';
+import { statusFilterToValue } from '@/lib/adu-hub-helpers';
 import {
   assertFeatureAddWithinCap,
   getEntitlement,
@@ -33,63 +35,21 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * Instagram Auto Download/Upload hub list + create.
  *
  * Same shape as the Facebook hub route, destination Instagram:
- * - List is platform-filtered by construction. The Facebook hub RPCs
- *   (adu_hub_list / adu_hub_stats) are NOT used here: they have no
- *   platform filter, so they would leak Facebook configs into the
- *   Instagram hub and break pagination. Instead the route first
- *   loads this workspace's Instagram destination ids (user-connected
- *   accounts, bounded by the account count), then lists configs for
- *   those destinations only, 9 per page like Facebook.
+ * - List is platform-filtered by the instagram_adu_hub_list /
+ *   instagram_adu_hub_stats RPCs (20261113130000), clones of the
+ *   Facebook hub RPCs with a platform predicate. The Facebook RPCs
+ *   themselves are NOT used here: they have no platform filter, so
+ *   they would leak Facebook configs into the Instagram hub. The old
+ *   direct-query list is deleted: its search path loaded every
+ *   matching config into memory and filtered/sorted/paginated in JS.
+ *   F21 will collapse the three RPC pairs into one
+ *   platform-parameterised function.
  * - Stats follow Facebook's definitions: totalFollowers is the sum
  *   of current_followers, followersGained is the sum of net growth
  *   (current_followers minus starting_followers, floored at 0).
- * - No new tables, no migration: adu_configs / adu_reels /
- *   adu_posting_jobs are reused verbatim.
+ * - No new tables: adu_configs / adu_reels / adu_posting_jobs are
+ *   reused verbatim.
  */
-
-function statusFilterToValue(filter: string): string | null {
-  const map: Record<string, string> = {
-    Active: 'active',
-    Paused: 'paused',
-    'Verification Req.': 'fb_verification_required',
-    'Rate Limited': 'fb_rate_limited',
-    'Page Not Accessible': 'page_not_accessible',
-    'Invalid Token': 'invalid_token',
-    'Invalid Username': 'invalid_username',
-    'Creator Suspended': 'creator_suspended',
-    Completed: 'completed',
-    '2FA Req. on BM': '2fa_required_on_BM',
-    'Check Dev App': 'check_developer_app',
-    'Account Suspended': 'account_suspended',
-    'Missing Page Access': 'missing_page_access',
-    'Missing Permission': 'missing_permission',
-  };
-  return map[filter] ?? null;
-}
-
-function sortConfigs(
-  rows: Array<Record<string, unknown>>,
-  sort: string
-): Array<Record<string, unknown>> {
-  const byCreated = (a: Record<string, unknown>, b: Record<string, unknown>) =>
-    new Date(String(b.created_at ?? '')).getTime() -
-    new Date(String(a.created_at ?? '')).getTime();
-  if (sort === 'Most Followers') {
-    return [...rows].sort(
-      (a, b) =>
-        Number(b.current_followers ?? 0) - Number(a.current_followers ?? 0) ||
-        byCreated(a, b)
-    );
-  }
-  if (sort === 'Least Followers') {
-    return [...rows].sort(
-      (a, b) =>
-        Number(a.current_followers ?? 0) - Number(b.current_followers ?? 0) ||
-        byCreated(a, b)
-    );
-  }
-  return [...rows].sort(byCreated);
-}
 
 export async function GET(
   request: NextRequest,
@@ -99,144 +59,77 @@ export async function GET(
   const resolved = await aduContext(request, subdomain);
   if ('errorResponse' in resolved) return resolved.errorResponse;
   const { workspaceId, supabase } = resolved.context;
+  // Search/status/sort/page are applied in the database by the
+  // instagram_adu_hub_list / instagram_adu_hub_stats RPCs
+  // (20261113130000): the old code loaded every matching config for
+  // the workspace and filtered/sorted/paginated in memory on the
+  // search path, which silently truncated past PostgREST's 1,000-row
+  // limit. Only the 9 rows of the requested page are ever built into
+  // views, and totals/stats come from the database, not from a sliced
+  // array.
   const search = request.nextUrl.searchParams.get('q')?.trim() ?? '';
   const statusFilter = request.nextUrl.searchParams.get('status') ?? 'All Statuses';
   const sort = request.nextUrl.searchParams.get('sort') ?? 'Newest First';
   const page = Math.max(1, Number(request.nextUrl.searchParams.get('page') ?? '1') || 1);
   const pageSize = 9;
   const statusValue = statusFilterToValue(statusFilter);
-
-  // Instagram destination ids for this workspace (the bound for
-  // everything below: one ADU config per destination at most, by the
-  // unique destination index).
-  const { data: destinations, error: destError } = await supabase
-    .from('destinations')
-    .select('id')
-    .eq('workspace_id', workspaceId)
-    .eq('platform', 'instagram')
-    .eq('section', 'adu')
-    .limit(1000);
-  if (destError) {
-    if (aduMissingTable(destError)) {
+  // List + stats run concurrently — the same filtered scan, one trip
+  // saved per load (same as the Facebook route).
+  const [listResult, statsResult] = await Promise.all([
+    supabase.rpc('instagram_adu_hub_list', {
+      p_workspace_id: workspaceId,
+      p_search: search || null,
+      p_status: statusValue,
+      p_sort: sort,
+      p_limit: pageSize,
+      p_offset: (page - 1) * pageSize,
+    }),
+    supabase.rpc('instagram_adu_hub_stats', {
+      p_workspace_id: workspaceId,
+      p_search: search || null,
+      p_status: statusValue,
+    }),
+  ]);
+  const { data: rows, error } = listResult;
+  if (error) {
+    // 42P01 = ADU tables missing; 42883 / PGRST202 = the RPC itself
+    // missing, which also means the ADU migrations have not been
+    // applied yet.
+    if (aduRpcMissing(error)) {
       return NextResponse.json({ configs: [], total: 0, page: 1, migrationMissing: true });
     }
-    console.error(`IG ADU destination list failed: code=${destError.code ?? 'unknown'}`);
+    console.error(`IG ADU hub list failed: code=${error.code ?? 'unknown'}`);
     return NextResponse.json({ error: 'Failed to load accounts.' }, { status: 500 });
   }
-  const destinationIds = (destinations ?? []).map((d) => (d as { id: string }).id);
-  if (destinationIds.length === 0) {
-    return NextResponse.json({
-      configs: [],
-      total: 0,
-      page,
-      totalPages: 0,
-      stats: { totalPages: 0, followersGained: 0, totalFollowers: 0 },
-    });
-  }
-
-  if (!search) {
-    // DB-side page: status filter + sort + range, like Facebook's RPC.
-    let query = supabase
-      .from('adu_configs')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .in('destination_id', destinationIds);
-    if (statusValue) query = query.eq('status', statusValue);
-    if (sort === 'Most Followers') query = query.order('current_followers', { ascending: false });
-    else if (sort === 'Least Followers') query = query.order('current_followers', { ascending: true });
-    query = query.order('created_at', { ascending: false });
-    const { data, error } = await query.range((page - 1) * pageSize, page * pageSize - 1);
-    if (error) {
-      if (aduMissingTable(error)) {
-        return NextResponse.json({ configs: [], total: 0, page: 1, migrationMissing: true });
-      }
-      console.error(`IG ADU hub list failed: code=${error.code ?? 'unknown'}`);
-      return NextResponse.json({ error: 'Failed to load accounts.' }, { status: 500 });
-    }
-    // Total + stats over the filtered set (bounded by destination count).
-    let countQuery = supabase
-      .from('adu_configs')
-      .select('starting_followers, current_followers', { count: 'exact' })
-      .eq('workspace_id', workspaceId)
-      .in('destination_id', destinationIds);
-    if (statusValue) countQuery = countQuery.eq('status', statusValue);
-    const { data: statRows, count } = await countQuery;
-    const total = count ?? 0;
-    const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-    const views: AduConfigView[] = [];
-    for (const row of (data ?? []) as Array<Record<string, unknown>>) {
-      views.push(await buildAduConfigView(supabase, row as never));
-    }
-    const followersGained = (statRows ?? []).reduce(
-      (sum, r) =>
-        sum + Math.max(Number((r as { current_followers?: number }).current_followers ?? 0) - Number((r as { starting_followers?: number }).starting_followers ?? 0), 0),
-      0
-    );
-    const totalFollowers = (statRows ?? []).reduce(
-      (sum, r) => sum + Number((r as { current_followers?: number }).current_followers ?? 0),
-      0
-    );
-    return NextResponse.json({
-      configs: views,
-      total,
-      page,
-      totalPages,
-      stats: { totalPages: total, followersGained, totalFollowers },
-    });
-  }
-
-  // Search path: source_username match OR destination name/external-id
-  // match. Both halves are bounded by the destination set; the merge
-  // is in memory over at most one config per destination.
-  const escaped = search.replace(/[%_\\]/g, '');
-  const { data: nameMatched } = await supabase
-    .from('destinations')
-    .select('id')
-    .eq('workspace_id', workspaceId)
-    .eq('platform', 'instagram')
-    .eq('section', 'adu')
-    .or(`name.ilike.%${escaped}%,external_destination_id.ilike.%${escaped}%`)
-    .limit(1000);
-  const nameMatchedIds = new Set((nameMatched ?? []).map((d) => (d as { id: string }).id));
-  let searchQuery = supabase
-    .from('adu_configs')
-    .select('*')
-    .eq('workspace_id', workspaceId)
-    .in('destination_id', destinationIds);
-  if (statusValue) searchQuery = searchQuery.eq('status', statusValue);
-  const { data: allRows, error: searchError } = await searchQuery;
-  if (searchError) {
-    if (aduMissingTable(searchError)) {
-      return NextResponse.json({ configs: [], total: 0, page: 1, migrationMissing: true });
-    }
-    console.error(`IG ADU hub search failed: code=${searchError.code ?? 'unknown'}`);
-    return NextResponse.json({ error: 'Failed to load accounts.' }, { status: 500 });
-  }
-  const lowered = search.toLowerCase();
-  const filtered = ((allRows ?? []) as Array<Record<string, unknown>>).filter(
-    (row) =>
-      nameMatchedIds.has(String(row.destination_id)) ||
-      String(row.source_username ?? '').toLowerCase().includes(lowered)
-  );
-  const sorted = sortConfigs(filtered, sort);
-  const total = sorted.length;
+  const listRows = (rows ?? []) as Array<Record<string, unknown> & { total_count?: number }>;
+  const total = listRows[0]?.total_count ?? 0;
   const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-  const pageRows = sorted.slice((page - 1) * pageSize, page * pageSize);
   const views: AduConfigView[] = [];
-  for (const row of pageRows) {
+  for (const row of listRows) {
     views.push(await buildAduConfigView(supabase, row as never));
   }
-  const followersGained = sorted.reduce(
-    (sum, r) => sum + Math.max(Number(r.current_followers ?? 0) - Number(r.starting_followers ?? 0), 0),
-    0
-  );
-  const totalFollowers = sorted.reduce((sum, r) => sum + Number(r.current_followers ?? 0), 0);
+  const { data: statsRows, error: statsError } = statsResult;
+  if (statsError) {
+    console.error(`IG ADU hub stats failed: code=${statsError.code ?? 'unknown'}`);
+  }
+  // RPC names match the old in-memory stats exactly: totalFollowers
+  // is the sum of current_followers, followersGained is the sum of the
+  // net growth (current_followers minus starting_followers, floored at 0).
+  const statsRow = (statsRows as Array<{
+    total_count?: number;
+    total_followers_sum?: number;
+    net_gained_sum?: number;
+  }> | null)?.[0];
   return NextResponse.json({
     configs: views,
     total,
     page,
     totalPages,
-    stats: { totalPages: total, followersGained, totalFollowers },
+    stats: {
+      totalPages: total,
+      followersGained: statsRow?.net_gained_sum ?? 0,
+      totalFollowers: statsRow?.total_followers_sum ?? 0,
+    },
   });
 }
 
