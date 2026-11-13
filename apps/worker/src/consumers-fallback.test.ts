@@ -105,7 +105,13 @@ async function makeRows() {
 }
 
 function makeDb(rows: Awaited<ReturnType<typeof makeRows>>) {
-  const updates: Array<{ table: string; values: Record<string, unknown>; id: unknown }> = [];
+  const updates: Array<{
+    table: string;
+    values: Record<string, unknown>;
+    id: unknown;
+    /** The eq/neq filters on the update, in order — pins the BG5 fan-out. */
+    filters: Array<{ col: string; op: 'eq' | 'neq'; val: unknown }>;
+  }> = [];
   const settles: Array<Record<string, unknown>> = [];
   const byTable: Record<string, Record<string, unknown>> = {
     queue_items: rows.item,
@@ -115,9 +121,16 @@ function makeDb(rows: Awaited<ReturnType<typeof makeRows>>) {
   const chain = (table: string) => {
     const b: Record<string, unknown> = {};
     let wantedId: unknown;
+    const filters: Array<{ col: string; op: 'eq' | 'neq'; val: unknown }> = [];
+    let updateValues: Record<string, unknown> | null = null;
     b.select = () => b;
-    b.eq = (_column: string, value: unknown) => {
+    b.eq = (column: string, value: unknown) => {
       wantedId = value;
+      filters.push({ col: column, op: 'eq', val: value });
+      return b;
+    };
+    b.neq = (column: string, value: unknown) => {
+      filters.push({ col: column, op: 'neq', val: value });
       return b;
     };
     b.maybeSingle = async () => {
@@ -128,12 +141,18 @@ function makeDb(rows: Awaited<ReturnType<typeof makeRows>>) {
       };
     };
     b.upsert = async () => ({ error: null });
-    b.update = (values: Record<string, unknown>) => ({
-      eq: async (_column: string, value: unknown) => {
-        updates.push({ table, values, id: value });
-        return { data: [{ id: value }], error: null };
-      },
-    });
+    b.update = (values: Record<string, unknown>) => {
+      updateValues = values;
+      return b;
+    };
+    b.then = (resolve: (value: { data: unknown; error: null }) => void) => {
+      if (updateValues) {
+        updates.push({ table, values: updateValues, id: wantedId, filters: [...filters] });
+        resolve({ data: [{ id: wantedId }], error: null });
+        return;
+      }
+      resolve({ data: null, error: null });
+    };
     return b;
   };
   const db = {
@@ -237,6 +256,45 @@ describe('BG5 publish fallback in handlePublishBatch', () => {
       p_external_post_id: 'fb_new_post',
     });
     expect(ack).toHaveBeenCalled();
+  });
+
+  it('spec 174 3A: the re-discovered token fans out to every section copy of the page', async () => {
+    vi.stubGlobal('fetch', graphFetch([{ id: 'page_123', access_token: 'fresh_page_token' }]));
+    const rows = await makeRows();
+    const { db, updates, settles } = makeDb(rows);
+    const publish = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'failed',
+        error: { kind: 'auth', code: '190', message: 'Invalid OAuth access token' },
+      })
+      .mockResolvedValueOnce({ status: 'published', externalPostId: 'fb_new_post' });
+    const publisher = { platform: 'facebook', publish } as never;
+    const { batch, ack } = makeBatch();
+
+    await handlePublishBatch(batch, {
+      db: db as never,
+      registry: { get: () => publisher } as never,
+      masterKey: MASTER_KEY,
+      env: {},
+    });
+
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(settles).toHaveLength(1);
+    expect(ack).toHaveBeenCalled();
+    const tokenPersist = updates.find((u) => u.table === 'destinations');
+    expect(tokenPersist).toBeDefined();
+    const persisted = String(tokenPersist?.values['encrypted_destination_token']);
+    expect(await decryptToken(persisted, MASTER_KEY)).toBe('fresh_page_token');
+    // The persist targets the PAGE (account + external id), not the
+    // single row being published — every section copy gets the
+    // fresh token. Disconnected copies are excluded: a removed
+    // page must never regain a token.
+    expect(tokenPersist?.filters).toEqual([
+      { col: 'account_id', op: 'eq', val: ACCT_ID },
+      { col: 'external_destination_id', op: 'eq', val: 'page_123' },
+      { col: 'status', op: 'neq', val: 'disconnected' },
+    ]);
   });
 
   it('settles the original 190 loudly when re-discovery finds no page', async () => {

@@ -202,10 +202,14 @@ async function cascadeInvalidToken(
 ): Promise<void> {
   let lastDestinationId: string | null = null;
   for (;;) {
+    // Spec 174 3A: the cascade is scoped to Auto Download rows — an
+    // Auto Download token failure must not flip the Schedule (or any
+    // other section's) row for the same page.
     let destQuery = supabase
       .from('destinations')
       .select('id')
       .eq('account_id', accountId)
+      .eq('section', 'adu')
       .eq('status', 'active')
       .order('id', { ascending: true })
       .limit(ADU_TICK_PAGE_SIZE);
@@ -490,12 +494,13 @@ async function loadActionablePublishJobs(
         platform: string;
         external_destination_id: string | null;
         status: string;
+        section: string | null;
       }
     >();
     if (destinationIds.length > 0) {
       const { data: destinationData, error: destinationError } = await supabase
         .from('destinations')
-        .select('id, account_id, platform, external_destination_id, status')
+        .select('id, account_id, platform, external_destination_id, status, section')
         .in('id', destinationIds);
       if (destinationError) {
         if (isMissingTable(destinationError)) return { jobs: [], skipped: true, entitledByKey };
@@ -510,6 +515,7 @@ async function loadActionablePublishJobs(
           platform: string;
           external_destination_id: string | null;
           status: string;
+          section: string | null;
         }[]).map((d) => [d.id, d]),
       );
     }
@@ -547,7 +553,18 @@ async function loadActionablePublishJobs(
       const config = configsById.get(row.config_id);
       if (!config || config.status !== 'active') continue;
       const destination = destinationsById.get(config.destination_id);
-      if (!destination || destination.status === 'disconnected' || destination.status === 'error')
+      // Spec 174 3A: the scan reads the Auto Download copy only.
+      // A config pointing at another section's row (a pre-1B
+      // leftover) is not actionable — its jobs wait, exactly like
+      // a disconnected destination's, instead of blocking the
+      // head of the queue. (Settle-path jobs bypass this gate
+      // above, so the per-job gate below still re-checks.)
+      if (
+        !destination ||
+        destination.section !== 'adu' ||
+        destination.status === 'disconnected' ||
+        destination.status === 'error'
+      )
         continue;
       const account = accountsById.get(destination.account_id);
       if (!account || account.status !== 'active') continue;
@@ -566,6 +583,10 @@ async function loadActionablePublishJobs(
           destination.platform,
           destinationKey,
           now,
+          // Spec 174 3A: the scan's entitlement check is for the
+          // ADU copy — a Schedule-only registration must not pass
+          // an ADU job at cap.
+          'adu'
         );
         entitledByKey.set(entitlementKey, entitled);
       }
@@ -759,6 +780,30 @@ export async function runAduTick(options: {
     if (config.posts_per_day <= 0) continue;
     const localTime = localTimeInTimezone(now, config.timezone);
     if (!config.posting_times.includes(localTime)) continue;
+    // Spec 174 3A (Gate 2A finding 3): intake mints jobs only for the
+    // Auto Download copy of an ACTIVE destination. The publish loop
+    // already refuses non-active destinations, but intake never
+    // checked — configs on disconnected pages kept minting jobs that
+    // could never publish. A missing, wrong-section, or non-active
+    // row skips the config (loud log, no job minted); the config
+    // stays active so a reconnect resumes it.
+    const { data: intakeDest, error: intakeDestError } = await supabase
+      .from('destinations')
+      .select('status, section')
+      .eq('id', config.destination_id)
+      .maybeSingle();
+    if (intakeDestError) {
+      throw new InternalError(
+        `ADU intake destination load failed: ${intakeDestError.code ?? 'unknown'} ${intakeDestError.message}`,
+      );
+    }
+    const intakeDestRow = intakeDest as { status?: string; section?: string } | null;
+    if (!intakeDestRow || intakeDestRow.section !== 'adu' || intakeDestRow.status !== 'active') {
+      console.error(
+        `[adu-tick] config=${config.id} skipped: destination ${config.destination_id} is ${intakeDestRow ? `${intakeDestRow.section ?? 'unknown'}/${intakeDestRow.status}` : 'missing'}; not minting jobs`,
+      );
+      continue;
+    }
     // Skip rule: >10 download failures in the last 24h. Every intake
     // query error is checked: the old code destructured data only, so
     // a transient database error read as an empty result — a config
@@ -1020,7 +1065,7 @@ export async function runAduTick(options: {
       if (gateDestinationId) {
         const { data } = await supabase
           .from('destinations')
-          .select('platform, external_destination_id')
+          .select('platform, external_destination_id, section')
           .eq('id', gateDestinationId)
           .maybeSingle();
         gateDestinationRow = data;
@@ -1028,7 +1073,19 @@ export async function runAduTick(options: {
       const gateDestination = gateDestinationRow as {
         platform?: string;
         external_destination_id?: string | null;
+        section?: string;
       } | null;
+      // Spec 174 3A: the gate reads the Auto Download copy only. A
+      // config pointing at another section's row (a pre-1B leftover)
+      // publishes nothing from here. (Settle-path jobs bypass the
+      // scan's destination gate, so this check must stay even
+      // though the scan filters them too.)
+      if (gateDestination?.section !== 'adu') {
+        console.error(
+          `[adu-tick] job=${job.id} skipped: destination ${gateDestinationId} is not the Auto Download copy; leaving pending_publish`,
+        );
+        continue;
+      }
       // The scan already checked entitlement for this job (memoized
       // per workspace|platform|destinationKey); reuse its answer so
       // the RPC is called once per key per tick, not once per load.
@@ -1045,6 +1102,7 @@ export async function runAduTick(options: {
               gateDestination.platform,
               gateDestination.external_destination_id ?? gateDestinationId,
               now,
+              'adu'
             ))
           : false;
       if (!entitled) {
@@ -1102,6 +1160,18 @@ export async function runAduTick(options: {
       continue;
     }
     const dest = destination as unknown as DatabaseDestinationRow;
+    // Spec 174 3A: the publish loop reads the Auto Download copy
+    // only. This is the second load (after the claim), so it
+    // re-verifies rather than trusting the gate's row — a wrong-section
+    // row leaves the job pending_publish, exactly like a non-active one.
+    if (dest.section !== 'adu') {
+      await supabase
+        .from('adu_posting_jobs')
+        .update({ status: 'pending_publish', last_error_code: 'destination_wrong_section', last_error_message: 'Destination is not the Auto Download copy.' })
+        .eq('id', job.id);
+      result.retried += 1;
+      continue;
+    }
     const { data: account } = await supabase
       .from('social_accounts')
       .select('*')

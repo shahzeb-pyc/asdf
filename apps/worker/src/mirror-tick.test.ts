@@ -11,6 +11,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  encryptToken,
   InternalError,
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
 } from '@fbuploadpro/contracts';
@@ -710,6 +711,9 @@ describe('processMirrorCheck — S2 due downgrade un-pauses the mirror', () => {
       p_platform: 'facebook',
       p_destination_key: 'fb_123',
       p_at: '2026-10-29T12:00:00.000Z',
+      // Spec 174 3A: the mirror gate passes its own section, so a
+      // Schedule-only registration can no longer pass it at cap.
+      p_section: 'mirror',
     });
   });
 
@@ -750,6 +754,7 @@ describe('processMirrorCheck — S2 due downgrade un-pauses the mirror', () => {
           p_platform: 'facebook',
           p_destination_key: 'fb_123',
           p_at: '2026-10-29T12:00:00.000Z',
+          p_section: 'mirror',
         },
       },
     ]);
@@ -1241,5 +1246,124 @@ describe('processMirrorCheck Facebook error detail — spec 155', () => {
     expect(stamp.status).toBe('error');
     expect('fbStatus' in stamp).toBe(false);
     expect('fbRateLimitedAt' in stamp).toBe(false);
+  });
+});
+
+describe('buildMirrorTickDeps fetchMirror (spec 174 3A)', () => {
+  const MASTER_KEY =
+    'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
+
+  type FetchRow = Record<string, unknown>;
+
+  /**
+   * Faithful little fake: eq filters are recorded AND applied, so
+   * the test proves the section filter actually selects the
+   * mirror copy instead of merely appearing in the query.
+   */
+  function fetchMirrorDb(mirrorRow: FetchRow | null, destinationRows: FetchRow[]) {
+    const destQueries: Array<Array<[string, unknown]>> = [];
+    const client = {
+      from: (table: string) => {
+        const eqs: Array<[string, unknown]> = [];
+        const builder = {
+          select() {
+            return builder;
+          },
+          eq(col: string, val: unknown) {
+            eqs.push([col, val]);
+            return builder;
+          },
+          limit() {
+            return builder;
+          },
+          async maybeSingle(): Promise<{ data: unknown; error: null }> {
+            if (table === 'mirrors') return { data: mirrorRow, error: null };
+            return { data: null, error: null };
+          },
+          then(resolve: (value: { data: unknown; error: null }) => void): void {
+            if (table === 'destinations') {
+              destQueries.push([...eqs]);
+              const rows = destinationRows.filter((r) =>
+                eqs.every(([c, v]) => r[c] === v),
+              );
+              resolve({ data: rows, error: null });
+              return;
+            }
+            resolve({ data: [], error: null });
+          },
+        };
+        return builder;
+      },
+    };
+    return { client, destQueries };
+  }
+
+  function mirrorRow(): FetchRow {
+    return {
+      id: 'mirror-1',
+      workspace_id: 'ws_1',
+      source_platform: 'tiktok',
+      source_username: 'alice',
+      target_platform: 'facebook',
+      target_external_id: 'fb_123',
+      status: 'active',
+      catch_up_pending: false,
+      last_checked_at: null,
+      last_posted_source_id: null,
+      last_posted_create_time: null,
+      fb_status: null,
+      fb_rate_limited_at: null,
+    };
+  }
+
+  function destinationRow(section: string, token: string): FetchRow {
+    return {
+      workspace_id: 'ws_1',
+      platform: 'facebook',
+      external_destination_id: 'fb_123',
+      section,
+      status: 'active',
+      encrypted_destination_token: token,
+      metadata: {},
+      updated_at: '2026-10-29T11:00:00.000Z',
+    };
+  }
+
+  it('resolves the mirror-section copy, never the schedule copy', async () => {
+    const scheduleToken = await encryptToken('schedule-token', MASTER_KEY);
+    const mirrorToken = await encryptToken('mirror-token', MASTER_KEY);
+    // The schedule row sorts first: without the section filter
+    // the old "first active row wins" rule would take it.
+    const { client, destQueries } = fetchMirrorDb(mirrorRow(), [
+      destinationRow('schedule', scheduleToken),
+      destinationRow('mirror', mirrorToken),
+    ]);
+    const deps = buildMirrorTickDeps(
+      client as unknown as Parameters<typeof buildMirrorTickDeps>[0],
+      MASTER_KEY,
+    );
+    const resolved = await deps.fetchMirror('mirror-1');
+    expect(resolved?.targetFound).toBe(true);
+    expect(resolved?.targetToken).toBe('mirror-token');
+    expect(
+      destQueries.some((eqs) =>
+        eqs.some(([c, v]) => c === 'section' && v === 'mirror'),
+      ),
+    ).toBe(true);
+  });
+
+  it('a mirror with no mirror-section copy resolves to no target', async () => {
+    const scheduleToken = await encryptToken('schedule-token', MASTER_KEY);
+    const { client } = fetchMirrorDb(mirrorRow(), [
+      destinationRow('schedule', scheduleToken),
+    ]);
+    const deps = buildMirrorTickDeps(
+      client as unknown as Parameters<typeof buildMirrorTickDeps>[0],
+      MASTER_KEY,
+    );
+    const resolved = await deps.fetchMirror('mirror-1');
+    // Fail closed: never borrow another section's row.
+    expect(resolved?.targetFound).toBe(false);
+    expect(resolved?.targetToken).toBeNull();
   });
 });

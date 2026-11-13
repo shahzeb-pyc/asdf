@@ -105,8 +105,12 @@ export async function runSlotClaimTick(
   const windowMinutes = deps.windowMinutes ?? SLOT_CLAIM_WINDOW_MINUTES;
   const result: SlotClaimTickResult = { claimed: 0, enqueuedFast: 0, enqueuedHeavy: 0 };
 
+  // Spec 174 3A: the slot lister is section-scoped — the Schedule
+  // tick lists schedule-section slots only, so an Auto Download or
+  // mirror copy of the same page can never be slot-claimed here.
   const { data: slotData, error: slotError } = await deps.db.rpc(
-    'list_active_facebook_posting_slots'
+    'list_active_facebook_posting_slots',
+    { p_section: 'schedule' }
   );
   if (slotError) {
     const err = slotError instanceof Error ? slotError : new Error(String(slotError));
@@ -160,6 +164,10 @@ export async function runSlotClaimTick(
           p_claim_date: claimDate,
           p_now: now.toISOString(),
           p_window_minutes: windowMinutes,
+          // Spec 174 3A: the RPC refuses a destination whose section
+          // is not 'schedule' — the same slot cannot be claimed
+          // twice across sections.
+          p_section: 'schedule',
         });
         if (error) throw error instanceof Error ? error : new Error(String(error));
         if (!Array.isArray(data)) {

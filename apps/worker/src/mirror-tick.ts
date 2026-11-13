@@ -1057,7 +1057,8 @@ export function buildMirrorTickDeps(
         workspaceId,
         platform,
         destinationKey,
-        options?.now ?? new Date()
+        options?.now ?? new Date(),
+        'mirror'
       ),
     listDueMirrorIds: async (now: Date, cap: number) => {
       const nowMs = now.getTime();
@@ -1119,13 +1120,19 @@ export function buildMirrorTickDeps(
       }
       // Mirrors carry no destination foreign key: resolve the
       // target at check time by (workspace, target platform,
-      // target external id). First active row wins.
+      // target external id). First active row wins. Spec 174 3A:
+      // the mirror section's copy only — a Schedule or Auto
+      // Download row for the same page must never be the target.
+      // A mirror with no mirror-section copy resolves to no
+      // target (fail closed) instead of borrowing another
+      // section's row.
       const { data: destData, error: destError } = await db
         .from('destinations')
         .select('encrypted_destination_token, status, metadata, updated_at')
         .eq('workspace_id', row.workspace_id)
         .eq('platform', row.target_platform)
         .eq('external_destination_id', row.target_external_id)
+        .eq('section', 'mirror')
         .limit(10);
       if (destError) throw new InternalError(`Failed to list destinations: ${destError.message}`);
       const destRows = ((destData ?? []) as unknown[]).filter(isRecord) as Record<

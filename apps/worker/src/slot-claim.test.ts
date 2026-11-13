@@ -49,9 +49,11 @@ describe('runSlotClaimTick', () => {
     const fast = fakeQueue();
     const heavy = fakeQueue();
     const claimCalls: Array<Record<string, unknown>> = [];
+    const listCalls: Array<Record<string, unknown>> = [];
     const db = {
       rpc: vi.fn(async (fn: string, args?: Record<string, unknown>) => {
         if (fn === 'list_active_facebook_posting_slots') {
+          listCalls.push(args ?? {});
           return { data: SLOT_ROWS, error: null };
         }
         if (fn === 'claim_posting_slot_item') {
@@ -78,6 +80,11 @@ describe('runSlotClaimTick', () => {
     expect(claimCalls).toHaveLength(1);
     expect(claimCalls[0]!.p_slot_id).toBe('slot-8am');
     expect(claimCalls[0]!.p_claim_date).toBe('2026-10-27');
+    // Spec 174 3A: both RPCs are scoped to the schedule section —
+    // the slot list must never surface an ADU or mirror row's slot.
+    expect(listCalls).toHaveLength(1);
+    expect(listCalls[0]!.p_section).toBe('schedule');
+    expect(claimCalls[0]!.p_section).toBe('schedule');
     expect(result.claimed).toBe(1);
     // A reel routes heavy (byte-streaming platform format).
     expect(heavy.sent.flat()).toHaveLength(1);

@@ -193,12 +193,17 @@ function fakeClient(db: FakeDb): SupabaseClient {
         feature === 'publish-now' ||
         feature === 'instagram-publish-now' ||
         feature === 'threads-publish-now';
+      // Spec 174 3A: the live can_publish_for EXISTS check is
+      // section-scoped — a NULL section is unfiltered (legacy
+      // callers), a set section matches only that section's rows.
+      const section = args['p_section'] as string | null | undefined;
       const registered = db.usage.some(
         (u) =>
           u['user_id'] === ownerId &&
           u['platform'] === platform &&
           u['destination_key'] === key &&
-          !isPublishNow(u['feature'])
+          !isPublishNow(u['feature']) &&
+          (section === null || section === undefined || u['section'] === section)
       );
       if (registered) return { data: true, error: null };
       const disconnectedIds = new Set(
@@ -393,6 +398,8 @@ describe('workspaceCanPublishForDestination — one RPC gate (S2)', () => {
         p_platform: 'facebook',
         p_destination_key: 'ext-dest-1',
         p_at: '2026-06-01T00:00:00.000Z',
+        // No section passed: the legacy unfiltered call.
+        p_section: null,
       },
     });
     expect(periodSelects(db)).toHaveLength(0);
@@ -719,5 +726,82 @@ describe('workspaceCanPublishForDestination — counts (S2)', () => {
       expect.anything()
     );
     errSpy.mockRestore();
+  });
+});
+
+describe('workspaceCanPublishForDestination — section-scoped gate (spec 174 3A)', () => {
+  const livePeriod = (overrides: Row = {}): Row => ({
+    id: 'period-live',
+    user_id: 'user-1',
+    facebook_count: 1,
+    instagram_count: 0,
+    threads_count: 0,
+    x_count: 0,
+    tiktok_count: 0,
+    youtube_count: 0,
+    starts_at: '2026-05-01T00:00:00.000Z',
+    ends_at: '2026-07-01T00:00:00.000Z',
+    superseded_at: null,
+    ...overrides,
+  });
+  const usageRow = (
+    destinationKey: string,
+    section: string,
+    feature = 'schedule',
+    destinationId: string | null = null
+  ): Row => ({
+    id: `usage-${destinationKey}-${section}`,
+    user_id: 'user-1',
+    platform: 'facebook',
+    destination_key: destinationKey,
+    feature,
+    destination_id: destinationId,
+    section,
+  });
+
+  it('passes the section through to can_publish_for', async () => {
+    const db = baseDb({ periods: [livePeriod()] });
+    await expect(
+      workspaceCanPublishForDestination(fakeClient(db), 'ws-1', 'facebook', 'ext-dest-1', NOW, 'schedule')
+    ).resolves.toBe(true);
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(db.rpcCalls[0]?.args['p_section']).toBe('schedule');
+  });
+
+  it('a page registered only in ADU does not pass a Schedule claim at cap', async () => {
+    // The 2B-verifier blind spot: the old EXISTS check had no
+    // section filter, so this Schedule claim passed on the ADU
+    // registration. With the section filter it falls to the count
+    // half — usage is at cap — and is refused.
+    const db = baseDb({
+      periods: [livePeriod()],
+      usage: [usageRow('ext-dest-1', 'adu')],
+    });
+    await expect(
+      workspaceCanPublishForDestination(fakeClient(db), 'ws-1', 'facebook', 'ext-dest-1', NOW, 'schedule')
+    ).resolves.toBe(false);
+    expect(db.rpcCalls[0]?.args['p_section']).toBe('schedule');
+  });
+
+  it('the same page passes an ADU claim on its ADU registration', async () => {
+    const db = baseDb({
+      periods: [livePeriod()],
+      usage: [usageRow('ext-dest-1', 'adu')],
+    });
+    await expect(
+      workspaceCanPublishForDestination(fakeClient(db), 'ws-1', 'facebook', 'ext-dest-1', NOW, 'adu')
+    ).resolves.toBe(true);
+    expect(db.rpcCalls[0]?.args['p_section']).toBe('adu');
+  });
+
+  it('no section still passes p_section null (unfiltered legacy callers)', async () => {
+    const db = baseDb({
+      periods: [livePeriod()],
+      usage: [usageRow('ext-dest-1', 'adu')],
+    });
+    await expect(
+      workspaceCanPublishForDestination(fakeClient(db), 'ws-1', 'facebook', 'ext-dest-1', NOW)
+    ).resolves.toBe(true);
+    expect(db.rpcCalls[0]?.args['p_section']).toBeNull();
   });
 });

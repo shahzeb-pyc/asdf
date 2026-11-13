@@ -209,13 +209,20 @@ export async function activateDueScheduledDowngrade(
  * lookup failure returns false (fail closed): the job stays
  * queued for a later tick instead of publishing on an unverified
  * entitlement. The RPC error is logged loudly, never thrown.
+ *
+ * Spec 174 3A: `section` scopes the already-registered branch of
+ * can_publish_for to that section's usage rows (a Schedule claim
+ * for a page registered only in Auto Download no longer passes).
+ * Callers that know their section pass it; the cap branch still
+ * counts usage across all sections (the cap is per platform).
  */
 export async function workspaceCanPublishForDestination(
   supabase: SupabaseClient,
   workspaceId: string,
   platform: string,
   destinationKey: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  section?: string | null
 ): Promise<boolean> {
   try {
     const { data, error } = await supabase.rpc('can_publish_for', {
@@ -223,6 +230,7 @@ export async function workspaceCanPublishForDestination(
       p_platform: platform,
       p_destination_key: destinationKey,
       p_at: now.toISOString(),
+      p_section: section ?? null,
     });
     if (error) {
       console.error('[worker] publish-count check failed:', error);
@@ -233,7 +241,7 @@ export async function workspaceCanPublishForDestination(
     // start has arrived activates here, on the worker tick — a
     // publishing plan must not wait for the user to open the app.
     // If activation created a period, re-check with the same RPC.
-    return await runActivationBackstop(supabase, workspaceId, platform, destinationKey, now);
+    return await runActivationBackstop(supabase, workspaceId, platform, destinationKey, now, section ?? null);
   } catch {
     return false;
   }
@@ -252,7 +260,8 @@ async function runActivationBackstop(
   workspaceId: string,
   platform: string,
   destinationKey: string,
-  now: Date
+  now: Date,
+  section?: string | null
 ): Promise<boolean> {
   const { data: workspace, error: workspaceError } = await supabase
     .from('workspaces')
@@ -267,6 +276,7 @@ async function runActivationBackstop(
       p_platform: platform,
       p_destination_key: destinationKey,
       p_at: now.toISOString(),
+      p_section: section ?? null,
     });
     if (recheckError) {
       console.error('[worker] publish-count re-check failed:', recheckError);

@@ -97,10 +97,22 @@ export interface RowQueryBuilder {
   // Audit BG5: the stale page-token fallback persists a
   // re-discovered page token through the same supabase-style
   // chain the refresh job uses (update().eq() resolves to
-  // { data, error }).
-  update(values: Record<string, unknown>): {
-    eq(column: string, value: unknown): Promise<{ data: unknown; error: unknown }>;
-  };
+  // { data, error }). Spec 174 3A: the fan-out needs more
+  // than one filter, so the update builder is chainable
+  // (eq/neq, awaitable) — exactly what the real
+  // PostgrestFilterBuilder already supports.
+  update(values: Record<string, unknown>): UpdateQueryBuilder;
+}
+
+export interface UpdateQueryBuilder {
+  eq(column: string, value: unknown): UpdateQueryBuilder;
+  neq(column: string, value: unknown): UpdateQueryBuilder;
+  then<TResult1 = { data: unknown; error: unknown }, TResult2 = never>(
+    onfulfilled?:
+      | ((value: { data: unknown; error: unknown }) => TResult1 | PromiseLike<TResult1>)
+      | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+  ): Promise<TResult1 | TResult2>;
 }
 
 export interface ConsumerDeps {
@@ -824,10 +836,27 @@ async function processPublishMessage(
     if (freshToken) {
       try {
         const encrypted = await encryptToken(freshToken, masterKey);
-        const { error: updateError } = await deps.db
+        // Spec 174 3A: the re-discovered token is the PAGE's token,
+        // so it fans out to every section copy of the page — not
+        // just the row being published. Disconnected copies are
+        // excluded: a removed page must never regain a token (the
+        // disconnect strip owns that). A missing external id falls
+        // back to the single-row write.
+        let fanout = deps.db
           .from('destinations')
-          .update({ encrypted_destination_token: encrypted })
-          .eq('id', destination.id);
+          .update({ encrypted_destination_token: encrypted });
+        if (
+          typeof destination.external_destination_id === 'string' &&
+          destination.external_destination_id.length > 0
+        ) {
+          fanout = fanout
+            .eq('account_id', destination.account_id)
+            .eq('external_destination_id', destination.external_destination_id)
+            .neq('status', 'disconnected');
+        } else {
+          fanout = fanout.eq('id', destination.id);
+        }
+        const { error: updateError } = await fanout;
         if (updateError) {
           console.error(
             `[consumer] BG5 failed to persist re-discovered page token for destination ${destination.id}:`,
