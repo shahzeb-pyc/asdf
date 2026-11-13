@@ -170,12 +170,13 @@ export function destinationAccountTypeFromMetadata(
  * PR 1A; a row created by old code in the deploy window carries NULL
  * in the database and fails the row schema loudly (stated trade-off —
  * caught by the Phase 4 straggler backfill and the daily check).
+ * Publish Now has no section (spec 180): it persists nothing, so
+ * there is no 'publish_now' destination row anymore.
  */
 export const DestinationSectionSchema = z.enum([
   'schedule',
   'adu',
   'mirror',
-  'publish_now',
 ]);
 
 export type Section = z.infer<typeof DestinationSectionSchema>;

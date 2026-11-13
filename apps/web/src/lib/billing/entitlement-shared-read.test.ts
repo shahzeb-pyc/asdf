@@ -443,7 +443,11 @@ function seedUsage(
   platform: string,
   key: string,
   feature: string,
-  destinationId: string | null = null
+  destinationId: string | null = null,
+  // Spec 180: the mapping returns null for legacy publish-now
+  // features (they count in no section), so a historical legacy
+  // row's stored section 'publish_now' must be passed explicitly.
+  section: string | null = null
 ) {
   tables['subscription_usage'].push({
     id: `usage-${feature}-${key}`,
@@ -454,7 +458,7 @@ function seedUsage(
     // Spec 174 PR 2B: seeded rows carry the section their feature
     // maps to, exactly like the migration backfill — the fake's
     // unique index is (user, platform, section, key).
-    section: sectionForUsageFeature(feature),
+    section: section ?? sectionForUsageFeature(feature),
     destination_id: destinationId,
   });
 }
@@ -788,7 +792,7 @@ describe('R5 — the register stops checking the same destination twice', () => 
     // backfill); the capped registration lands in 'schedule', so
     // the two rows coexist under the section-scoped key instead of
     // the old delete-and-replace. The legacy row never counts.
-    seedUsage(tables, 'user-1', 'facebook', 'page-1', 'publish-now', 'dest-1');
+    seedUsage(tables, 'user-1', 'facebook', 'page-1', 'publish-now', 'dest-1', 'publish_now');
 
     const result = await registerUsage(
       client,

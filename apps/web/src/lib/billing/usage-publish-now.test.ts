@@ -313,8 +313,11 @@ function seedUsage(
   key = 'page-1',
   // Spec 174 PR 2B: the section comes from the feature via the
   // contracts mapping, exactly like the migration backfill. The
-  // override exists only for the defensive tests below, which
-  // strand a legacy row in a capped section on purpose.
+  // override exists for the defensive tests below, which strand a
+  // legacy row in a capped section on purpose — and for historical
+  // legacy rows, whose stored section is 'publish_now' (spec 180:
+  // the mapping returns null for legacy features, so the historical
+  // value must be passed explicitly as a plain string).
   section: string | null = null
 ) {
   tables['subscription_usage'].push({
@@ -343,7 +346,7 @@ describe('registerUsage and Publish Now', () => {
   it('a capped registration coexists with a legacy PN row in another section, and counts the destination', async () => {
     const { client, tables } = makeClient();
     seedActivePeriod(tables);
-    seedUsage(tables, 'publish-now');
+    seedUsage(tables, 'publish-now', 'page-1', 'publish_now');
 
     const result = await registerUsage(
       client,
@@ -370,7 +373,7 @@ describe('registerUsage and Publish Now', () => {
   it('a destination used only via Publish Now does not count as used', async () => {
     const { client, tables } = makeClient();
     seedActivePeriod(tables);
-    seedUsage(tables, 'publish-now');
+    seedUsage(tables, 'publish-now', 'page-1', 'publish_now');
 
     // Registering a DIFFERENT destination succeeds and counts 1
     // (the PN-only destination contributes 0).

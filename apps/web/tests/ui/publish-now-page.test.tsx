@@ -116,59 +116,40 @@ const DISCOVERED = [
 import { api } from '@/lib/api';
 
 let mockAccountsData: typeof ACCOUNTS = ACCOUNTS;
-let mockImportShouldFail = false;
+let mockDiscoverFailAccountIds: string[] = [];
+let mockDiscoverPages: typeof DISCOVERED = DISCOVERED;
 let mockAccountsShouldFail = false;
 
-const IMPORT_PATH = '/publishing/publish-now/import';
+const DISCOVER_PATH = '/pages/discover';
 
 /**
- * The import step's mocked answer (spec 174 1B): one group per
- * requested account, built from the DISCOVERED pages with status
- * 'active'. When the import is flagged to fail, the accounts land
- * in `failures` instead — the route reports per-account failures,
- * it does not throw for them.
+ * The live-discovery mocked answer (spec 180): one discover
+ * response per account, built from the DISCOVERED pages. No
+ * import happens — the picker calls GET /pages/discover per
+ * selected account. Accounts listed in
+ * `mockDiscoverFailAccountIds` throw instead, like a dead
+ * account connection; the picker must show the other accounts'
+ * pages and an empty group + banner for the failed one.
  */
-function mockImportResponse(body: unknown): {
-  groups: Array<{
-    accountId: string;
-    accountName: string;
-    pages: Array<{
-      fbPageId: string;
-      pageName: string;
-      profilePictureUrl: string | null;
-      category: string | null;
-      followers: number;
-      status: string;
-    }>;
-  }>;
-  failures: string[];
+function mockDiscoverResponse(accountId: string): {
+  accountId: string;
+  accountDisplayName: string;
+  pages: typeof DISCOVERED;
+  total: number;
+  truncated: boolean;
+  partial: boolean;
+  droppedCount: number;
 } {
-  const accountIds = (body as { accountIds?: string[] }).accountIds ?? [];
-  if (mockImportShouldFail) {
-    return {
-      groups: [],
-      failures: accountIds.map(
-        (accountId) =>
-          ACCOUNTS.find((account) => account.id === accountId)?.displayName ?? accountId
-      ),
-    };
-  }
   return {
-    groups: accountIds.map((accountId) => ({
-      accountId,
-      accountName:
-        ACCOUNTS.find((account) => account.id === accountId)?.displayName ??
-        'Shahzeb Malik',
-      pages: DISCOVERED.map((page) => ({
-        fbPageId: page.fbPageId,
-        pageName: page.pageName,
-        profilePictureUrl: page.profilePictureUrl,
-        category: page.category,
-        followers: page.currentFollowers,
-        status: 'active',
-      })),
-    })),
-    failures: [],
+    accountId,
+    accountDisplayName:
+      ACCOUNTS.find((account) => account.id === accountId)?.displayName ??
+      'Shahzeb Malik',
+    pages: mockDiscoverPages,
+    total: mockDiscoverPages.length,
+    truncated: false,
+    partial: false,
+    droppedCount: 0,
   };
 }
 
@@ -177,6 +158,13 @@ vi.mock('@/lib/api', () => ({
     get: async (path: string) => {
       if (path.includes('/settings/byoc')) {
         return { fbAppId: null, hasSecret: false };
+      }
+      if (path.includes(DISCOVER_PATH)) {
+        const accountId = path.split('/accounts/')[1]?.split('/')[0] ?? '';
+        if (mockDiscoverFailAccountIds.includes(accountId)) {
+          throw new Error('discover failed');
+        }
+        return mockDiscoverResponse(accountId);
       }
       if (path.includes('/accounts')) {
         if (mockAccountsShouldFail) {
@@ -187,9 +175,6 @@ vi.mock('@/lib/api', () => ({
       throw new Error(`unexpected api.get path: ${path}`);
     },
     post: vi.fn(async (path: string, body: unknown) => {
-      if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
-        return mockImportResponse(body);
-      }
       throw new Error(`unexpected api.post path: ${path}`);
     }),
     patch: vi.fn(),
@@ -311,9 +296,6 @@ describe('PublishNowPage wizard', () => {
     ];
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
       .mockImplementation(async (path: string, body: unknown) => {
-        if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
-          return mockImportResponse(body);
-        }
         publishCalls.push({ path, body });
         return {
           results: publishCalls.length === 1 ? firstRun : retryRun,
@@ -395,9 +377,6 @@ describe('PublishNowPage wizard', () => {
     const publishCalls: Array<{ path: string; body: unknown }> = [];
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
       .mockImplementation(async (path: string, body: unknown) => {
-        if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
-          return mockImportResponse(body);
-        }
         publishCalls.push({ path, body });
         const targets = (body as { targets: Array<{ fbPageId: string; pageName: string }> }).targets;
         return {
@@ -520,9 +499,6 @@ describe('PublishNowPage wizard', () => {
     // the copy endpoint must answer with a post-owned key.
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
       .mockImplementation(async (path: string, body: unknown) => {
-        if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
-          return mockImportResponse(body);
-        }
         if (typeof path === 'string' && path.includes('copy-library-media')) {
           return {
             storageKey: copyKey,
@@ -627,9 +603,6 @@ describe('PublishNowPage wizard', () => {
     });
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
       .mockImplementation(async (path: string, body: unknown) => {
-        if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
-          return mockImportResponse(body);
-        }
         return {
           results: [
             restricted('page-111', 'Maddie Lippy'),
@@ -824,9 +797,6 @@ describe('PublishNowPage wizard', () => {
     const publishCalls: Array<unknown> = [];
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
       .mockImplementation(async (path: string, body: unknown) => {
-        if (typeof path === 'string' && path.includes(IMPORT_PATH)) {
-          return mockImportResponse(body);
-        }
         publishCalls.push(body);
         return { results: [] };
       });
@@ -899,8 +869,8 @@ describe('PublishNowPage wizard', () => {
     }
   });
 
-  it('shows a plain error when the page import fails', async () => {
-    mockImportShouldFail = true;
+  it('shows a plain error when live discovery fails for the account', async () => {
+    mockDiscoverFailAccountIds = ['11111111-1111-4111-a111-111111111111'];
     try {
       renderPage();
       await waitFor(
@@ -919,7 +889,64 @@ describe('PublishNowPage wizard', () => {
         { timeout: 5000 }
       );
     } finally {
-      mockImportShouldFail = false;
+      mockDiscoverFailAccountIds = [];
+    }
+  });
+
+  it('shows the other account’s pages when one account’s discovery fails', async () => {
+    mockDiscoverFailAccountIds = ['11111111-1111-4111-a111-111111111111'];
+    try {
+      renderPage();
+      await waitFor(
+        () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+        { timeout: 5000 }
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
+      fireEvent.click(
+        screen.getByRole('button', { name: /Continue \(2 accounts\)/ })
+      );
+      await waitFor(
+        () => expect(screen.getByText(/2 pages found/)).toBeTruthy(),
+        { timeout: 5000 }
+      );
+      expect(
+        screen.getByText(/Couldn't load pages from this Facebook account/)
+      ).toBeTruthy();
+      expect(screen.getByText('Maddie Lippy')).toBeTruthy();
+      expect(screen.getByText('Sunnie James')).toBeTruthy();
+    } finally {
+      mockDiscoverFailAccountIds = [];
+    }
+  });
+
+  it('de-duplicates the same page discovered under two accounts', async () => {
+    renderPage();
+    await waitFor(
+      () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Continue \(2 accounts\)/ })
+    );
+    await waitFor(
+      () => expect(screen.getByText(/2 pages found/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    // Two accounts × the same 2 pages would be 4 without dedupe.
+    expect(screen.getAllByText('Maddie Lippy')).toHaveLength(1);
+    expect(screen.getAllByText('Sunnie James')).toHaveLength(1);
+  });
+
+  it('still lists pages already imported in another section', async () => {
+    mockDiscoverPages = DISCOVERED.map((page) => ({ ...page, isImported: true }));
+    try {
+      await reachComposer();
+      expect(
+        screen.getByRole('heading', { name: 'Maddie Lippy + 1 more' })
+      ).toBeTruthy();
+    } finally {
+      mockDiscoverPages = DISCOVERED;
     }
   });
 });

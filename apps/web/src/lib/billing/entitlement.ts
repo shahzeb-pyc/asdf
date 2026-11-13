@@ -540,8 +540,8 @@ export async function getUsageCount(
  * of the registry. The section filter is what makes the check
  * per-section: a page registered in Auto Download only is NOT
  * "already used" for Schedule. Legacy publish-now rows need no
- * separate exclusion — they live in section 'publish_now', so
- * they never match a capped section. */
+ * separate exclusion — their historical subscription_usage rows
+ * carry section 'publish_now', so they never match a capped section. */
 export async function isDestinationUsed(
   client: SupabaseClient,
   userId: string,
@@ -1464,8 +1464,8 @@ export async function registerUsage(
     // publish-now row is still there in this section. A capped
     // row means already-used. A legacy row is deleted and the
     // capped row inserted instead (see above). Post-backfill a
-    // legacy row lives in section 'publish_now' and can never
-    // collide with a capped registration, so the legacy branch
+    // legacy row's historical subscription_usage section is
+    // 'publish_now' and can never collide with a capped registration, so the legacy branch
     // below is a defensive backstop only — it is kept because
     // the 23505 handler must never turn a collision into a hard
     // failure, and it is section-scoped so it can never mistake
@@ -1694,8 +1694,8 @@ export async function assertFeatureAddWithinCap(
       // Per-section (spec 174 PR 2B): only rows in this section
       // count as registered here. A destination used ONLY via
       // Publish Now (legacy rows) does NOT count as registered —
-      // legacy rows live in section 'publish_now', so they never
-      // match a capped section; without the section filter an
+      // legacy rows carry section 'publish_now' in historical
+      // subscription_usage data, so they never match a capped section; without the section filter an
       // add would pass at cap for a publish-now-only destination
       // and queueing would then refuse it: display, add-gate,
       // and queue-gate must agree.

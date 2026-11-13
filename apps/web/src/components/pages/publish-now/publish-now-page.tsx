@@ -6,20 +6,20 @@
  * adapted to the current app and to this flow's approved rules:
  *
  *   Wizard (centred, like old) — Step 1 Select Account card
- *     (search, account rows), Import step (the selected accounts'
- *     pages are imported into the publish_now section first — the
- *     import IS the section's copy, from Accounts, never adopted
- *     from another section), Step 2 Select Page card (search,
- *     2-column page grid, Back). OLD WAS SINGLE-SELECT — OURS
- *     STAYS MULTI: Step 1 uses checkboxes (expired accounts
- *     shown but NOT selectable, with Reconnect, and NEVER a
- *     "pages linked" count — accounts only); Step 2 shows ONLY
- *     the Publish Now imports for ALL selected accounts, grouped
- *     by account, with checkboxes, Select All / Deselect All, and
- *     pages-found count. Imported pages whose copy is paused /
- *     rate-limited / checkpoint / invalid-token / disconnected
- *     are disabled with a reason; a page under two accounts is
- *     de-duplicated to the first account.
+ *     (search, account rows), then live discovery (spec 180):
+ *     the selected accounts' pages are discovered live from
+ *     Facebook each time — nothing is imported or saved, and a
+ *     page already in Schedule is still selectable here. Step 2
+ *     Select Page card (search, 2-column page grid, Back). OLD
+ *     WAS SINGLE-SELECT — OURS STAYS MULTI: Step 1 uses
+ *     checkboxes (expired accounts shown but NOT selectable, with
+ *     Reconnect, and NEVER a "pages linked" count — accounts
+ *     only); Step 2 shows the discovered pages for ALL selected
+ *     accounts, grouped by account, with checkboxes, Select All /
+ *     Deselect All, and pages-found count. No page is disabled
+ *     upfront: a page that cannot publish is reported by the
+ *     publish route per page, at publish time. A page under two
+ *     accounts is de-duplicated to the first account.
  *   Active composer (like old) — sticky header (overlapping
  *     avatars, selected pages, "via" accounts, Selected badge,
  *     Change selection), then a 2-column grid: composer panel
@@ -74,9 +74,9 @@ import { useQuery } from '@tanstack/react-query';
 import {
   composerTextLimitForType,
   deriveDefaultCaptionFromFilename,
+  DiscoverPagesResponseSchema,
   IDEMPOTENCY_KEY_HEADER,
   isFacebookAccountRestricted,
-  PublishNowImportResponseSchema,
   PublishNowResponseSchema,
   PublishNowCopyLibraryMediaResponseSchema,
   PublishNowTempMediaResponseSchema,
@@ -116,15 +116,6 @@ const POST_TYPES: Array<{ id: PublishNowPostType; label: string }> = [
   { id: 'video', label: 'Video' },
   { id: 'reel', label: 'Reel' },
 ];
-
-/** Destination statuses that make an already-added page unpublishable. */
-const BLOCKED_PAGE_STATUSES: Record<string, string> = {
-  paused: 'Posting paused for this page',
-  fb_rate_limited: 'Rate limited by Facebook',
-  page_checkpoint: 'Facebook identity check required',
-  invalid_token: 'Page connection needs attention',
-  disconnected: 'Page disconnected',
-};
 
 const TEMP_MIME_TYPES = new Set([
   'video/mp4',
@@ -431,35 +422,38 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     setIsDiscovering(true);
     setErrorMessage(null);
     try {
-      // Import step (spec 174 1B): the selected accounts' pages are
-      // imported into the publish_now section first, and Step 2
-      // lists ONLY those imports. Each page's disabled-with-reason
-      // state comes from its own copy's status — the old GET /pages
-      // cross-section lookup (limit 500, fail-open) is gone.
-      const imported = await api.post(
-        buildTenantApiPath(subdomain, '/publishing/publish-now/import'),
-        { accountIds: selectedAccounts.map((acc) => acc.id) },
-        { schema: PublishNowImportResponseSchema }
+      // Live discovery (spec 180): the selected accounts' pages
+      // are discovered live from Facebook each time — nothing is
+      // imported or saved. No `?section=` is passed and
+      // `isImported` is ignored: a page already in Schedule is
+      // still selectable here, because Publish Now holds no copies
+      // of its own. One account failing never blocks the others.
+      const settled = await Promise.allSettled(
+        selectedAccounts.map((account) =>
+          api.get(
+            buildTenantApiPath(subdomain, `/accounts/${account.id}/pages/discover`),
+            { schema: DiscoverPagesResponseSchema }
+          )
+        )
       );
 
       const seenPageIds = new Set<string>();
       const nextGroups: PublishNowDiscoveredGroup[] = [];
-      const failures: string[] = [...imported.failures];
-      for (const account of selectedAccounts) {
-        const group = imported.groups.find((g) => g.accountId === account.id);
-        if (!group) {
-          if (!failures.includes(account.displayName)) {
-            failures.push(account.displayName);
-          }
+      const failures: string[] = [];
+      settled.forEach((result, index) => {
+        const account = selectedAccounts[index];
+        if (!account) return;
+        if (result.status === 'rejected') {
+          failures.push(account.displayName);
           nextGroups.push({
             accountId: account.id,
             accountName: account.displayName,
             pages: [],
           });
-          continue;
+          return;
         }
         const pages: PublishNowSelectedPage[] = [];
-        for (const page of group.pages) {
+        for (const page of result.value.pages) {
           // One post per Facebook page per run, even if two
           // accounts expose the same page.
           if (seenPageIds.has(page.fbPageId)) continue;
@@ -471,8 +465,11 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
             pageName: page.pageName,
             profilePictureUrl: page.profilePictureUrl,
             category: page.category,
-            followers: page.followers,
-            disabledReason: BLOCKED_PAGE_STATUSES[page.status] ?? null,
+            followers: page.currentFollowers,
+            // Spec 180 decision (a): no disabled-with-reason
+            // upfront. A page that cannot publish is reported by
+            // the publish route per page, at publish time.
+            disabledReason: null,
           });
         }
         nextGroups.push({
@@ -480,7 +477,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
           accountName: account.displayName,
           pages,
         });
-      }
+      });
       setGroups(nextGroups);
       setSelectedPageKeys([]);
       setPageSearchQuery('');

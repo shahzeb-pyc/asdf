@@ -2,12 +2,13 @@
  * Daily section check (spec 174 Phase 3B).
  *
  * Every destination row must carry a section label (schedule / adu /
- * mirror / publish_now), and every child row must sit on the row of
+ * mirror), and every child row must sit on the row of
  * the section that owns it:
  *
  *   - posting_slots (posting times) live on `schedule` rows only;
- *   - queue_items (queued posts) live on `schedule` or `publish_now`
- *     rows (the Schedule queue and the Publish Now queue);
+ *   - queue_items (queued posts) live on `schedule` rows only
+ *     (including rows marked for immediate publish-now re-time —
+ *     the marker lives on the queue item, not on a section);
  *   - adu_configs live on `adu` rows only;
  *   - posting_slot_claims live on `schedule` rows only (a claim is
  *     a Schedule-slot claim; its destination is the claimed slot's).
@@ -42,7 +43,7 @@ export interface SectionCheckCounts {
   unsectionedDestinations: number;
   /** Posting slots on a row whose section is not `schedule`. */
   slotsOnWrongSection: number;
-  /** Queue items on a row whose section is neither `schedule` nor `publish_now`. */
+  /** Queue items on a row whose section is not `schedule`. */
   queueItemsOnWrongSection: number;
   /** ADU configs on a row whose section is not `adu`. */
   aduConfigsOnWrongSection: number;
@@ -151,7 +152,7 @@ export async function runSectionCheck(
         q.neq('destinations.section', 'schedule')
       ),
       countChildRows(db, 'queue_items', (q) =>
-        q.not('destinations.section', 'in', '(schedule,publish_now)')
+        q.neq('destinations.section', 'schedule')
       ),
       countChildRows(db, 'adu_configs', (q) => q.neq('destinations.section', 'adu')),
       countChildRows(db, 'posting_slot_claims', (q) =>
