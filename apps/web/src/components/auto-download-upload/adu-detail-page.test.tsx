@@ -270,4 +270,34 @@ describe('AduDetailPage (adu-opt-c)', { timeout: 20000 }, () => {
     await clickTab('adu-detail-tab-insights-btn');
     expect(await screen.findByTestId('page-tab-insights')).toHaveTextContent('tz:Asia/Karachi');
   });
+
+  it('return links: hub page 2 + filters are carried back — breadcrumb and Back to Hub keep page, search, sort and status, and drop tab', async () => {
+    navMocks.searchParams = new URLSearchParams('page=2&q=ellie&status=Active&sort=Most+Followers&tab=reels');
+    setupFetch();
+    renderPage();
+    await screen.findByText('Ellie Blossom');
+    const expected = '/tenant/testws/auto-download-upload?q=ellie&status=Active&sort=Most+Followers&page=2';
+    expect(screen.getByRole('link', { name: 'Auto Download/Upload' }).getAttribute('href')).toBe(expected);
+    const backButton = screen.getByRole('button', { name: 'Back to Hub' });
+    expect(backButton.closest('a')?.getAttribute('href')).toBe(expected);
+  });
+
+  it('return links: a filtered page-1 hub keeps the filter and adds no page param', async () => {
+    navMocks.searchParams = new URLSearchParams('status=Active');
+    setupFetch();
+    renderPage();
+    await screen.findByText('Ellie Blossom');
+    const expected = '/tenant/testws/auto-download-upload?status=Active';
+    expect(screen.getByRole('link', { name: 'Auto Download/Upload' }).getAttribute('href')).toBe(expected);
+    expect(screen.getByRole('button', { name: 'Back to Hub' }).closest('a')?.getAttribute('href')).toBe(expected);
+  });
+
+  it('return links: no hub query on the detail URL keeps the bare hub path', async () => {
+    setupFetch();
+    renderPage();
+    await screen.findByText('Ellie Blossom');
+    const expected = '/tenant/testws/auto-download-upload';
+    expect(screen.getByRole('link', { name: 'Auto Download/Upload' }).getAttribute('href')).toBe(expected);
+    expect(screen.getByRole('button', { name: 'Back to Hub' }).closest('a')?.getAttribute('href')).toBe(expected);
+  });
 });
