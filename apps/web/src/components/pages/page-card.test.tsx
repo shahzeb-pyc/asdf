@@ -83,7 +83,7 @@ describe('PageCard queue counts', () => {
       expect(children[1]?.textContent).toBe(label);
       // Big number: the dashboard metric token, clearly larger than
       // the old text-body number.
-      expect(screen.getByTestId(count).className).toContain('text-xxl');
+      expect(screen.getByTestId(count).className).toContain('text-xxxl');
       expect(screen.getByTestId(count).className).not.toContain('text-body');
     }
   });

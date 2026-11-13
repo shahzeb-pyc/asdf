@@ -784,7 +784,7 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
               {totalTiles.map((tile) => (
                 <div key={tile.label} className={statCardClass}>
                   <p className="text-body text-ink-sub">{tile.label}</p>
-                  <p className={cn('mt-1 text-xxl font-bold', tile.valueClass)}>{tile.value.toLocaleString('en-US')}</p>
+                  <p className={cn('mt-1 text-xxxl font-bold', tile.valueClass)}>{tile.value.toLocaleString('en-US')}</p>
                   <p className="text-metadata text-ink-dim">{tile.sub}</p>
                 </div>
               ))}
@@ -794,7 +794,7 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
               {todayTiles.map((tile) => (
                 <div key={tile.label} className={statCardClass}>
                   <p className="text-body text-ink-sub">{tile.label}</p>
-                  <p className={cn('mt-1 text-xxl font-bold', tile.valueClass)}>{tile.value.toLocaleString('en-US')}</p>
+                  <p className={cn('mt-1 text-xxxl font-bold', tile.valueClass)}>{tile.value.toLocaleString('en-US')}</p>
                   <p className="text-metadata text-ink-dim">{tile.sub}</p>
                 </div>
               ))}

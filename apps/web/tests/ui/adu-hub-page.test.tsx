@@ -706,7 +706,7 @@ describe('AduHubPage list cards (Pages-section structure)', () => {
     expect(pending.className).toContain('text-signal-queued');
     expect(posted.className).toContain('text-signal-operational');
     expect(failed.className).toContain('text-signal-critical');
-    expect(pending.className).toContain('text-xxl');
+    expect(pending.className).toContain('text-xxxl');
     expect(screen.getByTestId('adu-page-pending-stat').textContent).toContain('Pending');
     expect(screen.getByTestId('adu-page-card-cfg-1').textContent).not.toContain('Queued');
   });

@@ -587,7 +587,7 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
         >
           <span
             data-testid="adu-page-pending-count"
-            className="text-xxl font-bold tabular-nums text-signal-queued"
+            className="text-xxxl font-bold tabular-nums text-signal-queued"
           >
             {config.pendingCount.toLocaleString('en-US')}
           </span>
@@ -599,7 +599,7 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
         >
           <span
             data-testid="adu-page-posted-count"
-            className="text-xxl font-bold tabular-nums text-signal-operational"
+            className="text-xxxl font-bold tabular-nums text-signal-operational"
           >
             {config.postedCount.toLocaleString('en-US')}
           </span>
@@ -611,7 +611,7 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
         >
           <span
             data-testid="adu-page-failed-count"
-            className="text-xxl font-bold tabular-nums text-signal-critical"
+            className="text-xxxl font-bold tabular-nums text-signal-critical"
           >
             {config.failedCount.toLocaleString('en-US')}
           </span>
@@ -837,7 +837,7 @@ function AduHubPageInner({ subdomain }: { subdomain: string }) {
             ].map((stat) => (
               <div key={stat.label} className="px-6 py-4">
                 <p className="text-metadata font-medium text-ink-dim">{stat.label}</p>
-                <p className="mt-1 text-xxl leading-heading font-bold text-ink">{stat.value}</p>
+                <p className="mt-1 text-xxxl leading-heading font-bold text-ink">{stat.value}</p>
               </div>
             ))}
           </div>

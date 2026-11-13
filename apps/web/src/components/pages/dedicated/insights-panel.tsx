@@ -439,21 +439,21 @@ export function PageTabInsights({ page, subdomain, pageTimezone = 'UTC' }: Reado
               <p className="flex items-center gap-2 text-body text-ink-sub">
                 <UsersIcon className="h-5 w-5 shrink-0 text-ink" /> Followers
               </p>
-              <p className="mt-1 text-xxl font-bold text-ink">{formatCount(data.kpis.followers)}</p>
+              <p className="mt-1 text-xxxl font-bold text-ink">{formatCount(data.kpis.followers)}</p>
               <p className="mt-1 text-xs text-ink-dim">Live total</p>
             </Card>
             <Card className="p-4">
               <p className="flex items-center gap-2 text-body text-ink-sub">
                 <PlayIcon className="h-5 w-5 shrink-0 text-link" /> Media views
               </p>
-              <p className="mt-1 text-xxl font-bold text-ink">{formatCount(data.kpis.mediaViews)}</p>
+              <p className="mt-1 text-xxxl font-bold text-ink">{formatCount(data.kpis.mediaViews)}</p>
               <p className="mt-1 text-xs text-ink-dim">In this range</p>
             </Card>
             <Card className="p-4">
               <p className="flex items-center gap-2 text-body text-ink-sub">
                 <UserCheckIcon className="h-5 w-5 shrink-0 text-brand-emerald" /> Unique viewers
               </p>
-              <p className="mt-1 text-xxl font-bold text-ink">
+              <p className="mt-1 text-xxxl font-bold text-ink">
                 {formatCount(data.kpis.uniqueViewersDailySum)}
               </p>
               <p className="mt-1 text-xs text-ink-dim">Sum of daily viewers in this range</p>
@@ -462,14 +462,14 @@ export function PageTabInsights({ page, subdomain, pageTimezone = 'UTC' }: Reado
               <p className="flex items-center gap-2 text-body text-ink-sub">
                 <HeartIcon className="h-5 w-5 shrink-0 text-signal-critical" /> Engagements
               </p>
-              <p className="mt-1 text-xxl font-bold text-ink">{formatCount(data.kpis.engagements)}</p>
+              <p className="mt-1 text-xxxl font-bold text-ink">{formatCount(data.kpis.engagements)}</p>
               <p className="mt-1 text-xs text-ink-dim">Reactions, comments and shares in this range</p>
             </Card>
             <Card className="p-4">
               <p className="flex items-center gap-2 text-body text-ink-sub">
                 <PercentIcon className="h-5 w-5 shrink-0 text-ink" /> Engagement rate
               </p>
-              <p className="mt-1 text-xxl font-bold text-ink">
+              <p className="mt-1 text-xxxl font-bold text-ink">
                 {data.kpis.engagementRatePct === null ? 'N/A' : `${data.kpis.engagementRatePct}%`}
               </p>
               <p className="mt-1 text-xs text-ink-dim">
@@ -489,7 +489,7 @@ export function PageTabInsights({ page, subdomain, pageTimezone = 'UTC' }: Reado
                 )}
                 Net follower growth
               </p>
-              <p className="mt-1 text-xxl font-bold text-ink">{formatSigned(netGrowth)}</p>
+              <p className="mt-1 text-xxxl font-bold text-ink">{formatSigned(netGrowth)}</p>
               <p className="mt-1 text-xs text-ink-dim">New follows minus unfollows in this range</p>
             </Card>
           </div>

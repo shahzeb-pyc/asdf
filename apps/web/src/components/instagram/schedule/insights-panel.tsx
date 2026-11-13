@@ -57,7 +57,7 @@ export function InsightsPanel({
             <CardTitle>Posted</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="m-0 text-xxl font-bold">{item.counts.posted}</p>
+            <p className="m-0 text-xxxl font-bold">{item.counts.posted}</p>
           </CardContent>
         </Card>
         <Card>
@@ -65,7 +65,7 @@ export function InsightsPanel({
             <CardTitle>Failed</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="m-0 text-xxl font-bold">{item.counts.failed}</p>
+            <p className="m-0 text-xxxl font-bold">{item.counts.failed}</p>
           </CardContent>
         </Card>
       </div>
