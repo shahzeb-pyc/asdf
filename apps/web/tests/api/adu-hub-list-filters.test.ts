@@ -4,9 +4,8 @@
  * The filter labels the hub pages show must reach the database as the
  * new status values: `Paused` → `paused`, `Missing Page Access` →
  * `missing_page_access`, `Missing Permission` → `missing_permission`.
- * The retired `Inactive` label must map to no filter. IG filters via
- * the query builder (`.eq('status', ...)`); Threads passes `p_status`
- * to its hub RPCs, like Facebook.
+ * The retired `Inactive` label must map to no filter. Both IG and
+ * Threads pass `p_status` to their hub RPCs, like Facebook.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -29,76 +28,20 @@ import { threadsAduContext } from '@/lib/server/threads-adu';
 const mockedAduContext = aduContext as unknown as ReturnType<typeof vi.fn>;
 const mockedThreadsAduContext = threadsAduContext as unknown as ReturnType<typeof vi.fn>;
 
-type Row = Record<string, unknown>;
-
-class FakeBuilder {
-  filters: Array<{ col: string; val: unknown }> = [];
-
-  constructor(
-    readonly table: string,
-    private readonly store: Record<string, Row[]>,
-    private readonly allBuilders: FakeBuilder[]
-  ) {
-    allBuilders.push(this);
-  }
-
-  select() {
-    return this;
-  }
-
-  eq(col: string, val: unknown) {
-    this.filters.push({ col, val });
-    return this;
-  }
-
-  in() {
-    return this;
-  }
-
-  order() {
-    return this;
-  }
-
-  limit() {
-    return this;
-  }
-
-  async range() {
-    return { data: this.matched(), error: null };
-  }
-
-  private matched(): Row[] {
-    return (this.store[this.table] ?? []).filter((row) =>
-      this.filters.every((f) => row[f.col] === f.val)
-    );
-  }
-
-  then(resolve: (value: { data: Row[]; count: number; error: null }) => void) {
-    const rows = this.matched();
-    resolve({ data: rows, count: rows.length, error: null });
-  }
-}
-
 function params() {
   return { params: Promise.resolve({ subdomain: 'acme' }) };
 }
 
 describe('IG ADU hub list GET (status filter mapping)', () => {
-  let builders: FakeBuilder[];
-  let store: Record<string, Row[]>;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    builders = [];
-    // Spec 174 1B: the hub list loads only the ADU section's rows.
-    store = { destinations: [{ id: 'dest-1', platform: 'instagram', workspace_id: 'ws-1', section: 'adu' }] };
-    const supabase = {
-      from: (table: string) => new FakeBuilder(table, store, builders),
-    };
-    mockedAduContext.mockResolvedValue({ context: { workspaceId: 'ws-1', supabase } });
   });
 
   async function getWithStatus(filter: string) {
+    const rpc = vi.fn(async () => ({ data: [], error: null }));
+    mockedAduContext.mockResolvedValue({
+      context: { workspaceId: 'ws-1', supabase: { rpc } },
+    });
     const res = await getIgHubList(
       new NextRequest(
         `http://localhost:3000/api/tenant/acme/instagram/auto-download-upload?status=${encodeURIComponent(filter)}`
@@ -106,7 +49,7 @@ describe('IG ADU hub list GET (status filter mapping)', () => {
       params()
     );
     expect(res.status).toBe(200);
-    return builders.filter((b) => b.table === 'adu_configs');
+    return rpc;
   }
 
   it.each([
@@ -114,20 +57,24 @@ describe('IG ADU hub list GET (status filter mapping)', () => {
     ['Missing Page Access', 'missing_page_access'],
     ['Missing Permission', 'missing_permission'],
     ['Active', 'active'],
-  ])('filters adu_configs by status=%s', async (filter, value) => {
-    const configQueries = await getWithStatus(filter);
-    expect(configQueries.length).toBeGreaterThan(0);
-    for (const q of configQueries) {
-      expect(q.filters).toContainEqual({ col: 'status', val: value });
-    }
+  ])('maps ?status=%s to p_status=%s on both RPCs', async (filter, value) => {
+    const rpc = await getWithStatus(filter);
+    expect(rpc).toHaveBeenCalledWith(
+      'instagram_adu_hub_list',
+      expect.objectContaining({ p_status: value })
+    );
+    expect(rpc).toHaveBeenCalledWith(
+      'instagram_adu_hub_stats',
+      expect.objectContaining({ p_status: value })
+    );
   });
 
-  it('no longer maps the retired Inactive label — no status filter is applied', async () => {
-    const configQueries = await getWithStatus('Inactive');
-    expect(configQueries.length).toBeGreaterThan(0);
-    for (const q of configQueries) {
-      expect(q.filters.some((f) => f.col === 'status')).toBe(false);
-    }
+  it('no longer maps the retired Inactive label — it behaves as no filter', async () => {
+    const rpc = await getWithStatus('Inactive');
+    expect(rpc).toHaveBeenCalledWith(
+      'instagram_adu_hub_list',
+      expect.objectContaining({ p_status: null })
+    );
   });
 });
 
