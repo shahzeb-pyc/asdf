@@ -382,7 +382,7 @@ export async function handleScheduled(
         db as unknown as SectionCheckDbClient,
         options?.now ?? new Date(controller.scheduledTime)
       );
-      console.log(
+      console.info(
         `[Scheduled] section check: dirty=${result.dirty} ` +
           `unsectioned=${result.unsectionedDestinations} ` +
           `slots=${result.slotsOnWrongSection} ` +

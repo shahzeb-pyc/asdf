@@ -341,7 +341,7 @@ describe('handleScheduled daily section check (spec 174 3B)', () => {
 
   it('runs clean and stays silent: no error log, no heartbeat write', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     const upsertRows: Record<string, unknown>[] = [];
     const fromTables: string[] = [];
     const db = {
@@ -362,19 +362,19 @@ describe('handleScheduled daily section check (spec 174 3B)', () => {
     ]);
     expect(upsertRows).toEqual([]);
     expect(errSpy).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith(
+    expect(infoSpy).toHaveBeenCalledWith(
       expect.stringContaining('section check: dirty=false')
     );
     errSpy.mockRestore();
-    logSpy.mockRestore();
+    infoSpy.mockRestore();
   });
 
   it('flags a seeded labelless row loudly but does not fail the run', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     const db = { from: countFrom({ destinations: 2, adu_configs: 1 }) };
     await expect(runSectionCron(db)).resolves.toBeUndefined();
-    expect(logSpy).toHaveBeenCalledWith(
+    expect(infoSpy).toHaveBeenCalledWith(
       expect.stringContaining(
         'section check: dirty=true unsectioned=2 slots=0 queueItems=0 aduConfigs=1 slotClaims=0'
       )
@@ -383,7 +383,7 @@ describe('handleScheduled daily section check (spec 174 3B)', () => {
       expect.stringContaining('section check DIRTY')
     );
     errSpy.mockRestore();
-    logSpy.mockRestore();
+    infoSpy.mockRestore();
   });
 
   it('fails loud when a count query errors', async () => {

@@ -31,6 +31,8 @@
  * cron covers every platform.
  */
 
+import { InternalError } from '@fbuploadpro/contracts';
+
 /** Cron expression for the daily section check (wrangler.toml triggers). */
 export const SECTION_CHECK_CRON = '0 4 * * *';
 
@@ -108,7 +110,9 @@ async function countRows(
     db.from(table).select('id', { count: 'exact', head: true })
   );
   if (error) {
-    throw new Error(`section check failed: table=${table} error=${errorMessage(error)}`);
+    throw new InternalError(
+      `section check failed: table=${table} error=${errorMessage(error)}`
+    );
   }
   return count ?? 0;
 }
@@ -124,7 +128,9 @@ async function countChildRows(
       .select('id, destinations!inner(section)', { count: 'exact', head: true })
   );
   if (error) {
-    throw new Error(`section check failed: table=${table} error=${errorMessage(error)}`);
+    throw new InternalError(
+      `section check failed: table=${table} error=${errorMessage(error)}`
+    );
   }
   return count ?? 0;
 }
