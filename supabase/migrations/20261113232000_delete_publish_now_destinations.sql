@@ -4,10 +4,14 @@
 -- Owner decision 2026-11-13: Publish Now persists nothing. The import route
 -- (spec 174 PR 1B) was the sole writer of section = 'publish_now' rows; it is
 -- deleted in the same PR, so no code path can recreate them. The live gate
--- (2026-11-13, new production) confirmed: 67 publish_now rows, all Facebook,
--- all active, created 2026-11-13 18:27-19:02 PKT; zero child rows on those
--- ids (queue_items, posting_slots, posting_slot_claims, adu_configs,
--- publish_logs, subscription_usage).
+-- (2026-11-13, new production) confirmed 67 publish_now rows, all Facebook,
+-- all active, created 2026-11-13 18:27-19:02 PKT, with zero child rows on
+-- those ids (queue_items, posting_slots, posting_slot_claims, adu_configs,
+-- publish_logs, subscription_usage). The migration deletes ALL publish_now
+-- rows, whatever the count: 67 on production, 0 on a fresh database — the
+-- count is a snapshot, not a precondition (a count assertion would fail
+-- every non-production database; fixed after the SQL Rigs failure on
+-- PR #252, which applies migrations to a fresh DB).
 --
 -- IRREVERSIBLE: the rows carry encrypted page tokens and follower baselines
 -- (metadata starting_followers / current_followers) that cannot be
@@ -18,7 +22,6 @@
 
 do $$
 declare
-  v_publish_now integer;
   v_children integer;
   v_remaining integer;
 begin
@@ -42,22 +45,15 @@ begin
     raise exception 'spec-180: % publish_now destination(s) still have child rows; refusing to delete', v_children;
   end if;
 
-  -- 2. The gate counted 67 rows. Any other count means the world
-  -- changed since the gate — stop instead of deleting blind.
-  select count(*) into v_publish_now
-  from public.destinations
-  where section = 'publish_now';
-  if v_publish_now <> 67 then
-    raise exception 'spec-180: expected 67 publish_now destinations, found %; refusing to delete', v_publish_now;
-  end if;
-
-  -- 3. Delete. The platform belt must not change the count (all 67
-  -- are Facebook, verified by the gate).
+  -- 2. Delete every publish_now row, whatever the count (67 on
+  -- production per the gate, 0 on a fresh database). The platform
+  -- belt must not change the production count (all 67 are Facebook,
+  -- verified by the gate).
   delete from public.destinations
   where section = 'publish_now'
     and platform = 'facebook';
 
-  -- 4. Assert zero remain.
+  -- 3. Assert zero remain.
   select count(*) into v_remaining
   from public.destinations
   where section = 'publish_now';
@@ -65,9 +61,9 @@ begin
     raise exception 'spec-180: % publish_now destinations remain after delete', v_remaining;
   end if;
 
-  -- 5. Tighten the live CHECK to the three live sections (the DB twin
+  -- 4. Tighten the live CHECK to the three live sections (the DB twin
   -- of DestinationSectionSchema after spec 180). Safe only after
-  -- step 4: no row can violate the new CHECK.
+  -- step 3: no row can violate the new CHECK.
   alter table public.destinations drop constraint destinations_section_check;
   alter table public.destinations
     add constraint destinations_section_check
