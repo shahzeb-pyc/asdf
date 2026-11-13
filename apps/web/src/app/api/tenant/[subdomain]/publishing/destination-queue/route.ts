@@ -279,7 +279,8 @@ export async function handleDestinationEnqueue(
   // Subscription gate, server-side: a paid period must be active
   // and the destination must fit the across-features cap. Using a
   // destination here registers it in the usage registry, so the
-  // same destination in a second feature counts once. Admins are
+  // same destination in a second section counts again (two rows,
+  // two units — spec 174 PR 2B). Admins are
   // not gated (they approve subscriptions; they do not subscribe).
   // The legacy SQL test harness has no Supabase client, so the
   // gate runs only when one is present; in production the route

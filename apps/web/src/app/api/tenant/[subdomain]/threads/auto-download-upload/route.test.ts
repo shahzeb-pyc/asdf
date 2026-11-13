@@ -148,10 +148,13 @@ class FakeQuery {
       const rows = Array.isArray(this.payload) ? this.payload : [this.payload as Row];
       for (const row of rows) {
         if (this.tableName === 'subscription_usage') {
+          // Spec 174 PR 2B: the fake unique index mirrors the real
+          // one — (user, platform, section, key).
           const clash = this.table.some(
             (existing) =>
               existing['user_id'] === row['user_id'] &&
               existing['platform'] === row['platform'] &&
+              existing['section'] === row['section'] &&
               existing['destination_key'] === row['destination_key']
           );
           if (clash) return { data: null, error: { code: '23505' } };
@@ -443,6 +446,8 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
       platform: 'threads',
       destination_key: 'threads-acct-1',
       feature: 'auto-download-upload',
+      // Spec 174 PR 2B: the row carries the section its feature maps to.
+      section: 'adu',
       destination_id: copy?.['id'],
     });
   });
@@ -459,6 +464,8 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
       platform: 'threads',
       destination_key: 'threads-acct-9',
       feature: 'auto-download-upload',
+      // Spec 174 PR 2B: the seeded row carries its section.
+      section: 'adu',
       destination_id: DEST_9,
     });
 

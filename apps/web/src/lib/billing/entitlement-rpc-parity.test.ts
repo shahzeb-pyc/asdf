@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { sectionForUsageFeature } from '@fbuploadpro/contracts';
 import {
   approvePayment,
   assertCanPost,
@@ -162,15 +163,17 @@ class FakeQuery {
     if (this.op === 'insert') {
       const rows = Array.isArray(this.payload) ? this.payload : [this.payload as Row];
       // The 23505 guard mirrors the ONE unique index the code
-      // relies on: subscription_usage (user, platform, key).
-      // Other tables have no such index — a period insert must
-      // never "clash" with an existing period for the same user.
+      // relies on: subscription_usage (user, platform, section,
+      // key) since spec 174 PR 2B. Other tables have no such
+      // index — a period insert must never "clash" with an
+      // existing period for the same user.
       if (this.isUsage) {
         for (const row of rows) {
           const clash = this.table.some(
             (existing) =>
               existing['user_id'] === row['user_id'] &&
               existing['platform'] === row['platform'] &&
+              existing['section'] === row['section'] &&
               existing['destination_key'] === row['destination_key']
           );
           if (clash) return { data: null, error: { code: '23505' } };
@@ -392,6 +395,9 @@ function seedUsage(
     platform,
     destination_key: key,
     feature,
+    // Spec 174 PR 2B: seeded rows carry the section their feature
+    // maps to, exactly like the migration backfill.
+    section: sectionForUsageFeature(feature),
     destination_id: destinationId,
   });
 }
@@ -862,7 +868,7 @@ describe('C2 — mutation: a broken RPC fails closed, a flipped gate blocks iden
     expect(lapsed.rpc.plan).toBe('expired');
     const { client, tables } = makeClient();
     seedPeriod(tables, { starts_at: iso(-40 * DAY), ends_at: iso(-5 * DAY) });
-    await expect(assertCanPost(client, USER_ID, 'facebook', 'page-new', NOW)).rejects.toMatchObject({
+    await expect(assertCanPost(client, USER_ID, 'facebook', 'page-new', 'schedule', NOW)).rejects.toMatchObject({
       code: 'SUBSCRIPTION_REQUIRED',
       message: 'Posting is paused. Your paid period has ended — renew it to post again.',
     });
@@ -872,7 +878,7 @@ describe('C2 — mutation: a broken RPC fails closed, a flipped gate blocks iden
     const { client, tables } = makeClient();
     seedPeriod(tables, { facebook_count: 1 });
     seedUsage(tables, 'facebook', 'page-1');
-    await expect(assertCanPost(client, USER_ID, 'facebook', 'page-new', NOW)).rejects.toMatchObject({
+    await expect(assertCanPost(client, USER_ID, 'facebook', 'page-new', 'schedule', NOW)).rejects.toMatchObject({
       code: 'SUBSCRIPTION_CAP_REACHED',
       message: 'You have reached your limit of 1 pages on facebook. Upgrade your plan to use more.',
     });
@@ -888,7 +894,7 @@ describe('C2 — mutation: a broken RPC fails closed, a flipped gate blocks iden
     const { client, tables } = makeClient();
     seedPeriod(tables, { facebook_count: 1 });
     seedUsage(tables, 'facebook', 'page-1');
-    const period = await assertCanPost(client, USER_ID, 'facebook', 'page-1', NOW);
+    const period = await assertCanPost(client, USER_ID, 'facebook', 'page-1', 'schedule', NOW);
     expect(period.id).toBe('period-1');
   });
 });
@@ -952,9 +958,13 @@ describe('C2 — race: the register guards still hold on the RPC gate read', () 
     expect(entitlement.usage.facebook).toBe(2);
   });
 
-  it('a legacy publish-now row is still replaced, never double-counted', async () => {
+  it('a legacy publish-now row coexists with the capped row, never double-counted (spec 174 PR 2B)', async () => {
     const { client, tables } = makeClient();
     seedPeriod(tables);
+    // The legacy row lives in section 'publish_now' (the migration
+    // backfill); the capped registration lands in 'schedule', so
+    // the two rows coexist under the section-scoped key instead of
+    // the old delete-and-replace. The legacy row never counts.
     seedUsage(tables, 'facebook', 'page-1', 'publish-now');
     const result = await registerUsage(
       client,
@@ -966,8 +976,12 @@ describe('C2 — race: the register guards still hold on the RPC gate read', () 
       NOW
     );
     expect(result.alreadyUsed).toBe(false);
-    expect(tables['subscription_usage']).toHaveLength(1);
-    expect(tables['subscription_usage'][0]?.['feature']).toBe('destination-queue');
+    expect(result.usedCount).toBe(1);
+    expect(tables['subscription_usage']).toHaveLength(2);
+    const features = tables['subscription_usage']
+      .map((row) => row['feature'] as string)
+      .sort();
+    expect(features).toEqual(['destination-queue', 'publish-now']);
     const entitlement = await getEntitlement(client, USER_ID, NOW);
     expect(entitlement.usage.facebook).toBe(1);
   });

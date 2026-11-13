@@ -285,6 +285,7 @@ export async function POST(
             resolved.context.userId,
             'threads',
             keys,
+            'adu',
             undefined,
             sharedEntitlement
           );
@@ -354,6 +355,7 @@ export async function POST(
           resolved.context.userId,
           'threads',
           keys,
+          'adu',
           undefined,
           sharedEntitlement
         );

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DomainError, DomainErrorCode } from '../errors/domain-error.js';
+import { type Section } from './database.js';
 
 /**
  * Subscription domain (owner-decided, 2026-10-30).
@@ -10,9 +11,11 @@ import { DomainError, DomainErrorCode } from '../errors/domain-error.js';
  *   platform counts ACCOUNTS.
  * - The cap is across a platform's features, not per feature: the
  *   usage registry counts DISTINCT destinations a user has used in a
- *   feature, per platform. Connecting an account/page never counts;
- *   using it inside a feature (schedule, publish-now, and future
- *   features calling the same registry) does.
+ *   feature, per platform, per section (spec 174 PR 2B): a page used
+ *   in Schedule and in Auto Download registers two rows and counts
+ *   twice. Connecting an account/page never counts; using it inside
+ *   a feature (schedule, publish-now, and future features calling
+ *   the same registry) does.
  * - A paid period is 30 days from approval. The credit divisor is
  *   also 30, so the upgrade math and the period length agree.
  */
@@ -279,6 +282,36 @@ export const UsageRegisterRequestSchema = z.object({
   destinationId: z.string().uuid().nullable().optional(),
 });
 export type UsageRegisterRequest = z.infer<typeof UsageRegisterRequestSchema>;
+
+/**
+ * Spec 174 PR 2B — the section a usage feature counts in.
+ *
+ * One row per destination per section: the same page used in
+ * Schedule and in Auto Download registers two rows and counts
+ * twice; Publish Now is uncapped and registers nothing. The
+ * feature string already identifies the section 1:1, so the
+ * register/release paths derive the section from it here — one
+ * mapping, not one per call site. The legacy publish-now
+ * features map to 'publish_now' for the migration backfill
+ * (their rows are history, excluded from every count); the
+ * register path refuses them before it ever derives a section.
+ * An unknown feature has no section: callers fail loud instead
+ * of inventing one.
+ */
+export const USAGE_FEATURE_SECTIONS = {
+  'destination-queue': 'schedule',
+  'auto-download-upload': 'adu',
+  'tiktok-mirror': 'mirror',
+  'auto-repost': 'mirror',
+  'publish-now': 'publish_now',
+  'instagram-publish-now': 'publish_now',
+  'threads-publish-now': 'publish_now',
+} as const satisfies Record<string, Section>;
+
+export function sectionForUsageFeature(feature: string): Section | null {
+  const section = (USAGE_FEATURE_SECTIONS as Record<string, Section | undefined>)[feature];
+  return section ?? null;
+}
 
 export const EntitlementResponseSchema = z.object({
   plan: SubscriptionPlanSchema,

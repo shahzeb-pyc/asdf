@@ -274,6 +274,7 @@ describe('DELETE /threads/auto-download-upload/[id] (plan-check B1)', () => {
       platform: 'threads',
       destination_key: 'threads-acct-1',
       feature: 'auto-download-upload',
+      section: 'adu',
       destination_id: DEST_1,
     });
 
@@ -294,6 +295,7 @@ describe('DELETE /threads/auto-download-upload/[id] (plan-check B1)', () => {
       platform: 'threads',
       destination_key: 'threads-acct-1',
       feature: 'auto-download-upload',
+      section: 'adu',
       destination_id: DEST_1,
     });
 

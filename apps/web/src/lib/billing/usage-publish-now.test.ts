@@ -1,19 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { sectionForUsageFeature } from '@fbuploadpro/contracts';
 import { registerUsage, SubscriptionGateError } from './entitlement';
 
 /**
  * Publish-Now usage rules (audit fix 2026-11-01, fix 24):
  * Publish Now never registers usage, the usage route rejects it,
- * and a capped registration colliding with a legacy pre-fix
- * Publish-Now row deletes that row and inserts the capped row
- * instead — so the destination counts, without keeping any
- * Publish-Now row.
+ * and a capped registration never counts a legacy Publish-Now
+ * row. Since spec 174 PR 2B the legacy rows live in section
+ * 'publish_now' (the migration backfill) and a capped row lands
+ * in its own section, so the two coexist under the section-scoped
+ * key — the old delete-and-replace fires only for a legacy row
+ * stranded in the SAME section (a defensive backstop, pinned by
+ * the failure-branch tests below with an explicit section
+ * override on the seed).
  *
  * In-memory Supabase stand-in, same pattern as the other billing
  * tests: filters AND together, a conditional update/delete only
- * lands on matching rows, and a duplicate (user, platform, key)
- * insert fails with 23505 like the real unique index.
+ * lands on matching rows, and a duplicate (user, platform,
+ * section, key) insert fails with 23505 like the real unique
+ * index.
  */
 type Row = Record<string, unknown>;
 
@@ -126,10 +132,13 @@ class FakeQuery {
       }
       const rows = Array.isArray(this.payload) ? this.payload : [this.payload as Row];
       for (const row of rows) {
+        // Spec 174 PR 2B: the fake unique index mirrors the real
+        // one — (user, platform, section, key).
         const clash = this.table.some(
           (existing) =>
             existing['user_id'] === row['user_id'] &&
             existing['platform'] === row['platform'] &&
+            existing['section'] === row['section'] &&
             existing['destination_key'] === row['destination_key']
         );
         if (clash) return { data: null, error: { code: '23505' } };
@@ -298,13 +307,23 @@ function seedActivePeriod(tables: Record<string, Row[]>) {
   });
 }
 
-function seedUsage(tables: Record<string, Row[]>, feature: string, key = 'page-1') {
+function seedUsage(
+  tables: Record<string, Row[]>,
+  feature: string,
+  key = 'page-1',
+  // Spec 174 PR 2B: the section comes from the feature via the
+  // contracts mapping, exactly like the migration backfill. The
+  // override exists only for the defensive tests below, which
+  // strand a legacy row in a capped section on purpose.
+  section: string | null = null
+) {
   tables['subscription_usage'].push({
     id: `usage-${feature}`,
     user_id: 'user-1',
     platform: 'facebook',
     destination_key: key,
     feature,
+    section: section ?? sectionForUsageFeature(feature),
     destination_id: 'dest-1',
   });
 }
@@ -321,7 +340,7 @@ describe('registerUsage and Publish Now', () => {
     expect(tables['subscription_usage']).toHaveLength(0);
   });
 
-  it('a capped registration colliding with a legacy PN row deletes it and counts the destination', async () => {
+  it('a capped registration coexists with a legacy PN row in another section, and counts the destination', async () => {
     const { client, tables } = makeClient();
     seedActivePeriod(tables);
     seedUsage(tables, 'publish-now');
@@ -338,9 +357,14 @@ describe('registerUsage and Publish Now', () => {
 
     expect(result.alreadyUsed).toBe(false);
     expect(result.usedCount).toBe(1);
-    // No Publish-Now row survives; exactly one capped row remains.
-    expect(tables['subscription_usage']).toHaveLength(1);
-    expect(tables['subscription_usage'][0]?.['feature']).toBe('destination-queue');
+    // The legacy row lives in section 'publish_now'; the capped
+    // row lands in 'schedule'. Both survive; only the capped row
+    // counts.
+    expect(tables['subscription_usage']).toHaveLength(2);
+    const features = tables['subscription_usage']
+      .map((row) => row['feature'] as string)
+      .sort();
+    expect(features).toEqual(['destination-queue', 'publish-now']);
   });
 
   it('a destination used only via Publish Now does not count as used', async () => {
@@ -364,16 +388,20 @@ describe('registerUsage and Publish Now', () => {
     expect(tables['subscription_usage']).toHaveLength(2);
   });
 
-  it('a second capped registration of the same destination is already-used', async () => {
+  it('a second capped registration of the same destination in the same section is already-used', async () => {
     const { client, tables } = makeClient();
     seedActivePeriod(tables);
     await registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW);
+    // Spec 174 PR 2B: the same feature again is the same section,
+    // so it is already-used. A DIFFERENT feature is a different
+    // section and a second unit — pinned in
+    // entitlement-section.test.ts.
     const second = await registerUsage(
       client,
       'user-1',
       'facebook',
       'page-1',
-      'auto-download-upload',
+      'destination-queue',
       'dest-1',
       NOW
     );
@@ -384,10 +412,12 @@ describe('registerUsage and Publish Now', () => {
 });
 
 describe('registerUsage failure branches (audit fix 2026-11-01)', () => {
-  it('fails closed when the legacy-row lookup errors', async () => {
+  it('fails closed when the destination-existence probe errors', async () => {
     const { client, tables, failures } = makeClient();
     seedActivePeriod(tables);
-    seedUsage(tables, 'publish-now');
+    // Defensive strand: the legacy row sits in 'schedule', so the
+    // capped registration collides with it and the 23505 path runs.
+    seedUsage(tables, 'publish-now', 'page-1', 'schedule');
     failures.selectUsage = 1;
     await expect(
       registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW)
@@ -397,7 +427,9 @@ describe('registerUsage failure branches (audit fix 2026-11-01)', () => {
   it('fails closed when the legacy-row delete errors, keeping the legacy row', async () => {
     const { client, tables, failures } = makeClient();
     seedActivePeriod(tables);
-    seedUsage(tables, 'publish-now');
+    // Defensive strand: the legacy row sits in 'schedule', so the
+    // capped registration collides with it and the 23505 path runs.
+    seedUsage(tables, 'publish-now', 'page-1', 'schedule');
     failures.deleteUsage = 1;
     await expect(
       registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW)
@@ -408,7 +440,9 @@ describe('registerUsage failure branches (audit fix 2026-11-01)', () => {
   it('fails closed when the retry insert errors, after deleting the legacy row', async () => {
     const { client, tables, failures } = makeClient();
     seedActivePeriod(tables);
-    seedUsage(tables, 'publish-now');
+    // Defensive strand: the legacy row sits in 'schedule', so the
+    // capped registration collides with it and the 23505 path runs.
+    seedUsage(tables, 'publish-now', 'page-1', 'schedule');
     failures.retryInsert = 1;
     await expect(
       registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW)

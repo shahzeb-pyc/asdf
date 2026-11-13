@@ -601,6 +601,7 @@ export async function handleCreateThreadsMirror(
             session.userId,
             'threads',
             [destination.external_destination_id ?? destination.id],
+            'mirror',
             undefined,
             sharedEntitlement
           );

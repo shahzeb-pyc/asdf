@@ -449,6 +449,7 @@ export async function POST(
             resolved.context.userId,
             'facebook',
             keys,
+            'adu',
             undefined,
             sharedEntitlement
           );
@@ -547,6 +548,7 @@ export async function POST(
           resolved.context.userId,
           'facebook',
           keys,
+          'adu',
           undefined,
           sharedEntitlement
         );

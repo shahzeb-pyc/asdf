@@ -131,10 +131,13 @@ class FakeQuery {
       const rows = Array.isArray(this.payload) ? this.payload : [this.payload as Row];
       for (const row of rows) {
         if (this.tableName === 'subscription_usage') {
+          // Spec 174 PR 2B: the fake unique index mirrors the real
+          // one — (user, platform, section, key).
           const clash = this.table.some(
             (existing) =>
               existing['user_id'] === row['user_id'] &&
               existing['platform'] === row['platform'] &&
+              existing['section'] === row['section'] &&
               existing['destination_key'] === row['destination_key']
           );
           if (clash) return { data: null, error: { code: '23505' } };
@@ -370,6 +373,8 @@ describe('Threads ADU cap registration (plan-check B1)', () => {
       platform: 'threads',
       destination_key: 'threads-acct-1',
       feature: 'auto-download-upload',
+      // Spec 174 PR 2B: the row carries the section its feature maps to.
+      section: 'adu',
       destination_id: 'dest-1',
     });
     expect(await getUsageCount(client, 'user-1', 'threads')).toBe(1);
@@ -387,7 +392,7 @@ describe('Threads ADU cap registration (plan-check B1)', () => {
 
     // Before registering, the gate sees 0 used and the new key fits.
     const keys = await aduDestinationKeysForCap(client, 'ws-1', 'threads', ['dest-1']);
-    const before = await assertFeatureAddWithinCap(client, 'user-1', 'threads', keys);
+    const before = await assertFeatureAddWithinCap(client, 'user-1', 'threads', keys, 'adu');
     expect(before).toMatchObject({ allowed: 1, used: 0, newCount: 1 });
 
     await registerAduConfigUsage(makeCtx(client), 'threads', 'dest-1', 'config-1');
@@ -404,13 +409,14 @@ describe('Threads ADU cap registration (plan-check B1)', () => {
       'user-1',
       'threads',
       keys,
+      'adu',
       undefined,
       fresh
     );
     expect(same).toMatchObject({ allowed: 1, used: 1, newCount: 0 });
     const otherKeys = await aduDestinationKeysForCap(client, 'ws-1', 'threads', ['dest-2']);
     await expect(
-      assertFeatureAddWithinCap(client, 'user-1', 'threads', otherKeys, undefined, fresh)
+      assertFeatureAddWithinCap(client, 'user-1', 'threads', otherKeys, 'adu', undefined, fresh)
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
   });
 
@@ -488,6 +494,9 @@ describe('Threads ADU cap registration (plan-check B1)', () => {
       platform: 'threads',
       destination_key: 'threads-acct-1',
       feature: 'destination-queue',
+      // Spec 174 PR 2B: a queue row lives in section 'schedule', so
+      // the ADU release (section 'adu') must not touch it.
+      section: 'schedule',
       destination_id: 'dest-1',
     });
 
