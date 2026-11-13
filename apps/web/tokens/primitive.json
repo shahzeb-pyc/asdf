@@ -1,5 +1,5 @@
 {
-  "$description": "Primitive design tokens — Cyber Yellow + Inter identity (Direction 4, 2026-10-29). Hand-edit ONLY files in apps/web/tokens/; everything else is generated. Never reference primitives directly from component code — consume semantic tokens. Neutral and status scales are Tailwind stone / green / red steps (see spec); brand steps are HSL derivations of #FFD300 (see spec).",
+  "$description": "Primitive design tokens — Cyber Yellow + Manrope identity (spec 177, 2026-11-13). Hand-edit ONLY files in apps/web/tokens/; everything else is generated. Never reference primitives directly from component code — consume semantic tokens. Neutral and status scales are Tailwind stone / green / red steps (see spec); brand steps are HSL derivations of #FFD300 (see spec).",
   "breakpoint": {
     "$description": "One breakpoint set, replacing the ad-hoc 440/639/767/768/1023 scatter. Boundaries align to the shipped media queries (max-width 639/767, min-width 768, max-width 1023).",
     "lg": {
@@ -297,8 +297,8 @@
       },
       "sans": {
         "$type": "fontFamily",
-        "$value": "var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif",
-        "$description": "Inter (loaded via next/font/google in layout.tsx, variable --font-inter) with the old system stack as fallback. Sizes, line-heights, tracking and weights are unchanged — see spec for why no size change is needed."
+        "$value": "var(--font-manrope), system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif",
+        "$description": "Manrope (loaded via next/font/google in layout.tsx, variable --font-manrope) with the old system stack as fallback. Sizes, line-heights, tracking and weights are unchanged — see spec for why no size change is needed."
       }
     },
     "featureSettings": {

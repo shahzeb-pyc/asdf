@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+import { Manrope } from 'next/font/google';
 import React, { type ReactNode } from 'react';
 import './globals.css';
 import { DesktopTitleBar } from '@/components/desktop';
@@ -39,17 +39,17 @@ export const viewport: Viewport = {
 };
 
 /**
- * Inter (Direction 4, 2026-10-29) — loaded via next/font/google so the
+ * Manrope (spec 177, 2026-11-13) — loaded via next/font/google so the
  * token pipeline can reference it: tokens/primitive.json font.family.sans
- * is `var(--font-inter), system-ui, ...`, and globals.css @theme maps
+ * is `var(--font-manrope), system-ui, ...`, and globals.css @theme maps
  * --font-sans to that generated variable. Stored-theme precedence is
  * unchanged (localStorage 'theme', then fbup_theme cookie); only the
  * fallback when neither is set changes from dark to light (light-first).
  */
-const inter = Inter({
+const manrope = Manrope({
   subsets: ['latin'],
   display: 'swap',
-  variable: '--font-inter',
+  variable: '--font-manrope',
 });
 
 const themeInitScript = `
@@ -84,7 +84,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body className={`${inter.variable} ${fontSansClassName}`}>
+      <body className={`${manrope.variable} ${fontSansClassName}`}>
         <PostHogProvider
           apiKey={process.env.POSTHOG_KEY}
           host={process.env.POSTHOG_HOST || 'https://us.i.posthog.com'}
