@@ -1,7 +1,6 @@
 import {
   canAddInstagramSchedule,
   IG_SCHEDULE_DEFAULT_SLOT_KINDS,
-  IG_SCHEDULE_METADATA_FLAG,
   IG_SCHEDULE_PAUSED_FLAG,
   isInstagramScheduleSlotKind,
   validateInstagramScheduleSlots,
@@ -14,12 +13,15 @@ import { logServerError } from '@/lib/server-analytics';
  * Shared server helpers for the Instagram Schedule routes. These are
  * the Instagram-only counterparts of the Facebook Pages wire helpers:
  * the same unified tables, the same tenant scoping, but the Schedule
- * membership rule (metadata flag) and the Instagram format rules.
+ * membership rule and the Instagram format rules.
  *
- * A destination is "scheduled" exactly when its metadata carries
- * `scheduled = true`. That flag is the whole membership model — there
- * is no schedule table, and deleting the flag (Remove from Schedule)
- * never deletes the destination row or the connected account.
+ * Membership (spec 174 Phase 4) is the `section` column alone: a
+ * destination is in Schedule exactly when its section is 'schedule'
+ * and it is not a removed stub (status 'disconnected' without the
+ * paused marker). The old `metadata.scheduled` flag is no longer read
+ * anywhere — it stays in stored metadata, unread. Removing a
+ * destination from Schedule (Remove from Schedule) never deletes the
+ * destination row or the connected account.
  */
 
 /** Raw destination row as read from either data path. */
@@ -58,23 +60,18 @@ export interface InstagramScheduleAccountRow {
   externalAccountId?: string | null;
 }
 
-/** True when the destination's metadata marks it as scheduled. */
-export function isScheduledDestination(
-  metadata: Record<string, unknown> | null | undefined
-): boolean {
-  return metadata?.[IG_SCHEDULE_METADATA_FLAG] === true;
-}
-
 /**
  * True when the destination is a member of Instagram Schedule as the
- * list shows it (spec 174 1B). Membership is the section column; a row
- * the user removed from Schedule is a disconnected stub (status
- * 'disconnected', scheduled flag cleared) and is NOT a member, even
- * though its section is still 'schedule' — the stub stays saved but
- * disappears from the list, per the removal rule. A connection-died
- * row (status 'disconnected', flag still set) is a member: it shows
- * as disconnected with reconnect guidance, exactly as before. The
- * flag itself is left in place until Phase 4 removes it.
+ * list shows it (spec 174 Phase 4). Membership is the section column
+ * alone; a row the user removed from Schedule is a disconnected stub
+ * (status 'disconnected') and is NOT a member, even though its section
+ * is still 'schedule' — the stub stays saved but disappears from the
+ * list, per the removal rule. A paused row is a member: pause also
+ * stores status 'disconnected', but keeps the paused marker. The old
+ * `scheduled` flag is no longer read: a disconnected row without the
+ * paused marker is not a member, whether or not the flag is set.
+ * Connection-died rows are status 'error' (expiry propagation), not
+ * 'disconnected', so they stay members through the status branch.
  */
 export function isScheduleListMember(destination: Pick<
   InstagramScheduleDestinationRow,
@@ -82,7 +79,7 @@ export function isScheduleListMember(destination: Pick<
 >): boolean {
   if (destination.section !== 'schedule') return false;
   if (destination.status !== 'disconnected') return true;
-  return isScheduledDestination(destination.metadata);
+  return isPausedDestination(destination.metadata);
 }
 
 /** True when the destination's metadata marks it as paused. */

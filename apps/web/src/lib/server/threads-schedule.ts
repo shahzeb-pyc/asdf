@@ -1,10 +1,6 @@
-export {
-  isThreadsScheduleAdded,
-  isThreadsSchedulePaused,
-} from '@fbuploadpro/contracts';
+export { isThreadsSchedulePaused } from '@fbuploadpro/contracts';
 import {
   THREADS_SCHEDULE_FORMATS,
-  isThreadsScheduleAdded,
   isThreadsSchedulePaused,
   threadsScheduleStatusFromRows,
   type ThreadsScheduleFormat,
@@ -17,11 +13,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 /**
  * Shared server helpers for Threads In-app Schedule.
  *
- * Schedule membership lives on the existing `destinations` row
- * (metadata.threads_schedule_added_at), never in a new table. Every
- * query here is workspace-scoped and bounded: list reads page through
- * destinations in 1,000-row chunks (PostgREST's silent cap) and counts
- * come from head/count queries, never from downloading rows.
+ * Schedule membership lives on the `section` column of the existing
+ * `destinations` row (spec 174 Phase 4): a row is in Schedule exactly
+ * when its section is 'schedule' and it is not a removed stub. The old
+ * `metadata.threads_schedule_added_at` flag is no longer read anywhere
+ * — it stays in stored metadata, unread. Every query here is
+ * workspace-scoped and bounded: list reads page through destinations
+ * in 1,000-row chunks (PostgREST's silent cap) and counts come from
+ * head/count queries, never from downloading rows.
  */
 
 export interface ThreadsScheduleDestinationRow {
@@ -76,15 +75,16 @@ export function scheduleStatusFor(
 
 /**
  * True when the destination is a member of Threads Schedule as the list
- * shows it (spec 174 1B). Membership is the section column; a row the
- * user removed from Schedule is a disconnected stub (status
- * 'disconnected', added-at flag cleared) and is NOT a member, even
- * though its section is still 'schedule' — the stub stays saved but
- * disappears from the list, per the removal rule. A paused row is a
- * member: pause also stores status 'disconnected', but keeps the
- * paused marker. A connection-died row (status 'disconnected', flag
- * still set, no paused marker) is a member too — it shows as
- * disconnected with reconnect guidance, exactly as before.
+ * shows it (spec 174 Phase 4). Membership is the section column alone:
+ * a row the user removed from Schedule is a disconnected stub (status
+ * 'disconnected') and is NOT a member, even though its section is
+ * still 'schedule' — the stub stays saved but disappears from the
+ * list, per the removal rule. A paused row is a member: pause also
+ * stores status 'disconnected', but keeps the paused marker. The old
+ * added-at flag is no longer read: a disconnected row without the
+ * paused marker is not a member, whether or not the flag is set.
+ * Connection-died rows are status 'error' (expiry propagation), not
+ * 'disconnected', so they stay members through the status branch.
  */
 export function isThreadsScheduleListMember(destination: Pick<
   ThreadsScheduleDestinationRow,
@@ -92,8 +92,7 @@ export function isThreadsScheduleListMember(destination: Pick<
 >): boolean {
   if (destination.section !== 'schedule') return false;
   if (destination.status !== 'disconnected') return true;
-  if (isThreadsSchedulePaused(destination.metadata)) return true;
-  return isThreadsScheduleAdded(destination.metadata);
+  return isThreadsSchedulePaused(destination.metadata);
 }
 
 export async function fetchScheduleDestinations(
@@ -117,9 +116,9 @@ export async function fetchScheduleDestinations(
     rows.push(...page);
     if (page.length < CHUNK) break;
   }
-  // Membership is the section column now (spec 174 1B), with removed
-  // stubs excluded — see isThreadsScheduleListMember. The added-at
-  // flag itself is left in place until Phase 4 removes it.
+  // Membership is the section column now (spec 174 Phase 4), with
+  // removed stubs excluded — see isThreadsScheduleListMember. The
+  // old added-at flag stays in stored metadata, unread.
   return rows.filter((row) => isThreadsScheduleListMember(row));
 }
 
@@ -185,11 +184,12 @@ export function toScheduleItem(
   counts: ThreadsScheduleQueueCounts,
   countsError: boolean
 ): ThreadsScheduleItem {
-  const addedAtRaw = destination.metadata?.['threads_schedule_added_at'];
-  const addedAt =
-    typeof addedAtRaw === 'string' && addedAtRaw
-      ? new Date(addedAtRaw)
-      : new Date(destination.created_at);
+  // Spec 174 Phase 4: the old added-at flag is no longer read. The
+  // wire field stays (same shape), and now always equals the row's
+  // creation time — for rows created by import these are the same
+  // instant; for pre-split rows it shows the row creation date
+  // instead of the schedule-add date.
+  const addedAt = new Date(destination.created_at);
   return {
     id: destination.id,
     accountId: destination.account_id,

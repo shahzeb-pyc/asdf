@@ -2,8 +2,9 @@
  * Instagram Schedule API — Supabase path (live path, not the SQL path).
  *
  * Guards pinned here for the PR #67 SEND BACK Blocker 1 fix:
- * (1) Add counts ONLY scheduled destinations (metadata.scheduled
- * true) and calls checkScheduleCap() — an unscheduled connected
+ * (1) Add counts ONLY scheduled destinations (section =
+ * 'schedule', with the paused marker as the disconnected
+ * tiebreaker) and calls checkScheduleCap() — an unscheduled connected
  * account must never consume the cap, and a set cap must return
  * 400 with no destination/slot change; (2) with the cap unset
  * (null, today's production value) Add still succeeds even with
@@ -226,17 +227,19 @@ class Builder {
       rows = rows.filter((r) => r[col] === val);
     }
     if (this.orExpr) {
-      // Spec 174 1B cap count: the row counts when ANY clause
-      // holds — status is not disconnected, or the scheduled flag
-      // is still set (the removed-stub tiebreaker).
+      // Spec 174 4A cap count: the row counts when ANY clause
+      // holds — status is not disconnected, or the paused marker
+      // is set (the removed-stub tiebreaker).
       const clauses = this.orExpr.split(',');
       rows = rows.filter((r) =>
         clauses.some((clause) => {
           if (clause === 'status.neq.disconnected') {
             return r.status !== 'disconnected';
           }
-          if (clause === 'metadata->>scheduled.eq.true') {
-            return (r.metadata as Row | null)?.scheduled === true;
+          if (clause === 'metadata->>schedule_paused.eq.paused') {
+            return (
+              (r.metadata as Row | null)?.schedule_paused === 'paused'
+            );
           }
           return false;
         })
@@ -431,8 +434,8 @@ describe('Instagram Schedule API — Supabase path', () => {
     const json = await res.json();
     expect(json.error).toMatch(/limit of 1/);
     // The cap count query itself must filter scheduled-only:
-    // section = 'schedule' plus the .or() tiebreaker (not a
-    // removed stub), never the bare scheduled flag.
+    // section = 'schedule' plus the paused-marker .or()
+    // tiebreaker (not a removed stub), never the bare scheduled flag.
     const countCall = state.calls.find(
       (c) => c.table === 'destinations' && c.head
     );
@@ -443,7 +446,7 @@ describe('Instagram Schedule API — Supabase path', () => {
       )
     ).toBe(true);
     expect(countCall?.or).toBe(
-      'status.neq.disconnected,metadata->>scheduled.eq.true'
+      'status.neq.disconnected,metadata->>schedule_paused.eq.paused'
     );
     // No destination or slot was created or changed.
     expect(
@@ -567,9 +570,9 @@ describe('Instagram Schedule API — Supabase path', () => {
     );
     expect(destFetches.length).toBeGreaterThan(0);
     expect(destFetches.every((c) => c.range !== null)).toBe(true);
-    // Spec 174 1B: scheduled-only now means section = 'schedule'
-    // on the query (the flag is only the disconnected tiebreaker,
-    // applied in memory by isScheduleListMember).
+    // Spec 174 4A: scheduled-only now means section = 'schedule'
+    // on the query (the paused marker is only the disconnected
+    // tiebreaker, applied in memory by isScheduleListMember).
     expect(
       destFetches.every((c) =>
         c.filters.some(

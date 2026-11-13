@@ -205,7 +205,8 @@ describe('Instagram Schedule API', () => {
       capturedSql.some(
         (sql) =>
           sql.includes("platform = 'instagram'") &&
-          sql.includes("metadata->>'scheduled' = 'true'")
+          sql.includes("d.section = 'schedule'") &&
+          sql.includes("d.metadata->>'schedule_paused' = 'paused'")
       )
     ).toBe(true);
     expect(

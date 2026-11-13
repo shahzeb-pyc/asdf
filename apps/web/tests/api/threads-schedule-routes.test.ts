@@ -376,7 +376,7 @@ describe('Threads Schedule detail, pause/resume/remove', () => {
     expect((db.destinations[0]?.metadata as Record<string, unknown>)?.threads_schedule_status).toBeUndefined();
   });
 
-  it('refuses to resume a plain-disconnected or error destination, and an expired account', async () => {
+  it('a plain-disconnected destination is no longer a member (404); refuses to resume an error destination and an expired account', async () => {
     const plain = baseDb({ destinations: [destinationRow({ status: 'disconnected', metadata: { threads_schedule_added_at: '2026-01-01T00:00:00.000Z' } })] });
     useFake(plain);
     const plainRes = await detailPatch(
@@ -385,8 +385,12 @@ describe('Threads Schedule detail, pause/resume/remove', () => {
       }),
       params('acme', { scheduleId: DEST })
     );
-    expect(plainRes.status).toBe(409);
-    expect((await plainRes.json()).error).toBe('ACCOUNT_DISCONNECTED');
+    // Spec 174 Phase 4: membership is the section column now, so a
+    // plain-disconnected row is not a Schedule member at all and
+    // reads as not found — the 409 ACCOUNT_DISCONNECTED guard is
+    // for members in 'error' (below), not for removed stubs.
+    expect(plainRes.status).toBe(404);
+    expect((await plainRes.json()).error).toBe('Scheduled account not found');
     expect(plain.destinations[0]?.status).toBe('disconnected');
 
     const errDb = baseDb({ destinations: [destinationRow({ status: 'error' })] });
