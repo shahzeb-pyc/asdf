@@ -274,12 +274,13 @@ let db: ReturnType<typeof makeDb>;
 
 /**
  * In-memory emulation of the instagram_adu_hub_list /
- * instagram_adu_hub_stats RPCs (20261113130000): same predicates as
- * the SQL — workspace + Instagram ADU destination join, status
- * filter, ILIKE search over source_username / destination name /
- * external id, follower sorts, limit clamped 1–50, offset >= 0 —
- * with total_count on every list row, and the stats sums over the
- * same filtered set.
+ * instagram_adu_hub_stats RPCs (20261113130000, hide predicate from
+ * 20261113150000): same predicates as the SQL — workspace + Instagram
+ * ADU destination join, disconnected destinations excluded except
+ * paused ones (the Pages rule), status filter, ILIKE search over
+ * source_username / destination name / external id, follower sorts,
+ * limit clamped 1–50, offset >= 0 — with total_count on every list
+ * row, and the stats sums over the same filtered set.
  */
 function igHubFiltered(args: {
   p_workspace_id: string;
@@ -289,11 +290,15 @@ function igHubFiltered(args: {
   const destById = new Map(db.destinations.map((d) => [d.id as string, d]));
   let rows = db.adu_configs.filter((c) => {
     const d = destById.get(c.destination_id as string);
+    const metadata = (d?.metadata ?? {}) as { fb_status?: string };
     return (
       c.workspace_id === args.p_workspace_id &&
       d !== undefined &&
       d.platform === 'instagram' &&
-      d.section === 'adu'
+      d.section === 'adu' &&
+      // Hide-disconnected rule (20261113150000, the Pages rule):
+      // disconnected destinations are excluded, except paused ones.
+      (d.status !== 'disconnected' || metadata.fb_status === 'paused')
     );
   });
   if (args.p_status) rows = rows.filter((c) => c.status === args.p_status);
@@ -487,6 +492,132 @@ describe('Instagram ADU hub route', () => {
     const body = await res.json();
     expect(body.total).toBe(0);
     expect(body.configs).toHaveLength(0);
+  });
+
+  it('hides a disconnected Instagram destination from the list, stats, and total', async () => {
+    db.destinations.push({
+      id: '77777777-7777-4777-8777-777777777777',
+      workspace_id: 'ws-1',
+      platform: 'instagram',
+      name: 'Disconnected IG',
+      external_destination_id: '17841400008460099',
+      avatar_url: null,
+      status: 'disconnected',
+      section: 'adu',
+      account_id: '55555555-5555-4555-8555-555555555555',
+      handle: 'discig',
+      metadata: {},
+      social_accounts: { display_name: 'Disconnected IG', avatar_url: null },
+    });
+    db.adu_configs.push({
+      id: '88888888-8888-4888-8888-888888888888',
+      workspace_id: 'ws-1',
+      destination_id: '77777777-7777-4777-8777-777777777777',
+      source_platform: 'instagram',
+      source_username: 'creator_disc',
+      timezone: 'Asia/Karachi',
+      posts_per_day: 1,
+      schedule_type: 'dailyrandom',
+      posting_times: [],
+      status: 'active',
+      sync_status: 'synced',
+      starting_followers: 100,
+      current_followers: 100,
+      created_at: '2026-10-22T00:00:00.000Z',
+      display_name: null,
+    });
+    const res = await hubGET(hubRequest(''), { params: Promise.resolve({ subdomain: 'acme' }) } as never);
+    const body = await res.json();
+    expect(body.total).toBe(1);
+    expect(body.configs).toHaveLength(1);
+    expect(body.configs[0].id).toBe('33333333-3333-4333-8333-333333333333');
+    // Stats are over the visible set only — the disconnected config's
+    // followers never leak in.
+    expect(body.stats).toEqual({ totalPages: 1, followersGained: 250, totalFollowers: 1250 });
+    // The RPC applies the same predicate on the search path, so
+    // searching for the disconnected source finds nothing either.
+    const searched = await hubGET(hubRequest('?q=creator_disc'), { params: Promise.resolve({ subdomain: 'acme' }) } as never);
+    const searchedBody = await searched.json();
+    expect(searchedBody.total).toBe(0);
+    expect(searchedBody.configs).toHaveLength(0);
+  });
+
+  it('keeps a paused Instagram destination listed, like the Pages section', async () => {
+    db.destinations.push({
+      id: '77777777-7777-4777-8777-777777777777',
+      workspace_id: 'ws-1',
+      platform: 'instagram',
+      name: 'Paused IG',
+      external_destination_id: '17841400008460098',
+      avatar_url: null,
+      status: 'disconnected',
+      section: 'adu',
+      account_id: '55555555-5555-4555-8555-555555555555',
+      handle: 'pausedig',
+      metadata: { fb_status: 'paused' },
+      social_accounts: { display_name: 'Paused IG', avatar_url: null },
+    });
+    db.adu_configs.push({
+      id: '88888888-8888-4888-8888-888888888888',
+      workspace_id: 'ws-1',
+      destination_id: '77777777-7777-4777-8777-777777777777',
+      source_platform: 'instagram',
+      source_username: 'creator_paused',
+      timezone: 'Asia/Karachi',
+      posts_per_day: 1,
+      schedule_type: 'dailyrandom',
+      posting_times: [],
+      status: 'active',
+      sync_status: 'synced',
+      starting_followers: 200,
+      current_followers: 300,
+      created_at: '2026-10-22T00:00:00.000Z',
+      display_name: null,
+    });
+    const res = await hubGET(hubRequest(''), { params: Promise.resolve({ subdomain: 'acme' }) } as never);
+    const body = await res.json();
+    expect(body.total).toBe(2);
+    expect(body.configs.map((c: Row) => c.id)).toContain('88888888-8888-4888-8888-888888888888');
+    expect(body.stats).toEqual({ totalPages: 2, followersGained: 350, totalFollowers: 1550 });
+  });
+
+  it('keeps an error Instagram destination listed, like the Pages section', async () => {
+    db.destinations.push({
+      id: '77777777-7777-4777-8777-777777777777',
+      workspace_id: 'ws-1',
+      platform: 'instagram',
+      name: 'Error IG',
+      external_destination_id: '17841400008460097',
+      avatar_url: null,
+      status: 'error',
+      section: 'adu',
+      account_id: '55555555-5555-4555-8555-555555555555',
+      handle: 'errorig',
+      metadata: {},
+      social_accounts: { display_name: 'Error IG', avatar_url: null },
+    });
+    db.adu_configs.push({
+      id: '88888888-8888-4888-8888-888888888888',
+      workspace_id: 'ws-1',
+      destination_id: '77777777-7777-4777-8777-777777777777',
+      source_platform: 'instagram',
+      source_username: 'creator_error',
+      timezone: 'Asia/Karachi',
+      posts_per_day: 1,
+      schedule_type: 'dailyrandom',
+      posting_times: [],
+      status: 'active',
+      sync_status: 'synced',
+      starting_followers: 50,
+      current_followers: 40,
+      created_at: '2026-10-22T00:00:00.000Z',
+      display_name: null,
+    });
+    const res = await hubGET(hubRequest(''), { params: Promise.resolve({ subdomain: 'acme' }) } as never);
+    const body = await res.json();
+    expect(body.total).toBe(2);
+    expect(body.configs.map((c: Row) => c.id)).toContain('88888888-8888-4888-8888-888888888888');
+    expect(body.stats).toEqual({ totalPages: 2, followersGained: 250, totalFollowers: 1290 });
   });
 
   it('single create succeeds for an Instagram account (spec 174 2A: posts the account id, config attaches to the adu copy)', async () => {
