@@ -450,6 +450,11 @@ describe('section-scoped usage (spec 174 PR 2B)', () => {
     if (schedRow) schedRow['status'] = 'disconnected';
     expect(await getUsageCount(client, 'user-1', 'facebook')).toBe(1);
     expect(tables['subscription_usage']).toHaveLength(2);
+
+    // Reconnecting is a status flip, not a re-registration: the row
+    // was never deleted, so the count comes back on its own.
+    if (schedRow) schedRow['status'] = 'active';
+    expect(await getUsageCount(client, 'user-1', 'facebook')).toBe(2);
   });
 
   it('release frees only its section\'s row', async () => {
