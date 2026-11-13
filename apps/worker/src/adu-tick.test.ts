@@ -360,6 +360,14 @@ describe('runAduTick', () => {
       if (!op) return [];
       return op.args[1] as string[];
     };
+    // Regression guardrail: never stringify a possibly-falsy id
+    // without a guard. Every row in this fake carries an id by
+    // construction; a missing one fails loudly instead of matching
+    // the string "undefined".
+    const requireId = (row: Row): string => {
+      if (!row.id) throw new InternalError('head-of-line test: row without id');
+      return String(row.id);
+    };
     const db = makeDb((table, ops) => {
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
@@ -367,7 +375,7 @@ describe('runAduTick', () => {
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
         const ids = inList(ops, 'id');
         return {
-          data: jobs.filter((j) => ids.includes(String(j.id)) && j.status === 'pending_publish'),
+          data: jobs.filter((j) => ids.includes(requireId(j)) && j.status === 'pending_publish'),
           error: null,
         };
       }
@@ -397,7 +405,7 @@ describe('runAduTick', () => {
           .sort(
             (a, b) =>
               String(a.created_at).localeCompare(String(b.created_at)) ||
-              String(a.id).localeCompare(String(b.id)),
+              requireId(a).localeCompare(requireId(b)),
           );
         const after = gte
           ? sorted.filter((j) => String(j.created_at) >= String(gte.args[1]))
@@ -406,7 +414,7 @@ describe('runAduTick', () => {
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
         const ids = inList(ops, 'id');
-        return { data: configs.filter((c) => ids.includes(String(c.id))), error: null };
+        return { data: configs.filter((c) => ids.includes(requireId(c))), error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
         return {
@@ -427,7 +435,7 @@ describe('runAduTick', () => {
       if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
         const ids = inList(ops, 'id');
         return {
-          data: destinations.filter((d) => ids.includes(String(d.id))),
+          data: destinations.filter((d) => ids.includes(requireId(d))),
           error: null,
         };
       }
@@ -440,7 +448,7 @@ describe('runAduTick', () => {
       if (table === 'destinations') return { data: [], error: null };
       if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
         const ids = inList(ops, 'id');
-        return { data: accounts.filter((a) => ids.includes(String(a.id))), error: null };
+        return { data: accounts.filter((a) => ids.includes(requireId(a))), error: null };
       }
       if (table === 'social_accounts' && ops.some((o) => o.kind === 'maybeSingle')) {
         return {
