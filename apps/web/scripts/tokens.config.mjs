@@ -210,7 +210,7 @@ function formatThemeTs({ dictionary }) {
 // ============================================================================
 
 export const PALETTE = {
-  /** Dominant brand keystone — primary buttons, active moments (14.86:1 AAA on black) */
+  /** Dominant brand keystone — primary buttons, active moments (19.18:1 AAA on black) */
   primary: ${q('color.brand.gold')},
   /** Secondary highlight — links, callouts, active underline tabs */
   accent1: ${q('color.brand.peru')},

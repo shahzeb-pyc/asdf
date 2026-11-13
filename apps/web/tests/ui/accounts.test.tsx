@@ -140,7 +140,7 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
         getAccountHealthSignal(getAccountHealth({ status: 'active' }))
       ).toBe('operational');
       expect(STATUS_SIGNALS.operational.color).toBe('#4ade80');
-      expect(STATUS_SIGNALS.queued.color).toBe('#FFD300');
+      expect(STATUS_SIGNALS.queued.color).toBe('#FFFC00');
       expect(STATUS_SIGNALS.critical.color).toBe('#f87171');
       expect(
         isTokenExpiringSoon({

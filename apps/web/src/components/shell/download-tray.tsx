@@ -312,7 +312,7 @@ function TrayPill({ failedCount, aggregatePercent, onExpand }: Readonly<TrayPill
       type="button"
       data-testid="download-tray-pill"
       onClick={onExpand}
-      className="fixed right-4 bottom-4 z-dialog rounded-full bg-primary px-4 py-2 text-metadata font-semibold text-on-primary shadow-modal"
+      className="fixed right-4 bottom-4 z-dialog rounded-full border border-link bg-primary px-4 py-2 text-metadata font-semibold text-on-primary shadow-modal"
     >
       {failedCount > 0 ? (
         <span className="text-brand-rose">

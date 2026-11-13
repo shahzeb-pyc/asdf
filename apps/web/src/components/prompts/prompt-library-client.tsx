@@ -152,7 +152,7 @@ function EmptyStateIcon({ children }: { children: React.ReactNode }) {
   return (
     <div
       aria-hidden
-      className="mb-2 flex size-14 items-center justify-center rounded-full bg-primary text-on-primary"
+      className="mb-2 flex size-14 items-center justify-center rounded-full border border-link bg-primary text-on-primary"
     >
       {children}
     </div>

@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { Button } from "./button";
 
 describe("Button", () => {
-  it("renders a real button with the gold primary variant by default", () => {
+  it("renders a real button with the Snap Yellow primary variant by default", () => {
     render(<Button>Publish</Button>);
     const btn = screen.getByRole("button", { name: "Publish" });
     expect(btn).toHaveAttribute("data-variant", "default");

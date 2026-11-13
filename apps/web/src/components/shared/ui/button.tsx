@@ -2,8 +2,11 @@
 
 /**
  * Button — shadcn base (cva variants + Radix Slot for asChild), adapted:
- * - Styling: token-backed utilities only. Primary is the Binance gold-on-black
- *   pairing (bg-primary / text-on-primary); shadcn's default theme is gone.
+ * - Styling: token-backed utilities only. Primary is the Snap Yellow-on-black
+ *   pairing (bg-primary / text-on-primary); the 1px border-link border keeps
+ *   the fill visible against the light canvas (spec 181 — Snap Yellow vs canvas
+ *   is ~1.05:1; in dark mode the border is the fill colour, so invisible).
+ *   shadcn's default theme is gone.
  * - Sizes: the compact control-height family (component tokens —
  *   default 36px, lg 40px, sm/icon-sm 32px), the single default density
  *   at every viewport (spec 129 OD-4 as amended, Shahzeb 2026-10-24:
@@ -27,7 +30,7 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-on-primary hover:bg-brand-peru",
+        default: "border border-link bg-primary text-on-primary hover:bg-brand-peru dark:hover:bg-brand-pale",
         destructive: "bg-brand-rose text-neutral-white hover:bg-brand-rose focus-visible:outline-signal-critical",
         outline: "border border-line bg-panel text-ink shadow-card hover:bg-hover",
         secondary: "bg-subtle text-ink hover:bg-hover",

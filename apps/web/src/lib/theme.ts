@@ -12,12 +12,12 @@
 // ============================================================================
 
 export const PALETTE = {
-  /** Dominant brand keystone — primary buttons, active moments (14.86:1 AAA on black) */
-  primary: '#FFD300',
+  /** Dominant brand keystone — primary buttons, active moments (19.18:1 AAA on black) */
+  primary: '#FFFC00',
   /** Secondary highlight — links, callouts, active underline tabs */
-  accent1: '#cca900',
+  accent1: '#FCF000',
   /** Deep bronze — tertiary highlight, active tab borders, deep pressed states */
-  accent2: '#766018',
+  accent2: '#716400',
   /** Rose / Danger — negative status, error states, sell indicator, critical alerts */
   accent3: '#dc2626',
   /** Emerald / Success — positive status, operational states, buy indicator, success */
@@ -102,9 +102,9 @@ export const STATUS_SIGNALS = {
     label: 'Operational',
   },
   queued: {
-    color: '#FFD300',
-    dot: '#FFD300',
-    halo: '0 0 8px rgba(255, 211, 0, 0.50)',
+    color: '#FFFC00',
+    dot: '#FFFC00',
+    halo: '0 0 8px rgba(255, 252, 0, 0.50)',
     label: 'Queued',
   },
   critical: {
@@ -170,14 +170,14 @@ export const DARK_THEME: ThemeTokens = {
   borders: {
     hairline: '#292524',
     strong: '#44403c',
-    focus: 'rgba(255, 211, 0, 0.35)',
+    focus: '#FFFC00',
   },
   text: {
     primary: '#fafaf9',
     secondary: '#d6d3d1',
     muted: '#a8a29e',
-    onPrimary: '#181a20',
-    link: '#FFD300',
+    onPrimary: '#000000',
+    link: '#FFFC00',
   },
   shadows: {
     card: '0 2px 8px rgba(0, 0, 0, 0.60)',
@@ -201,15 +201,15 @@ export const LIGHT_THEME: ThemeTokens = {
   },
   borders: {
     hairline: '#e7e5e4',
-    strong: '#d6d3d1',
-    focus: 'rgba(255, 211, 0, 0.35)',
+    strong: '#D9D9D9',
+    focus: '#716400',
   },
   text: {
     primary: '#1c1917',
     secondary: '#57534e',
     muted: '#78716c',
-    onPrimary: '#181a20',
-    link: '#766018',
+    onPrimary: '#000000',
+    link: '#716400',
   },
   shadows: {
     card: '0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.02)',

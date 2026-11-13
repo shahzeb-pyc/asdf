@@ -10,19 +10,21 @@
   --breakpoint-sm: 640px;
   --breakpoint-xl: 1280px;
   --color-alpha-emerald-halo: rgba(74, 222, 128, 0.50);
-  --color-alpha-gold-focus: rgba(255, 211, 0, 0.35);
-  --color-alpha-gold-halo: rgba(255, 211, 0, 0.50);
+  --color-alpha-gold-halo: rgba(255, 252, 0, 0.50);
   --color-alpha-idle-halo: rgba(120, 113, 108, 0.40);
   --color-alpha-rose-halo: rgba(248, 113, 113, 0.50);
   --color-border-dark-hairline: #292524;
+  --color-border-dark-input: #A8A29E;
   --color-border-dark-strong: #44403c;
   --color-border-light-hairline: #e7e5e4;
-  --color-border-light-strong: #d6d3d1;
-  --color-brand-bronze: #766018;
+  --color-border-light-input: #78716C;
+  --color-border-light-strong: #D9D9D9;
+  --color-brand-bronze: #716400;
   --color-brand-emerald: #0ecb81;
   --color-brand-facebook: #1877f2;
-  --color-brand-gold: #FFD300;
-  --color-brand-peru: #cca900;
+  --color-brand-gold: #FFFC00;
+  --color-brand-pale: #FEFF85;
+  --color-brand-peru: #FCF000;
   --color-brand-rose: #dc2626;
   --color-gray-300: #d6d3d1;
   --color-gray-400: #a8a29e;
@@ -36,8 +38,28 @@
   --color-status-critical-dark: #f87171;
   --color-status-critical-on-tint-dark: #fecaca;
   --color-status-critical-on-tint-light: #b91c1c;
+  --color-status-critical-soft-dark: #422E2D;
+  --color-status-critical-soft-light: #FEF2F2;
+  --color-status-critical-solid-dark: #EF4444;
+  --color-status-critical-solid-light: #DC2626;
+  --color-status-info-dark: #60A5FA;
+  --color-status-info-light: #1D4ED8;
+  --color-status-info-soft-dark: #30343E;
+  --color-status-info-soft-light: #EFF6FF;
+  --color-status-info-solid-dark: #3B82F6;
+  --color-status-info-solid-light: #2563EB;
   --color-status-success-dark: #4ade80;
   --color-status-success-light: #15803d;
+  --color-status-success-soft-dark: #2D3B2F;
+  --color-status-success-soft-light: #F0FDF4;
+  --color-status-success-solid-dark: #22C55E;
+  --color-status-success-solid-light: #16A34A;
+  --color-status-warning-dark: #FB923C;
+  --color-status-warning-light: #C2410C;
+  --color-status-warning-soft-dark: #422E22;
+  --color-status-warning-soft-light: #FFF7ED;
+  --color-status-warning-solid-dark: #F97316;
+  --color-status-warning-solid-light: #EA580C;
   --color-surface-dark-active: #57534e;
   --color-surface-dark-canvas: #0c0a09;
   --color-surface-dark-hover: #44403c;
@@ -49,7 +71,7 @@
   --color-surface-light-subtle: #f5f5f4;
   --color-text-dark-primary: #fafaf9;
   --color-text-light-primary: #1c1917;
-  --color-text-on-primary: #181a20;
+  --color-text-on-primary: #000000;
   --component-control-height: 36px;
   --component-control-height-lg: 40px;
   --component-control-height-sm: 32px;
@@ -131,7 +153,7 @@
 
 /* Semantic tokens — dark */
 :root, [data-theme="dark"] {
-  --border-focus: rgba(255, 211, 0, 0.35);
+  --border-focus: #FFFC00;
   --border-subtle: #292524;
   --border-strong: #44403c;
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.60);
@@ -142,24 +164,24 @@
   --signal-idle: #a8a29e;
   --signal-idle-dot: #a8a29e;
   --signal-operational: #4ade80;
-  --signal-queued: #FFD300;
+  --signal-queued: #FFFC00;
   --bg-active: #57534e;
   --bg-canvas: #0c0a09;
   --bg-hover: #44403c;
   --bg-panel: #292524;
   --bg-subtle: #1c1917;
-  --text-link: #FFD300;
+  --text-link: #FFFC00;
   --text-dim: #a8a29e;
-  --text-on-primary: #181a20;
+  --text-on-primary: #000000;
   --text-main: #fafaf9;
   --text-sub: #d6d3d1;
 }
 
 /* Semantic tokens — light */
 [data-theme="light"] {
-  --border-focus: rgba(255, 211, 0, 0.35);
+  --border-focus: #716400;
   --border-subtle: #e7e5e4;
-  --border-strong: #d6d3d1;
+  --border-strong: #D9D9D9;
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.02);
   --shadow-elevated: 0 4px 12px -2px rgba(0, 0, 0, 0.08);
   --shadow-modal: 0 20px 32px -4px rgba(0, 0, 0, 0.12);
@@ -168,15 +190,15 @@
   --signal-idle: #78716c;
   --signal-idle-dot: #78716c;
   --signal-operational: #15803d;
-  --signal-queued: #766018;
+  --signal-queued: #716400;
   --bg-active: #e7e5e4;
   --bg-canvas: #fafaf9;
   --bg-hover: #f5f5f4;
   --bg-panel: #ffffff;
   --bg-subtle: #f5f5f4;
-  --text-link: #766018;
+  --text-link: #716400;
   --text-dim: #78716c;
-  --text-on-primary: #181a20;
+  --text-on-primary: #000000;
   --text-main: #1c1917;
   --text-sub: #57534e;
 }
