@@ -69,7 +69,7 @@ export const RADII = {
 // ============================================================================
 
 export const TYPOGRAPHY = {
-  fontFamily: 'var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  fontFamily: 'var(--font-manrope), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
   mono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
   fontFeatureSettings: "'cv02', 'cv03', 'cv04', 'cv11'",
   tabularNums: 'tabular-nums',
