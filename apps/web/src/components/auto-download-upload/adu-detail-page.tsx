@@ -380,6 +380,24 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(null);
   const [failedAccountAvatarUrl, setFailedAccountAvatarUrl] = React.useState<string | null>(null);
 
+  // Return links carry the hub query state (pagination step 3): the
+  // hub card carries `?q=&status=&sort=&page=` through to this page's
+  // URL, and the breadcrumb / "Back to Hub" links re-attach it, so
+  // opening a page from hub page 2 returns to hub page 2 — not page 1.
+  // Only the four hub keys are carried (`tab` and anything else are
+  // dropped); the hub re-validates them on mount, so no validation is
+  // needed here. Tab switches already preserve the full query string.
+  // This hook sits above the loading early-returns below: hooks must
+  // run unconditionally on every render.
+  const hubQuery = React.useMemo(() => {
+    const params = new URLSearchParams();
+    for (const key of ['q', 'status', 'sort', 'page'] as const) {
+      const value = searchParams.get(key);
+      if (value !== null && value !== '') params.set(key, value);
+    }
+    return params.toString();
+  }, [searchParams]);
+
   const base = buildTenantApiPath(subdomain, `/auto-download-upload/${configId}`);
 
   const applyConfig = React.useCallback((next: ConfigView) => {
@@ -603,7 +621,7 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   const currentFollowers = config.followersGained;
   const netGained = currentFollowers - config.followersCount;
   const statusAlert = getAduDetailStatusAlert(config.status, config.syncStatus);
-  const hubHref = `/tenant/${subdomain}/auto-download-upload`;
+  const hubHref = `/tenant/${subdomain}/auto-download-upload${hubQuery ? `?${hubQuery}` : ''}`;
 
   const metaItems: React.ReactNode[] = [
     <StatusMark key="status" kind={statusKind} label={config.displayStatus} testId="adu-detail-status-mark" />,

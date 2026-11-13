@@ -374,7 +374,7 @@ const ADU_RING_CLASSES: Record<AduStatusMarkKind, string> = {
  * stays independently clickable via stopPropagation) — page-card
  * behaviour exactly.
  */
-function AduPageCard({ config, subdomain }: { config: AduConfigView; subdomain: string }) {
+function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; subdomain: string; hubSearch: string }) {
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(null);
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -386,7 +386,12 @@ function AduPageCard({ config, subdomain }: { config: AduConfigView; subdomain: 
   const showAvatarImg =
     Boolean(config.destinationAvatarUrl) &&
     failedAvatarUrl !== config.destinationAvatarUrl;
-  const targetHref = `/tenant/${subdomain}/auto-download-upload/${config.id}`;
+  // Return-links state (pagination step 3): the card carries the hub's
+  // current query through to the detail URL, so the detail page's
+  // breadcrumb / "Back to Hub" links can re-attach it. `hubSearch` is
+  // already serialised with defaults omitted, so an unfiltered page-1
+  // hub still links to a bare detail URL.
+  const targetHref = `/tenant/${subdomain}/auto-download-upload/${config.id}${hubSearch ? `?${hubSearch}` : ''}`;
 
   // Followers semantics, verified from code: `adu_hub_stats` sums
   // `current_followers` as the total and `current_followers minus
@@ -817,6 +822,9 @@ function AduHubPageInner({ subdomain }: { subdomain: string }) {
   const configs = listQuery.data?.configs ?? [];
   const totalPages = listQuery.data?.totalPages ?? 0;
   const migrationMissing = listQuery.data?.migrationMissing ?? false;
+  // The hub query the cards carry through to the detail page
+  // (pagination step 3): serialised from live state, defaults omitted.
+  const hubSearch = buildAduHubSearchParams({ q: searchQuery, status: statusFilter, sort, page }).toString();
   const stats = statsQuery.data ?? EMPTY_ADU_HUB_STATS;
   // `isPending` is true only while no data exists at all: a page turn
   // serves placeholder data, so the list never blanks mid-flight.
@@ -892,7 +900,7 @@ function AduHubPageInner({ subdomain }: { subdomain: string }) {
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {configs.map((config) => (
-              <AduPageCard key={config.id} config={config} subdomain={subdomain} />
+              <AduPageCard key={config.id} config={config} subdomain={subdomain} hubSearch={hubSearch} />
             ))}
           </div>
           {totalPages > 1 ? (

@@ -358,6 +358,23 @@ describe('AduHubPage card navigation (pagination step 2)', () => {
     expect(navState.push).toHaveBeenCalledWith('/tenant/testws/auto-download-upload/cfg-a');
     expect(window.location.href).toBe(hrefBefore);
   });
+
+  it('carries the hub query through to the detail URL on page 2 with filters', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('stats=only')) return jsonResponse(statsBody());
+        return jsonResponse(listBody([config()], 2));
+      }),
+    );
+    renderHub('?page=2&status=Active&q=ellie&sort=Most+Followers');
+    const card = await screen.findByTestId('adu-page-card-cfg-a');
+    expect(screen.getByText('Page 2 of 2')).toBeTruthy();
+    const expected = '/tenant/testws/auto-download-upload/cfg-a?q=ellie&status=Active&sort=Most+Followers&page=2';
+    expect(card.getAttribute('data-href')).toBe(expected);
+    fireEvent.click(card);
+    expect(navState.push).toHaveBeenCalledWith(expected);
+  });
 });
 
 describe('AduHubPage create (F12)', () => {
