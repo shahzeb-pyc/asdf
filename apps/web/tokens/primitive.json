@@ -549,16 +549,16 @@
     }
   },
   "space": {
-    "$description": "Spacing ladder — 4/8 system (spec 129 §5.2). The xs–xxxl steps mirror the legacy SPACING export; section/page steps extend the ladder to 64/96.",
+    "$description": "Spacing ladder — Balanced scale (spec 182; re-pinned from the spec 129 §5.2 4/8 system). The xs–xxxl steps mirror the legacy SPACING export; section/page steps extend the ladder to 64/96.",
     "lg": {
       "$description": "Standard container padding, card inner margins",
       "$type": "dimension",
-      "$value": "16px"
+      "$value": "20px"
     },
     "md": {
       "$description": "Standard control padding X",
       "$type": "dimension",
-      "$value": "12px"
+      "$value": "16px"
     },
     "page": {
       "$description": "Page-level separation",
@@ -573,7 +573,7 @@
     "sm": {
       "$description": "Compact element spacing, input internal padding Y",
       "$type": "dimension",
-      "$value": "8px"
+      "$value": "10px"
     },
     "xl": {
       "$description": "Card sectional gap, grid gutters",

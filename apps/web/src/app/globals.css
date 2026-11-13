@@ -133,6 +133,23 @@
      base); the named ladder stays available as var(--space-*) for
      hand-written CSS. */
 
+  /* Named spacing utilities (spec 182 fix round) — surface-named
+     aliases of the space ladder, so the key surfaces consume the
+     tokens instead of numeric utilities on the 4px base. Named after
+     the SURFACE, not the step: step-named keys (--spacing-md etc.)
+     would silently re-map max-w-md and friends (see the note above).
+     Pure var() aliases, no copied values:
+       card → lg 20px (page cards), row → md 16px (picker list rows),
+       nav → sm 10px (sidebar nav item), page → xxl 32px (page
+       container, desktop), grid → md 16px (stats grids),
+       stack → xl 24px (section stack). */
+  --spacing-card: var(--space-lg);
+  --spacing-row: var(--space-md);
+  --spacing-nav: var(--space-sm);
+  --spacing-page: var(--space-xxl);
+  --spacing-grid: var(--space-md);
+  --spacing-stack: var(--space-xl);
+
   /* Container scale (max-w-*) — its own token family, see tokens. */
   --container-xs: var(--container-xs);
   --container-sm: var(--container-sm);

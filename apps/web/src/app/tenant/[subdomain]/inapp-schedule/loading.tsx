@@ -12,7 +12,7 @@ export default function InAppScheduleLoading() {
     <div
       aria-busy="true"
       aria-label="Loading pages"
-      className="mx-auto flex w-full max-w-300 flex-col gap-6 px-6 py-6"
+      className="mx-auto flex w-full max-w-300 flex-col gap-6 px-6 py-6 sm:px-page sm:py-page"
     >
       <div className="flex items-center justify-between gap-4">
         <Skeleton className="h-8 w-40" />

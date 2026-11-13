@@ -817,7 +817,7 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                         <label
                           key={account.id}
                           className={cn(
-                            'flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-sm px-3.5 py-3 outline-none transition-colors hover:bg-hover sm:gap-4',
+                            'flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-sm px-row py-row outline-none transition-colors hover:bg-hover sm:gap-4',
                             checked && 'bg-hover'
                           )}
                         >
@@ -852,7 +852,7 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                     return (
                       <div
                         key={account.id}
-                        className="flex items-center justify-between gap-3 rounded-sm px-3.5 py-3 opacity-55 sm:gap-4"
+                        className="flex items-center justify-between gap-3 rounded-sm px-row py-row opacity-55 sm:gap-4"
                       >
                         <div className="flex min-w-0 items-center gap-4">
                           <Avatar
