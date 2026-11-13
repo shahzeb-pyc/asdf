@@ -16,10 +16,10 @@ Proves the ADU RPC hardening from `supabase/migrations/20261030140000_adu_rpc_ha
   unstamped config reads null, so the Facebook hub route can hand
   the value to `buildAduConfigView`.
 - Re-applying the current hub-RPC definitions
-  (`20261111010000_insights_worker_daily_followers.sql`, spec 162) is
-  idempotent and the grants still hold afterwards. (The 20261030140000
-  hardening file itself is no longer re-appliable as a whole: its hub
-  RPCs carry the pre-rename return type.)
+  (`20261113170000_adu_hub_platform.sql`, F21) is
+  idempotent and the grants still hold afterwards. (The 20261111010000
+  spec-162 block is no longer re-appliable: its old-signature hub
+  RPCs would resurrect the six old functions as overloads.)
 
 The RPCs are intentionally global for the service-side claim loop
 (lowest-buffered config first, SKIP LOCKED), so no in-function

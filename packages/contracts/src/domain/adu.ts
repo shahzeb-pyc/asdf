@@ -783,6 +783,56 @@ export const AduConfigCountsSchema = z.object({
 });
 export type AduConfigCounts = z.infer<typeof AduConfigCountsSchema>;
 
+/**
+ * One row of the unified `adu_hub_list` (ADU optimization F21): the
+ * Facebook superset shape — every platform's hub list returns it,
+ * Threads callers ignore the extra followers_updated_at column.
+ * Validated at the RPC boundary in the three hub list routes before
+ * any consumer reads a row — a shape change must fail loud, never
+ * render as a wrong hub. Ids are non-empty strings, not .uuid(),
+ * for the same reason as AduConfigCountsSchema (the fakes use short
+ * ids); total_count is the window count over the filtered set.
+ */
+export const AduHubListRowSchema = z
+  .object({
+    id: z.string().min(1),
+    workspace_id: z.string().min(1),
+    destination_id: z.string().min(1),
+    source_platform: AduSourcePlatformSchema,
+    source_username: z.string(),
+    timezone: z.string(),
+    posts_per_day: z.number().int(),
+    schedule_type: z.enum(['dailyrandom', 'fixed']),
+    posting_times: z.array(z.string()),
+    status: AduConfigStatusSchema,
+    sync_status: AduSyncStatusSchema,
+    starting_followers: z.number().int(),
+    current_followers: z.number().int(),
+    followers_updated_at: z.string().nullable(),
+    display_name: z.string().nullable(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    total_count: z.number().int().nonnegative(),
+  })
+  .passthrough();
+export type AduHubListRow = z.infer<typeof AduHubListRowSchema>;
+
+/**
+ * The one row of the unified `adu_hub_stats` (F21): total_count is
+ * the filtered config count, total_followers_sum the sum of
+ * current_followers, net_gained_sum the sum of net growth floored
+ * at 0 per config. Validated at the RPC boundary alongside the list
+ * rows; a malformed stats row reads as a stats failure (logged and
+ * zeroed on the default path, loud on stats=only), never as wrong
+ * numbers.
+ */
+export const AduHubStatsRowSchema = z.object({
+  total_count: z.number().int().nonnegative(),
+  total_followers_sum: z.number().int().nonnegative(),
+  net_gained_sum: z.number().int().nonnegative(),
+});
+export type AduHubStatsRow = z.infer<typeof AduHubStatsRowSchema>;
+
 export const AduReelRowSchema = z
   .object({
     id: z.string().uuid(),

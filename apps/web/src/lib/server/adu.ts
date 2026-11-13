@@ -11,8 +11,12 @@ import {
   getTokenEncryptionKey,
   sanitizeSourceIdentity,
   AduConfigCountsSchema,
+  AduHubListRowSchema,
+  AduHubStatsRowSchema,
   type AduConfigCounts,
   type AduConfigRow,
+  type AduHubListRow,
+  type AduHubStatsRow,
   type AduSourcePlatform,
 } from '@fbuploadpro/contracts';
 import { authenticateTenantRoute, getRouteSupabase } from '@/lib/route-auth';
@@ -300,106 +304,30 @@ export function aduRpcMissing(error: { code?: string } | null | undefined): bool
   return error?.code === '42P01' || error?.code === '42883' || error?.code === 'PGRST202';
 }
 
-export interface AduOptionsLists {
-  accounts: Array<Record<string, unknown>>;
-  pages: Array<Record<string, unknown>>;
-  configured: Array<Record<string, unknown>>;
-  migrationMissing: boolean;
-}
-
-interface PageResult<T> {
-  data: T[] | null;
-  error: { message?: string; code?: string } | null;
-}
-
 /**
- * PostgREST silently truncates an unbounded select at 1,000 rows, so a
- * picker that loads "all" accounts/pages/configs drops rows past 1,000
- * with no error. Range pages (deterministic order, 1,000/page) keep
- * every row reachable at any workspace size.
+ * Hub list/stats rows from the unified `adu_hub_list` / `adu_hub_stats`
+ * (F21): validated against the contracts schemas at this boundary —
+ * a shape change fails loud, never renders as a wrong hub. Returns
+ * null on the first invalid row (the caller logs and turns it into a
+ * 500 for the list, or into a stats failure for stats). A stats RPC
+ * always returns exactly one row; zero rows is a failure, not zeros.
  */
-async function selectAllPages<T>(
-  page: (from: number, to: number) => PromiseLike<PageResult<T>>,
-): Promise<{ rows: T[]; error: PageResult<T>['error'] }> {
-  const rows: T[] = [];
-  const PAGE_SIZE = 1000;
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await page(from, from + PAGE_SIZE - 1);
-    if (error) return { rows, error };
-    const batch = data ?? [];
-    rows.push(...batch);
-    if (batch.length < PAGE_SIZE) return { rows, error: null };
+export function parseAduHubListRows(rows: unknown): AduHubListRow[] | null {
+  if (!Array.isArray(rows)) return null;
+  const parsed: AduHubListRow[] = [];
+  for (const row of rows) {
+    const result = AduHubListRowSchema.safeParse(row);
+    if (!result.success) return null;
+    parsed.push(result.data);
   }
+  return parsed;
 }
 
-/**
- * Accounts + managed Facebook pages + already-configured ADU rows for
- * the Add Page picker. Throws on any fatal load failure (the route
- * turns it into a 500) — a transient database error must never render
- * as an empty picker that invites duplicate configs. A missing
- * adu_configs table is NOT fatal: the picker still shows accounts and
- * pages, flagged with migrationMissing, so the UI can say why adding
- * is unavailable instead of failing the whole picker.
- */
-export async function loadAduOptionsLists(
-  supabase: SupabaseClient,
-  workspaceId: string,
-): Promise<AduOptionsLists> {
-  // The three selects are independent — run them concurrently
-  // (adu-opt-a F11). Error precedence is the old sequential order:
-  // accounts first, then pages, then configured.
-  const [accounts, pages, configured] = await Promise.all([
-    selectAllPages<Record<string, unknown>>((from, to) =>
-      supabase
-        .from('social_accounts')
-        .select('id, external_account_id, display_name, avatar_url, status')
-        .eq('workspace_id', workspaceId)
-        .eq('platform', 'facebook')
-        .order('display_name')
-        .range(from, to),
-    ),
-    selectAllPages<Record<string, unknown>>((from, to) =>
-      supabase
-        .from('destinations')
-        .select('id, account_id, external_destination_id, name, avatar_url, status, metadata')
-        .eq('workspace_id', workspaceId)
-        .eq('platform', 'facebook')
-        .eq('section', 'adu')
-        .order('name')
-        .range(from, to),
-    ),
-    selectAllPages<Record<string, unknown>>((from, to) =>
-      supabase
-        .from('adu_configs')
-        .select('destination_id, source_platform, source_username')
-        .eq('workspace_id', workspaceId)
-        .order('destination_id')
-        .range(from, to),
-    ),
-  ]);
-  if (accounts.error) {
-    throw new Error(accounts.error.message ?? 'Could not load Facebook accounts.');
-  }
-  if (pages.error) {
-    throw new Error(pages.error.message ?? 'Could not load Facebook pages.');
-  }
-  if (configured.error) {
-    if (aduMissingTable(configured.error)) {
-      return {
-        accounts: accounts.rows,
-        pages: pages.rows,
-        configured: [],
-        migrationMissing: true,
-      };
-    }
-    throw new Error(configured.error.message ?? 'Could not load configured pages.');
-  }
-  return {
-    accounts: accounts.rows,
-    pages: pages.rows,
-    configured: configured.rows,
-    migrationMissing: false,
-  };
+export function parseAduHubStatsRow(rows: unknown): AduHubStatsRow | null {
+  const row = (rows as Array<unknown> | null)?.[0];
+  if (row === undefined) return null;
+  const result = AduHubStatsRowSchema.safeParse(row);
+  return result.success ? result.data : null;
 }
 
 export interface AduDiscoveredGraphPage {

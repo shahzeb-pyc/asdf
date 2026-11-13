@@ -12,7 +12,7 @@
  * unit per config.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { NextRequest } from 'next/server';
+import { NextRequest } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const mocks = vi.hoisted(() => ({
@@ -53,7 +53,8 @@ vi.mock('@/lib/server-analytics', () => ({
   logServerError: vi.fn(),
 }));
 
-import { POST } from './route';
+import { GET, POST } from './route';
+import { loadThreadsAduConfigView } from '@/lib/server/threads-adu';
 
 type Row = Record<string, unknown>;
 
@@ -540,5 +541,126 @@ describe('POST /threads/auto-download-upload (plan-check B1)', () => {
     });
     expect(tables['adu_configs']).toHaveLength(1);
     expect(tables['subscription_usage']).toHaveLength(1);
+  });
+});
+
+/**
+ * Threads ADU hub list GET (F21 unified pair).
+ *
+ * The route lists through the unified adu_hub_list / adu_hub_stats
+ * RPCs, called with p_platform 'threads' — the old threads_adu_hub_*
+ * pair is dropped by the F21 migration. Only the tenant context is
+ * mocked; loadThreadsAduConfigView is the mocked view loader.
+ */
+function hubRow(id: string, followers: number): Row {
+  return {
+    id,
+    workspace_id: 'ws-1',
+    destination_id: `dest-${id}`,
+    source_platform: 'tiktok',
+    source_username: `source-${id}`,
+    timezone: 'UTC',
+    posts_per_day: 2,
+    schedule_type: 'dailyrandom',
+    posting_times: ['09:00'],
+    status: 'active',
+    sync_status: 'synced',
+    starting_followers: 10,
+    current_followers: followers,
+    followers_updated_at: null,
+    display_name: null,
+    created_at: '2026-11-01T00:00:00.000Z',
+    updated_at: '2026-11-01T00:00:00.000Z',
+    total_count: 2,
+  };
+}
+
+function makeHubFake(options: {
+  listRows?: Row[];
+  listError?: { message: string; code?: string } | null;
+  statsError?: { message: string; code?: string } | null;
+} = {}) {
+  const rpcCalls: Array<{ name: string; args: unknown }> = [];
+  const listRows = options.listRows ?? [hubRow('c1', 100), hubRow('c2', 300)];
+  const statsRows = [{ total_count: 2, total_followers_sum: 400, net_gained_sum: 380 }];
+  const rpc = vi.fn(async (name: string, args: unknown) => {
+    rpcCalls.push({ name, args });
+    if (name === 'adu_hub_list') return { data: listRows, error: options.listError ?? null };
+    if (name === 'adu_hub_stats') return { data: statsRows, error: options.statsError ?? null };
+    return { data: null, error: { code: '42883', message: 'not found' } };
+  });
+  return { rpc, rpcCalls };
+}
+
+describe('Threads ADU hub list GET (F21 unified pair)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadThreadsAduConfigView).mockImplementation(
+      async (_supabase, _workspaceId, id) => ({ id }) as never,
+    );
+  });
+
+  function getParams() {
+    return { params: Promise.resolve({ subdomain: 'acme' }) };
+  }
+
+  it('default: combined response from the unified RPCs with p_platform threads', async () => {
+    const fake = makeHubFake();
+    mocks.threadsAduContext.mockResolvedValue({
+      context: { workspaceId: 'ws-1', supabase: fake as never },
+    });
+    const res = await GET(
+      new NextRequest('http://localhost:3000/api/tenant/acme/threads/auto-download-upload'),
+      getParams(),
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.total).toBe(2);
+    expect(body.page).toBe(1);
+    expect(body.totalPages).toBe(1);
+    expect(body.stats).toEqual({ totalPages: 2, followersGained: 380, totalFollowers: 400 });
+    expect(body.configs).toHaveLength(2);
+    expect(body.configs[0]).toEqual({ id: 'c1' });
+    expect(fake.rpcCalls.map((c) => c.name)).toEqual(['adu_hub_list', 'adu_hub_stats']);
+    expect(fake.rpcCalls[0].args).toMatchObject({
+      p_workspace_id: 'ws-1',
+      p_platform: 'threads',
+      p_limit: 9,
+      p_offset: 0,
+    });
+    expect(fake.rpcCalls[1].args).toMatchObject({
+      p_workspace_id: 'ws-1',
+      p_platform: 'threads',
+    });
+  });
+
+  it('a malformed list row fails loud (F21 boundary validation)', async () => {
+    const { total_count: _dropped, ...badRow } = hubRow('c1', 100);
+    const fake = makeHubFake({ listRows: [badRow, hubRow('c2', 300)] });
+    mocks.threadsAduContext.mockResolvedValue({
+      context: { workspaceId: 'ws-1', supabase: fake as never },
+    });
+    const res = await GET(
+      new NextRequest('http://localhost:3000/api/tenant/acme/threads/auto-download-upload'),
+      getParams(),
+    );
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Failed to load accounts.' });
+  });
+
+  it('a missing list RPC returns migrationMissing (42883)', async () => {
+    const fake = makeHubFake({
+      listError: { message: 'not found', code: '42883' },
+    });
+    mocks.threadsAduContext.mockResolvedValue({
+      context: { workspaceId: 'ws-1', supabase: fake as never },
+    });
+    const res = await GET(
+      new NextRequest('http://localhost:3000/api/tenant/acme/threads/auto-download-upload'),
+      getParams(),
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body).toEqual({ configs: [], total: 0, page: 1, migrationMissing: true });
   });
 });

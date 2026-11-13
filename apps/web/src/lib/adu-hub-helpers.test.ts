@@ -87,6 +87,7 @@ type Row = Record<string, unknown>;
 
 interface FakeOptions {
   accountsError?: { message: string; code?: string } | null;
+  destinationsError?: { message: string; code?: string } | null;
   configuredError?: { message: string; code?: string } | null;
 }
 
@@ -155,9 +156,11 @@ function makeOptionsFake(options: FakeOptions = {}, platform = 'instagram') {
       const error =
         table === 'social_accounts'
           ? options.accountsError ?? null
-          : table === 'adu_configs'
-            ? options.configuredError ?? null
-            : null;
+          : table === 'destinations'
+            ? options.destinationsError ?? null
+            : table === 'adu_configs'
+              ? options.configuredError ?? null
+              : null;
       if (error) {
         const failing = q as unknown as { range: FakeOptionsQuery['range'] };
         failing.range = async () => ({ data: null, error });
@@ -209,5 +212,87 @@ describe('loadAduOptionsListsForPlatform', () => {
     await expect(
       loadAduOptionsListsForPlatform(fake, 'ws-1', 'instagram'),
     ).rejects.toThrow('boom');
+  });
+});
+
+describe('loadAduOptionsListsForPlatform — facebook (F21 collapse)', () => {
+  it('facebook: only adu-section destinations are returned', async () => {
+    const fake = makeOptionsFake({}, 'facebook');
+    const lists = await loadAduOptionsListsForPlatform(fake, 'ws-1', 'facebook');
+    expect(lists.accounts).toHaveLength(2500);
+    // The section filter drops the schedule-section row (dest-2);
+    // the old per-platform loader did the same for Facebook.
+    expect(lists.destinations).toHaveLength(1);
+    expect(lists.destinations[0]).toMatchObject({ id: 'dest-1', section: 'adu' });
+    expect(lists.configured).toHaveLength(1);
+    expect(lists.migrationMissing).toBe(false);
+  });
+
+  it('facebook: an accounts failure throws the Facebook message when the error carries none', async () => {
+    const fake = makeOptionsFake(
+      { accountsError: { code: 'XX000' } as { message: string; code?: string } },
+      'facebook',
+    );
+    await expect(
+      loadAduOptionsListsForPlatform(fake, 'ws-1', 'facebook'),
+    ).rejects.toThrow('Could not load Facebook accounts.');
+  });
+
+  it('facebook: a destinations failure throws the Facebook pages message', async () => {
+    const fake = makeOptionsFake(
+      { destinationsError: { code: 'XX000' } as { message: string; code?: string } },
+      'facebook',
+    );
+    await expect(
+      loadAduOptionsListsForPlatform(fake, 'ws-1', 'facebook'),
+    ).rejects.toThrow('Could not load Facebook pages.');
+  });
+
+  it('facebook: a missing adu_configs table is flagged, not fatal', async () => {
+    const fake = makeOptionsFake(
+      {
+        configuredError: { message: 'relation "adu_configs" does not exist', code: '42P01' },
+      },
+      'facebook',
+    );
+    const lists = await loadAduOptionsListsForPlatform(fake, 'ws-1', 'facebook');
+    expect(lists.migrationMissing).toBe(true);
+    expect(lists.configured).toEqual([]);
+    expect(lists.accounts).toHaveLength(2500);
+    expect(lists.destinations).toHaveLength(1);
+  });
+
+  it('facebook: a non-missing-table configs error throws instead of an empty list', async () => {
+    const fake = makeOptionsFake(
+      { configuredError: { message: 'db boom', code: '500' } },
+      'facebook',
+    );
+    await expect(
+      loadAduOptionsListsForPlatform(fake, 'ws-1', 'facebook'),
+    ).rejects.toThrow('db boom');
+  });
+
+  it('facebook: error precedence is accounts, then destinations, then configured', async () => {
+    const all = makeOptionsFake(
+      {
+        accountsError: { message: 'accounts boom', code: 'XX000' },
+        destinationsError: { message: 'pages boom', code: 'XX000' },
+        configuredError: { message: 'configured boom', code: 'XX000' },
+      },
+      'facebook',
+    );
+    await expect(
+      loadAduOptionsListsForPlatform(all, 'ws-1', 'facebook'),
+    ).rejects.toThrow('accounts boom');
+    const pages = makeOptionsFake(
+      {
+        destinationsError: { message: 'pages boom', code: 'XX000' },
+        configuredError: { message: 'configured boom', code: 'XX000' },
+      },
+      'facebook',
+    );
+    await expect(
+      loadAduOptionsListsForPlatform(pages, 'ws-1', 'facebook'),
+    ).rejects.toThrow('pages boom');
   });
 });

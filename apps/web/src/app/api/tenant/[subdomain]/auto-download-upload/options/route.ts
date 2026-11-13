@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { aduContext, loadAduOptionsLists } from '@/lib/server/adu';
+import { aduContext } from '@/lib/server/adu';
+import { loadAduOptionsListsForPlatform } from '@/lib/adu-hub-helpers';
 
 /** Accounts + managed Facebook pages for the Add Page picker. */
 export async function GET(
@@ -11,8 +12,16 @@ export async function GET(
   if ('errorResponse' in resolved) return resolved.errorResponse;
   const { workspaceId, supabase } = resolved.context;
   try {
-    const lists = await loadAduOptionsLists(supabase, workspaceId);
-    return NextResponse.json(lists);
+    // F21: the shared paged loader (Facebook keeps its old contract —
+    // adu-section pages only, under `destinations`); the response
+    // shape is unchanged (`pages`, not `destinations`).
+    const lists = await loadAduOptionsListsForPlatform(supabase, workspaceId, 'facebook');
+    return NextResponse.json({
+      accounts: lists.accounts,
+      pages: lists.destinations,
+      configured: lists.configured,
+      migrationMissing: lists.migrationMissing,
+    });
   } catch (err) {
     // Fail loud: a transient load failure must surface as a 500 the
     // picker can show, never as an empty accounts/pages list that
