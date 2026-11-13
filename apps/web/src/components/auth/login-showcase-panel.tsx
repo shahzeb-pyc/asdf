@@ -84,7 +84,7 @@ export function AuthShowcasePanel() {
           inside this 660px block (max-w-165). */}
       {/* Brand row — mark + name only; the tagline repeated the headline. */}
       <Link href="/login" className="inline-flex items-center gap-3 self-start no-underline">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-sm border border-line bg-subtle">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-xs border border-line bg-subtle">
           <BrandMark size={28} />
         </div>
         <span className="text-lg leading-heading font-bold tracking-h3 text-ink">
