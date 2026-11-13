@@ -2629,11 +2629,15 @@ describe('runAduTick', () => {
         cascadeConfigs: [{ id: 'c2' }],
       },
     );
+    // The cascade's list select is the destinations select
+    // filtered by account_id — the scan's bulk load (by id) runs
+    // first and must not match.
     const cascadeDestCall = db.calls.find(
       (c) =>
         c.table === 'destinations' &&
         !c.ops.some((o) => o.kind === 'maybeSingle') &&
-        c.ops.some((o) => o.kind === 'select'),
+        c.ops.some((o) => o.kind === 'select') &&
+        c.ops.some((o) => o.kind === 'eq' && o.args[0] === 'account_id'),
     );
     expect(
       cascadeDestCall?.ops.some(
