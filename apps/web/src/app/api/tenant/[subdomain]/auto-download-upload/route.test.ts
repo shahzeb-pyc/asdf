@@ -104,20 +104,33 @@ class FakeQuery {
 
   then(resolve: (value: unknown) => void) {
     if (this.table === 'destinations') {
-      resolve({
-        data: {
-          id: 'dest-1',
-          name: 'Test Page',
-          external_destination_id: 'page-1',
-          avatar_url: null,
-          status: 'active',
-          account_id: 'acc-1',
-          handle: null,
-          platform: 'facebook',
-          social_accounts: { display_name: 'Test Account', avatar_url: null },
-        },
-        error: null,
+      // The batch path (F1) queries .in('id', [...]) and reads an
+      // array — one row per requested destination id. A maybeSingle
+      // lookup still reads a single row.
+      const rowFor = (id: string) => ({
+        id,
+        name: 'Test Page',
+        external_destination_id: 'page-1',
+        avatar_url: null,
+        status: 'active',
+        account_id: 'acc-1',
+        handle: null,
+        platform: 'facebook',
+        social_accounts: { display_name: 'Test Account', avatar_url: null },
       });
+      const single = this.ops.some((o) => o.kind === 'maybeSingle');
+      if (single) {
+        resolve({ data: rowFor('dest-1'), error: null });
+        return;
+      }
+      const inIds = this.ops.find(
+        (o) => o.kind === 'in' && o.args[0] === 'id',
+      )?.args[1] as string[] | undefined;
+      const eqId = this.ops.find(
+        (o) => o.kind === 'eq' && o.args[0] === 'id',
+      )?.args[1] as string | undefined;
+      const ids = inIds ?? (eqId ? [eqId] : ['dest-1']);
+      resolve({ data: ids.map(rowFor), error: null });
       return;
     }
     const hasReelFilter = this.ops.some(
@@ -162,12 +175,27 @@ function makeRouteFake(options: RouteFakeOptions = {}) {
   }
   const db = {
     rpcCalls,
-    rpc: (name: string, _args: unknown) => {
+    rpc: (name: string, args: unknown) => {
       rpcCalls.push(name);
       const result =
         name === 'adu_hub_list'
           ? { data: listRows, error: options.listError ?? null }
-          : { data: statsRows, error: options.statsError ?? null };
+          : name === 'adu_config_counts'
+            ? {
+                data: (
+                  (args as { p_config_ids?: string[] }).p_config_ids ?? []
+                ).map((id) => ({
+                  config_id: id,
+                  in_pipeline: counts.pipeline,
+                  published: counts.published,
+                  failed: counts.failed,
+                  failed_in_pipeline: 0,
+                  published_today: 1,
+                  failed_today: 0,
+                })),
+                error: null,
+              }
+            : { data: statsRows, error: options.statsError ?? null };
       if (gate) return gate.then(() => result);
       return Promise.resolve(result);
     },
@@ -228,7 +256,7 @@ describe('ADU hub list GET (adu-opt-a F2/F6/F7)', () => {
     ]) {
       expect(body.configs[0]).not.toHaveProperty(key);
     }
-    expect(db.rpcCalls).toEqual(['adu_hub_list', 'adu_hub_stats']);
+    expect(db.rpcCalls).toEqual(['adu_hub_list', 'adu_hub_stats', 'adu_config_counts']);
   });
 
   it('stats=only: stats alone, no list RPC, no configs key', async () => {
@@ -262,7 +290,7 @@ describe('ADU hub list GET (adu-opt-a F2/F6/F7)', () => {
     expect(body).not.toHaveProperty('stats');
     expect(body.configs).toHaveLength(2);
     expect(body.total).toBe(2);
-    expect(db.rpcCalls).toEqual(['adu_hub_list']);
+    expect(db.rpcCalls).toEqual(['adu_hub_list', 'adu_config_counts']);
   });
 
   it('an unknown stats value behaves like the default', async () => {
@@ -278,7 +306,7 @@ describe('ADU hub list GET (adu-opt-a F2/F6/F7)', () => {
     expect(res.status).toBe(200);
     expect(body.configs).toHaveLength(2);
     expect(body.stats).toEqual({ totalPages: 2, followersGained: 380, totalFollowers: 400 });
-    expect(db.rpcCalls).toEqual(['adu_hub_list', 'adu_hub_stats']);
+    expect(db.rpcCalls).toEqual(['adu_hub_list', 'adu_hub_stats', 'adu_config_counts']);
   });
 
   it('issues list + stats concurrently (F2)', async () => {
@@ -304,6 +332,26 @@ describe('ADU hub list GET (adu-opt-a F2/F6/F7)', () => {
     } finally {
       db._stopGate();
     }
+  });
+
+  it('issues exactly one grouped-counts RPC for the page (F1)', async () => {
+    const db = makeRouteFake();
+    mocks.aduContext.mockResolvedValue({
+      context: { workspaceId: 'ws-1', supabase: db },
+    });
+    const res = await GET(
+      getRequest('http://localhost/api/tenant/ws1/auto-download-upload'),
+      getParams(),
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.configs).toHaveLength(2);
+    expect(db.rpcCalls.filter((name) => name === 'adu_config_counts')).toHaveLength(1);
+    // The grouped counts land on the views: pipeline 2, published 1,
+    // publishedToday 1 of a 2/day quota.
+    expect(body.configs[0].pendingCount).toBe(2);
+    expect(body.configs[0].postedCount).toBe(1);
+    expect(body.configs[0].pendingToday).toBe(1);
   });
 
   it('missing list RPC returns migrationMissing', async () => {

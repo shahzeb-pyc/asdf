@@ -19,7 +19,7 @@ import {
   registerAduConfigUsage,
   aduMissingTable,
   aduRpcMissing,
-  buildAduConfigView,
+  buildAduConfigViews,
   type AduHubConfigView,
   type AduDiscoveredGraphPage,
 } from '@/lib/server/adu';
@@ -159,10 +159,13 @@ export async function GET(
   const listRows = (rows ?? []) as Array<Record<string, unknown> & { total_count?: number }>;
   const total = listRows[0]?.total_count ?? 0;
   const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-  // Hub views are slim (F7) and built concurrently — each build is
-  // independent and Promise.all preserves row order.
-  const views: AduHubConfigView[] = await Promise.all(
-    listRows.map((row) => buildAduConfigView(supabase, row as never, { hub: true })),
+  // Hub views are slim (F7) and built in ONE batched call (F1): one
+  // destinations lookup + one grouped-counts RPC for the whole page,
+  // instead of 7 trips per config. Order is preserved.
+  const views: AduHubConfigView[] = await buildAduConfigViews(
+    supabase,
+    listRows as never,
+    { hub: true },
   );
   if (statsParam === 'none') {
     return NextResponse.json({ configs: views, total, page, totalPages });
