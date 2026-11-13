@@ -83,12 +83,12 @@ async function main(): Promise<void> {
     await pool.query(
       `INSERT INTO public.destinations
          (id, workspace_id, account_id, platform, external_destination_id,
-          name, encrypted_destination_token, status)
+          name, encrypted_destination_token, status, section)
        SELECT public.claim138_test_id('dest-instagram', g),
               public.claim138_test_id('ws', 1),
               public.claim138_test_id('acct-instagram', g), 'instagram',
               'ext-dest-instagram-' || g, 'Scale destination ' || g,
-              'scale-destination-token', 'active'
+              'scale-destination-token', 'active', 'schedule'
        FROM generate_series(0, $1 - 1) AS g`,
       [DESTINATIONS]
     );

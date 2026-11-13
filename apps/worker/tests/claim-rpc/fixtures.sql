@@ -89,14 +89,14 @@ BEGIN
   ON CONFLICT (id) DO NOTHING;
   INSERT INTO public.destinations
     (id, workspace_id, account_id, platform, external_destination_id, name,
-     encrypted_destination_token, status, metadata)
+     encrypted_destination_token, status, metadata, section)
   VALUES
     (v_dest, public.claim138_test_id('ws', 1), v_account, p_platform::public.platform,
      'ext-dest-' || p_platform || '-' || p_n, 'Rig ' || p_platform || ' destination ' || p_n,
      'rig-destination-token', p_status,
      CASE WHEN p_rate_limited_at IS NULL THEN p_metadata
           ELSE COALESCE(p_metadata, '{}'::jsonb) || jsonb_build_object('rate_limited_at', to_jsonb(p_rate_limited_at))
-     END);
+     END, 'schedule');
   RETURN v_dest;
 END;
 $$;

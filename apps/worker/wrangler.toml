@@ -23,7 +23,13 @@ ENVIRONMENT = "production"
 # "0 * * * *" full loop tick is gone — a single run cannot cover
 # 10,000 mirrors). Mirror checks use NO Cloudflare Queues, so there
 # is no queue-creation deploy step for them.
-crons = ["* * * * *", "*/15 * * * *", "0 2 * * *", "0 22 * * *", "*/10 * * * *"]
+# "0 4 * * *" = daily section check (spec 174 3B): flags destination
+# rows with no section label and children (posting times, queued
+# posts, ADU configs, slot claims) on the wrong section's row,
+# 09:00 PKT — clear of the retention run (07:00 PKT) and the
+# insights run (03:00 PKT). Read-only; loud when dirty, silent
+# when clean; no auto-repair.
+crons = ["* * * * *", "*/15 * * * *", "0 2 * * *", "0 22 * * *", "*/10 * * * *", "0 4 * * *"]
 
 # Spec 121: publish pipeline queues. The queues themselves are provisioned
 # with wrangler before the deploy that binds them (see PR ops steps):

@@ -54,6 +54,23 @@ export interface InternalHealthPayload {
     facebook: {
       pagesByStatus: Record<string, number>;
       accountsByStatus: Record<string, number>;
+      /**
+       * Spec 174 3B: the daily section check's flag, evaluated live
+       * from the same predicates the worker cron uses (unlabelled
+       * destination rows + children on the wrong section's row),
+       * scoped to Facebook like the rest of this block. Live
+       * computation (no stored run result, no new table) means the
+       * flag can never go stale relative to the data; the cron's
+       * job is the loud alert, this flag is the current state.
+       * A failed count query reads as 0 here, the route's usual
+       * fail-soft rule — the worker cron is the fail-loud side.
+       */
+      sectionCheck: {
+        dirty: boolean;
+        unsectionedDestinations: number;
+        wrongSectionChildren: number;
+        checkedAt: string;
+      };
     };
   };
 }
@@ -292,6 +309,83 @@ async function checkQueue(db: SupabaseClient, now: Date): Promise<QueueCheck> {
   }
 }
 
+type SectionCheckFlag = InternalHealthPayload['checks']['facebook']['sectionCheck'];
+
+/** Fail-soft count read: a failed count query reads as 0, the route's usual rule. */
+function countOrZero(result: { count: number | null; error: unknown }): number {
+  return result.error ? 0 : (result.count ?? 0);
+}
+
+/**
+ * Spec 174 3B — the section-integrity flag. Same predicates as the
+ * worker's daily section check (apps/worker/src/section-check.ts),
+ * scoped to Facebook destinations. `neq` never matches a NULL
+ * section, so children on unlabelled rows are covered by the
+ * unsectioned count, not the wrong-section counts.
+ */
+async function checkSectionIntegrity(
+  db: SupabaseClient,
+  now: Date
+): Promise<SectionCheckFlag> {
+  const checkedAt = now.toISOString();
+  try {
+    const [unsectionedDestinations, slots, queueItems, aduConfigs, slotClaims] =
+      await Promise.all([
+        db
+          .from('destinations')
+          .select('id', { head: true, count: 'exact' })
+          .eq('platform', 'facebook')
+          .is('section', null)
+          .then(countOrZero),
+        db
+          .from('posting_slots')
+          .select('id, destinations!inner(section, platform)', {
+            head: true,
+            count: 'exact',
+          })
+          .eq('destinations.platform', 'facebook')
+          .neq('destinations.section', 'schedule')
+          .then(countOrZero),
+        db
+          .from('queue_items')
+          .select('id, destinations!inner(section, platform)', {
+            head: true,
+            count: 'exact',
+          })
+          .eq('destinations.platform', 'facebook')
+          .not('destinations.section', 'in', '(schedule,publish_now)')
+          .then(countOrZero),
+        db
+          .from('adu_configs')
+          .select('id, destinations!inner(section, platform)', {
+            head: true,
+            count: 'exact',
+          })
+          .eq('destinations.platform', 'facebook')
+          .neq('destinations.section', 'adu')
+          .then(countOrZero),
+        db
+          .from('posting_slot_claims')
+          .select('id, destinations!inner(section, platform)', {
+            head: true,
+            count: 'exact',
+          })
+          .eq('destinations.platform', 'facebook')
+          .neq('destinations.section', 'schedule')
+          .then(countOrZero),
+      ]);
+    const wrongSectionChildren = slots + queueItems + aduConfigs + slotClaims;
+    return {
+      dirty: unsectionedDestinations > 0 || wrongSectionChildren > 0,
+      unsectionedDestinations,
+      wrongSectionChildren,
+      checkedAt,
+    };
+  } catch {
+    return { dirty: false, unsectionedDestinations: 0, wrongSectionChildren: 0, checkedAt };
+  }
+}
+
 export async function probeInternalHealth(
   deps?: InternalHealthDeps
 ): Promise<{ statusCode: number; payload: InternalHealthPayload }> {
@@ -310,7 +404,16 @@ export async function probeInternalHealth(
           heartbeat: EMPTY_HEARTBEAT,
           queue: EMPTY_QUEUE,
           storage: { ok: false },
-          facebook: { pagesByStatus: {}, accountsByStatus: {} },
+          facebook: {
+            pagesByStatus: {},
+            accountsByStatus: {},
+            sectionCheck: {
+              dirty: false,
+              unsectionedDestinations: 0,
+              wrongSectionChildren: 0,
+              checkedAt: timestamp,
+            },
+          },
         },
       },
     };
@@ -336,7 +439,7 @@ export async function probeInternalHealth(
     ? await deps.checkStorage()
     : await defaultCheckStorage();
 
-  const [pagesByStatus, accountsByStatus] = await Promise.all([
+  const [pagesByStatus, accountsByStatus, sectionCheck] = await Promise.all([
     countByStatus(db, 'destinations', PAGE_STATUSES, 'facebook', [
       'schedule',
       'adu',
@@ -345,13 +448,14 @@ export async function probeInternalHealth(
       null,
     ]),
     countByStatus(db, 'social_accounts', ACCOUNT_STATUSES, 'facebook'),
+    checkSectionIntegrity(db, now),
   ]);
 
   const unhealthy = !dbOk || !heartbeat.ok || !storageOk;
   let status: InternalHealthPayload['status'] = 'ok';
   if (unhealthy) {
     status = 'unhealthy';
-  } else if (queue.stuckPublishingCount > 0) {
+  } else if (queue.stuckPublishingCount > 0 || sectionCheck.dirty) {
     status = 'degraded';
   }
 
@@ -365,7 +469,7 @@ export async function probeInternalHealth(
         heartbeat,
         queue,
         storage: { ok: storageOk },
-        facebook: { pagesByStatus, accountsByStatus },
+        facebook: { pagesByStatus, accountsByStatus, sectionCheck },
       },
     },
   };

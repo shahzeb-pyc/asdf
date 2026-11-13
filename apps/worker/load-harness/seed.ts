@@ -104,13 +104,13 @@ export async function seed(pool: Pool, plan: PlatformSeedPlan[]): Promise<{ tota
       await client.query(
         `INSERT INTO public.destinations
            (id, workspace_id, account_id, platform, external_destination_id,
-            name, encrypted_destination_token, status)
+            name, encrypted_destination_token, status, section)
          SELECT md5('lh-dest-' || $1 || '-' || g)::uuid,
                 md5('lh-ws-' || (g % $4))::uuid,
                 md5('lh-acct-' || $1 || '-' || g)::uuid,
                 $1::public.platform, 'ext-dest-' || $1 || '-' || g,
                 'Mock ' || $1 || ' destination ' || g,
-                $2, 'active'
+                $2, 'active', 'schedule'
          FROM generate_series(0, $3 - 1) AS g`,
         [p.platform, destinationCipher, p.destinations, WORKSPACES]
       );

@@ -37,7 +37,13 @@ import {
   TOKEN_REFRESH_CRON,
   type RefreshDbClient,
 } from './refresh.js';
-import { captureWorkerError } from './analytics.js';
+import {
+  runSectionCheck,
+  SECTION_CHECK_CRON,
+  type SectionCheckDbClient,
+  type SectionCheckResult,
+} from './section-check.js';
+import { captureWorkerError, captureWorkerEvent } from './analytics.js';
 import { resolveWorkerMasterKey } from './master-key.js';
 import { verifyBearerToken } from './manual-run-auth.js';
 
@@ -92,6 +98,11 @@ export {
   REFRESH_BACKLOG_EVENT,
 } from './refresh.js';
 export { runRetentionCleanup, RETENTION_CRON } from './retention.js';
+export {
+  runSectionCheck,
+  SECTION_CHECK_CRON,
+} from './section-check.js';
+export type { SectionCheckDbClient, SectionCheckResult } from './section-check.js';
 export {
   runInsightsFollowersCycle,
   INSIGHTS_FOLLOWERS_CRON,
@@ -346,6 +357,63 @@ export async function handleScheduled(
         env,
         err,
         { site: 'handleScheduled', kind: 'mirror_dispatch_failed' },
+        waitUntil
+      );
+      throw err;
+    }
+    return;
+  }
+
+  // Daily section check (spec 174 Phase 3B): the read-only audit
+  // that flags destination rows with no section label and children
+  // sitting on the wrong section's row. It runs ONLY this job and
+  // writes no heartbeat row of its own — like retention and
+  // insights it reports through its structured counter log line.
+  // A dirty result is NOT a failure: the run succeeded, the data
+  // is dirty, so it logs loudly + captures an operational event
+  // (the alert channel the worker already uses) and returns
+  // normally. A clean run logs one line and stays silent. A
+  // query failure IS a failure: captured and rethrown like the
+  // other dedicated crons, so a broken check never reports a
+  // silent clean. No auto-repair — the check reports; a human
+  // fixes (Phase 4 backfills the stragglers).
+  if (controller.cron === SECTION_CHECK_CRON) {
+    try {
+      const result = await runSectionCheck(
+        db as unknown as SectionCheckDbClient,
+        options?.now ?? new Date(controller.scheduledTime)
+      );
+      console.log(
+        `[Scheduled] section check: dirty=${result.dirty} ` +
+          `unsectioned=${result.unsectionedDestinations} ` +
+          `slots=${result.slotsOnWrongSection} ` +
+          `queueItems=${result.queueItemsOnWrongSection} ` +
+          `aduConfigs=${result.aduConfigsOnWrongSection} ` +
+          `slotClaims=${result.slotClaimsOnWrongSection}`
+      );
+      if (result.dirty) {
+        console.error(
+          '[Scheduled] section check DIRTY: unlabelled destinations or children on the wrong section exist — see counts above'
+        );
+        captureWorkerEvent(
+          env,
+          'section_check_dirty',
+          {
+            unsectionedDestinations: result.unsectionedDestinations,
+            slotsOnWrongSection: result.slotsOnWrongSection,
+            queueItemsOnWrongSection: result.queueItemsOnWrongSection,
+            aduConfigsOnWrongSection: result.aduConfigsOnWrongSection,
+            slotClaimsOnWrongSection: result.slotClaimsOnWrongSection,
+          },
+          waitUntil
+        );
+      }
+    } catch (err) {
+      console.error('[Scheduled] section check failed:', err);
+      captureWorkerError(
+        env,
+        err,
+        { site: 'handleScheduled', kind: 'section_check_failed' },
         waitUntil
       );
       throw err;
