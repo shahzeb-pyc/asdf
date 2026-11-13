@@ -386,7 +386,9 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
     setConfig(next);
     setEditPosts(next.postsPerDay);
     setEditTimezone(next.timezone);
-    setEditLogic(next.scheduleType);
+    // The server only ever sends 'fixed' | 'dailyrandom'; anything
+    // else falls back to the default, exactly as the edit form does.
+    setEditLogic(next.scheduleType === 'fixed' ? 'fixed' : 'dailyrandom');
     setEditTimes(next.postingTimes ?? []);
     setDisplayName(next.destinationName);
   }, []);
@@ -455,10 +457,13 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   // F19: the draft follows the selected reel — it starts from the
   // reel's own caption, never empty for a captioned reel. Typing only
   // changes the draft, never the reel, so it cannot reset mid-edit.
-  const selectedForDraft = selectedReel ?? reels[0] ?? null;
+  // The length guard keeps the fallback honest: reels[0] is
+  // undefined on an empty page, whatever the index type claims.
+  const firstReel = reels.length > 0 ? reels[0] : null;
+  const draftSource = selectedReel ?? firstReel;
   React.useEffect(() => {
-    setCaptionDraft(selectedForDraft?.caption ?? '');
-  }, [selectedForDraft?.id, selectedForDraft?.caption]);
+    setCaptionDraft(draftSource ? (draftSource.caption ?? '') : '');
+  }, [draftSource]);
 
   React.useEffect(() => { void loadConfig(); }, [loadConfig]);
 

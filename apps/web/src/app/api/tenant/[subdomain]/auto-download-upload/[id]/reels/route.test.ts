@@ -20,8 +20,8 @@ type Row = Record<string, unknown>;
 
 interface RecordedCall {
   table: string;
-  selectCols?: string;
-  selectOpts?: { count?: string };
+  selectCols?: string | undefined;
+  selectOpts?: { count?: string } | undefined;
   eqs: Array<[string, unknown]>;
   orders: Array<[string, unknown]>;
   range?: [number, number];
