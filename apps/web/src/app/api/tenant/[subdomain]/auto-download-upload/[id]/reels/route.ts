@@ -33,20 +33,34 @@ export async function GET(
   if (!config) return NextResponse.json({ error: 'Page not found.' }, { status: 404 });
   const view = request.nextUrl.searchParams.get('view') ?? 'queue';
   const status = view === 'posted' ? 'posted' : 'downloaded';
-  // Bounded: the downloaded queue is buffer-limited by design
-  // (posts/day x 1), but the posted view grows forever, so both views
-  // are capped at the 500 most recent rows. The queue UI shows the
-  // newest rows first, so the cap never hides a pending reel.
-  const { data, error } = await supabase
+  // Paginated (adu-opt-c F15): 24 rows per page with a server-side
+  // count, so a queue past 500 is reachable by paging instead of
+  // silently truncating at the newest 500. No `page` param = page 1.
+  // Only the columns the Reels tab renders — never `select('*')`.
+  const REELS_PAGE_SIZE = 24;
+  const rawPage = Number(request.nextUrl.searchParams.get('page') ?? '1');
+  const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1;
+  const from = (page - 1) * REELS_PAGE_SIZE;
+  const to = from + REELS_PAGE_SIZE - 1;
+  const { data, error, count } = await supabase
     .from('adu_reels')
-    .select('*')
+    .select('id, source_reel_id, caption, media_url, downloaded_at, status', {
+      count: 'exact',
+    })
     .eq('config_id', id)
     .eq('status', status)
     .order('downloaded_at', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
-    .limit(500);
+    .range(from, to);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ reels: data ?? [] });
+  const total = count ?? 0;
+  return NextResponse.json({
+    reels: data ?? [],
+    page,
+    pageSize: REELS_PAGE_SIZE,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / REELS_PAGE_SIZE)),
+  });
 }
 
 export async function POST(
