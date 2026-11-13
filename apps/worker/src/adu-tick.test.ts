@@ -520,6 +520,49 @@ describe('runAduTick', () => {
     expect(result.intakeJobsCreated).toBe(0);
   });
 
+  it('intake logs loudly and mints nothing for an invalid-timezone config', async () => {
+    // Regression: ten configs stored display names ('new york',
+    // 'india', …); localTimeInTimezone silently returned '00:00' for
+    // them, so intake never matched and the configs sat active +
+    // synced with downloaded reels and zero jobs, invisible. The
+    // guard must log the config id + bad value instead of skipping
+    // silently — and mint nothing.
+    const config = { ...configRow('c1', ['09:00']), timezone: 'new york' };
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs') return { data: [config], error: null };
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = await runAduTick({
+        db: db as never,
+        registry: registryWith(null),
+        masterKey: MASTER_KEY,
+        now: NOW,
+      });
+      expect(result.intakeJobsCreated).toBe(0);
+      expect(
+        errorSpy.mock.calls.some(
+          (c) =>
+            String(c[0]).includes('invalid timezone') &&
+            String(c[0]).includes('c1') &&
+            String(c[0]).includes('new york'),
+        ),
+      ).toBe(true);
+      // Intake never proceeded: no job insert was attempted.
+      expect(
+        db.calls.some(
+          (c) => c.table === 'adu_posting_jobs' && c.ops.some((o) => o.kind === 'insert'),
+        ),
+      ).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it('completes a due config with nothing downloadable and nothing busy', async () => {
     const config = configRow('c1', ['09:00']);
     const db = makeDb((table, ops) => {

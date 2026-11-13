@@ -503,6 +503,33 @@ export function parseAduCsv(text: string): AduCsvResult {
   return { rows, warnings };
 }
 
+/** True when the value is a real IANA timezone name. Intl is the single
+ * source of truth here — display names like 'new york' or 'india' throw
+ * RangeError in every runtime that implements ECMA-402. */
+export function isValidTimezone(timezone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A real IANA timezone name. Ten ADU configs once stored display names
+ * ('new york', 'india', …); localTimeInTimezone then silently returned
+ * '00:00' for them, so worker intake never minted a job and the configs
+ * sat active + synced for days, invisible. The write path rejects
+ * non-IANA names now; intake logs loudly for any pre-existing bad row.
+ */
+export const AduTimezoneSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .refine(isValidTimezone, {
+    message: 'Timezone must be a valid IANA timezone name (e.g. Asia/Karachi).',
+  });
+
 /** HH:mm in 24-hour form. */
 export const AduTimeOfDaySchema = z
   .string()
@@ -513,7 +540,7 @@ export const AduCreateConfigSchema = z
     destinationId: z.string().uuid(),
     sourcePlatform: AduSourcePlatformSchema,
     sourceUsername: z.string().min(1).max(255),
-    timezone: z.string().min(1).max(100).default('Asia/Karachi'),
+    timezone: AduTimezoneSchema.default('Asia/Karachi'),
     postsPerDay: z.number().int().min(1).max(12),
     scheduleType: z.enum(['dailyrandom', 'fixed']).default('dailyrandom'),
     postingTimes: z.array(AduTimeOfDaySchema).optional(),
@@ -537,7 +564,7 @@ export type AduCreateConfig = z.infer<typeof AduCreateConfigSchema>;
 
 export const AduUpdateConfigSchema = z.object({
   status: AduConfigStatusSchema.optional(),
-  timezone: z.string().min(1).max(100).optional(),
+  timezone: AduTimezoneSchema.optional(),
   postsPerDay: z.number().int().min(0).max(12).optional(),
   scheduleType: z.enum(['dailyrandom', 'fixed']).optional(),
   postingTimes: z.array(AduTimeOfDaySchema).optional(),
@@ -556,7 +583,7 @@ export type AduUpdateConfig = z.infer<typeof AduUpdateConfigSchema>;
  * the fixed-times error wording.
  */
 export const AduBulkItemScheduleSchema = z.object({
-  timezone: z.string().min(1).max(100),
+  timezone: AduTimezoneSchema,
   postsPerDay: z.number().int().min(1).max(12),
   postingTimes: z.array(z.string()).optional(),
 });
@@ -572,7 +599,7 @@ export type AduBulkItem = z.infer<typeof AduBulkItemSchema>;
 
 export const AduBulkCreateSchema = z.object({
   items: z.array(AduBulkItemSchema).min(1).max(1000),
-  timezone: z.string().min(1).max(100).default('Asia/Karachi'),
+  timezone: AduTimezoneSchema.default('Asia/Karachi'),
   postsPerDay: z.number().int().min(1).max(12),
   scheduleType: z.enum(['dailyrandom', 'fixed']).default('dailyrandom'),
   postingTimes: z.array(z.string()).optional(),
@@ -592,7 +619,7 @@ export const AduAccountCreateConfigSchema = z
     accountId: z.string().uuid(),
     sourcePlatform: AduSourcePlatformSchema,
     sourceUsername: z.string().min(1).max(255),
-    timezone: z.string().min(1).max(100).default('Asia/Karachi'),
+    timezone: AduTimezoneSchema.default('Asia/Karachi'),
     postsPerDay: z.number().int().min(1).max(12),
     scheduleType: z.enum(['dailyrandom', 'fixed']).default('dailyrandom'),
     postingTimes: z.array(AduTimeOfDaySchema).optional(),
@@ -624,7 +651,7 @@ export type AduAccountBulkItem = z.infer<typeof AduAccountBulkItemSchema>;
 
 export const AduAccountBulkCreateSchema = z.object({
   items: z.array(AduAccountBulkItemSchema).min(1).max(1000),
-  timezone: z.string().min(1).max(100).default('Asia/Karachi'),
+  timezone: AduTimezoneSchema.default('Asia/Karachi'),
   postsPerDay: z.number().int().min(1).max(12),
   scheduleType: z.enum(['dailyrandom', 'fixed']).default('dailyrandom'),
   postingTimes: z.array(z.string()).optional(),

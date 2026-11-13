@@ -790,6 +790,12 @@ function startOfDayInTimezone(timezone: string): Date {
     const day = parts.find((p) => p.type === 'day')?.value ?? '01';
     return new Date(`${year}-${month}-${day}T00:00:00.000Z`);
   } catch {
+    // A bad timezone used to fall back to UTC midnight silently, so
+    // the detail-view counts used the wrong day window with no trace.
+    // Log loudly (bad value); the fallback itself is unchanged.
+    console.error(
+      `[adu] startOfDayInTimezone: invalid timezone ${JSON.stringify(timezone)} — falling back to UTC midnight`,
+    );
     const now = new Date();
     return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   }

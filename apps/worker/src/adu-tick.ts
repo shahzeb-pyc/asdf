@@ -7,6 +7,7 @@ import {
   evaluateAduPublishError,
   FB_RATE_LIMITED_COOLDOWN_MS,
   InternalError,
+  isValidTimezone,
   localTimeInTimezone,
   type AduPublishErrorDecision,
   type DatabaseDestinationRow,
@@ -778,6 +779,19 @@ export async function runAduTick(options: {
   for (const raw of configs ?? []) {
     const config = raw as unknown as AduConfigRow;
     if (config.posts_per_day <= 0) continue;
+    if (!isValidTimezone(config.timezone)) {
+      // A bad timezone used to fail silently: localTimeInTimezone
+      // returns '00:00' for it, so intake never matched and the config
+      // sat active + synced with downloaded reels and zero jobs,
+      // invisible for days. Log loudly (config id + bad value) and
+      // skip — one bad config must not kill the tick. The write path
+      // now rejects non-IANA timezones (AduTimezoneSchema); this
+      // guards pre-existing rows.
+      console.error(
+        `[adu-tick] intake skipped: config=${config.id} has invalid timezone ${JSON.stringify(config.timezone)} — fix the config; its jobs will never mint`,
+      );
+      continue;
+    }
     const localTime = localTimeInTimezone(now, config.timezone);
     if (!config.posting_times.includes(localTime)) continue;
     // Spec 174 3A (Gate 2A finding 3): intake mints jobs only for the
