@@ -3,12 +3,14 @@
  *
  * buildAduConfigView used to load every reel and every job for a
  * config and count in memory — past PostgREST's 1,000-row limit the
- * card totals silently went wrong. It now issues bounded count
- * queries only. These tests drive it with a fake Supabase client that
- * answers count queries from canned rows, and prove the card numbers
- * (posted / pending / failed, today variants, pendingToday) come from
- * those counts, including a case where the job history is far larger
- * than any page — the old code would have truncated it.
+ * card totals silently went wrong. It then issued bounded count
+ * queries only; since adu-opt-f1 the six counts come from ONE grouped
+ * `adu_config_counts` RPC per page (the fake below answers the RPC
+ * from the same canned rows, with the same midnight rule). These
+ * tests drive it with a fake Supabase client and prove the card
+ * numbers (posted / pending / failed, today variants, pendingToday)
+ * come from those counts, including a case where the job history is
+ * far larger than any page — the old code would have truncated it.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { buildAduConfigView, loadAduConfigView } from '../../src/lib/server/adu';
@@ -108,11 +110,81 @@ class FakeBuilder {
   }
 }
 
-function fakeSupabase(db: Record<string, Row[]>, errors: Record<string, string> = {}) {
+const ADU_FAILED_STATUSES = ['failed_to_publish', 'publish_error', 'integrity_error'];
+const ADU_PIPELINE_STATUSES = ['pending', 'processing', 'downloaded'];
+
+/** Page-local midnight for a timezone, exactly like startOfDayInTimezone. */
+function aduMidnightIso(timezone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      timeZone: timezone,
+    }).formatToParts(new Date());
+    const year = parts.find((x) => x.type === 'year')?.value ?? '1970';
+    const month = parts.find((x) => x.type === 'month')?.value ?? '01';
+    const day = parts.find((x) => x.type === 'day')?.value ?? '01';
+    return new Date(`${year}-${month}-${day}T00:00:00.000Z`).toISOString();
+  } catch {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  }
+}
+
+/**
+ * The grouped-counts RPC, answered from the same canned rows the old
+ * count queries read (same statuses, same join for failed-in-pipeline,
+ * same midnight rule). The config timezone comes from the seeded
+ * adu_configs row when present, else UTC — every fixture here is UTC
+ * (or invalid, whose fallback IS UTC), so the default is exact.
+ */
+function aduCountsRows(db: Record<string, Row[]>, configIds: string[]): Row[] {
+  return configIds.map((id) => {
+    const timezone = String(
+      (db['adu_configs'] ?? []).find((c) => c.id === id)?.['timezone'] ?? 'UTC',
+    );
+    const midnight = aduMidnightIso(timezone);
+    const reels = (db['adu_reels'] ?? []).filter((r) => r['config_id'] === id);
+    const jobs = (db['adu_posting_jobs'] ?? []).filter((j) => j['config_id'] === id);
+    const inPipeline = reels.filter((r) => ADU_PIPELINE_STATUSES.includes(String(r['status']))).length;
+    const published = jobs.filter((j) => j['status'] === 'published');
+    const failed = jobs.filter((j) => ADU_FAILED_STATUSES.includes(String(j['status'])));
+    const failedInPipeline = failed.filter((j) => {
+      const reel = reels.find((r) => r['id'] === j['reel_id']);
+      return reel && ADU_PIPELINE_STATUSES.includes(String(reel['status']));
+    }).length;
+    return {
+      config_id: id,
+      in_pipeline: inPipeline,
+      published: published.length,
+      failed: failed.length,
+      failed_in_pipeline: failedInPipeline,
+      published_today: published.filter((j) => String(j['created_at']) >= midnight).length,
+      failed_today: failed.filter((j) => String(j['created_at']) >= midnight).length,
+    };
+  });
+}
+
+type RpcResult = { data: unknown; error: { code?: string; message?: string } | null };
+
+function fakeSupabase(
+  db: Record<string, Row[]>,
+  errors: Record<string, string> = {},
+  rpcOverride?: (name: string, params: { p_workspace_id: string; p_config_ids: string[] }) => RpcResult,
+) {
   const calls: string[] = [];
   return {
     calls,
     client: {
+      rpc: (name: string, params: { p_workspace_id: string; p_config_ids: string[] }) => {
+        calls.push(`rpc:${name}`);
+        if (rpcOverride) return Promise.resolve(rpcOverride(name, params));
+        if (name !== 'adu_config_counts') {
+          return Promise.resolve({ data: null, error: { code: '42883', message: 'not found' } });
+        }
+        return Promise.resolve({ data: aduCountsRows(db, params.p_config_ids ?? []), error: null });
+      },
       from: (table: string) => new FakeBuilder(table, db, calls, errors),
     },
   };
@@ -192,15 +264,13 @@ describe('buildAduConfigView counts', () => {
     expect(view.failedToday).toBe(1);
     expect(view.pendingToday).toBe(2); // posts_per_day 3 - published today 1
     expect(view.destinationName).toBe('Test Page');
-    // No unbounded row loads: only count queries hit reels/jobs.
-    expect(calls.filter((c) => c.startsWith('adu_reels:'))).toEqual(['adu_reels:count']);
-    expect(calls.filter((c) => c.startsWith('adu_posting_jobs:'))).toEqual([
-      'adu_posting_jobs:count',
-      'adu_posting_jobs:count',
-      'adu_posting_jobs:count',
-      'adu_posting_jobs:count',
-      // The embedded-reel failed-in-pipeline count (spec §3.5).
-      'adu_posting_jobs:count',
+    // No unbounded row loads and no per-config count queries: the six
+    // counts arrive in ONE grouped RPC (F1); the reels/jobs tables
+    // are never queried row-by-row for this view.
+    expect(calls.filter((c) => c.startsWith('adu_reels:'))).toEqual([]);
+    expect(calls.filter((c) => c.startsWith('adu_posting_jobs:'))).toEqual([]);
+    expect(calls.filter((c) => c === 'rpc:adu_config_counts')).toEqual([
+      'rpc:adu_config_counts',
     ]);
   });
 
@@ -228,6 +298,10 @@ describe('buildAduConfigView counts', () => {
   });
 
   it('a failing count query degrades to 0 for that bucket, never a fabricated total', async () => {
+    // The per-bucket degradation lives on the legacy path now: the
+    // counts RPC is missing (migration not applied), so the fallback
+    // runs the per-config count queries and the failing jobs bucket
+    // degrades to 0 while the reels bucket still works.
     const { client } = fakeSupabase(
       {
         destinations: [],
@@ -235,12 +309,28 @@ describe('buildAduConfigView counts', () => {
         adu_posting_jobs: [{ config_id: 'cfg-1', status: 'published', created_at: todayNoonUtc() }],
       },
       { adu_posting_jobs: '23505' },
+      () => ({ data: null, error: { code: 'PGRST202', message: 'not found' } }),
     );
     const view = await buildAduConfigView(client as never, configRow() as never);
     expect(view.postedCount).toBe(0);
     expect(view.failedCount).toBe(0);
     expect(view.pendingToday).toBe(3); // posts_per_day 3 - published today 0
     expect(view.pendingCount).toBe(1); // reels count still works
+  });
+
+  it('a failing counts RPC fails loud instead of degrading to zeros', async () => {
+    const { client } = fakeSupabase(
+      {
+        destinations: [],
+        adu_reels: [{ config_id: 'cfg-1', status: 'downloaded' }],
+        adu_posting_jobs: [{ config_id: 'cfg-1', status: 'published', created_at: todayNoonUtc() }],
+      },
+      {},
+      () => ({ data: null, error: { code: 'XX000', message: 'boom' } }),
+    );
+    await expect(buildAduConfigView(client as never, configRow() as never)).rejects.toThrow(
+      /ADU counts failed/,
+    );
   });
 
   it('loadAduConfigView returns null when the config query itself fails', async () => {

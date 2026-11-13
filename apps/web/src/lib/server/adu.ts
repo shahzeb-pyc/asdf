@@ -10,6 +10,8 @@ import {
   fetchAllFacebookPages,
   getTokenEncryptionKey,
   sanitizeSourceIdentity,
+  AduConfigCountsSchema,
+  type AduConfigCounts,
   type AduConfigRow,
   type AduSourcePlatform,
 } from '@fbuploadpro/contracts';
@@ -841,54 +843,94 @@ export type AduHubConfigView = Omit<
   | 'destinationStatus'
 >;
 
-export async function buildAduConfigView(
+const ZERO_ADU_COUNTS: AduConfigCounts = {
+  config_id: '',
+  in_pipeline: 0,
+  published: 0,
+  failed: 0,
+  failed_in_pipeline: 0,
+  published_today: 0,
+  failed_today: 0,
+};
+
+const ADU_FAILED_JOB_STATUSES = ['failed_to_publish', 'publish_error', 'integrity_error'];
+const ADU_PIPELINE_REEL_STATUSES = ['pending', 'processing', 'downloaded'];
+
+/**
+ * Grouped counts for a page of configs (ADU optimization F1): ONE
+ * `adu_config_counts` RPC call returns all six counts per config,
+ * instead of six exact-count queries per config. Rows are validated
+ * against `AduConfigCountsSchema` at this boundary — a shape change
+ * fails loud, never renders as wrong numbers.
+ *
+ * RPC missing (PGRST202 / 42883 / 42P01 = the migration has not been
+ * applied yet, e.g. a branch preview running against a DB without it):
+ * log loudly and fall back to the legacy per-config count queries for
+ * this request only. Any other RPC error throws (the caller turns it
+ * into a 500, never silent zeros). A config id absent from the RPC
+ * result is logged loudly and counted as 0 for this render (read
+ * fallback, same rule as the legacy count queries).
+ */
+async function loadAduConfigCounts(
   supabase: SupabaseClient,
-  config: AduConfigRow,
-  options: { hub: true },
-): Promise<AduHubConfigView>;
-export async function buildAduConfigView(
+  configs: AduConfigRow[],
+): Promise<Map<string, AduConfigCounts>> {
+  const counts = new Map<string, AduConfigCounts>();
+  const ids = [...new Set(configs.map((c) => c.id))];
+  if (ids.length === 0) return counts;
+  const workspaceId = configs[0]?.workspace_id;
+  if (!workspaceId || configs.some((c) => c.workspace_id !== workspaceId)) {
+    throw new Error('ADU counts require configs from a single workspace.');
+  }
+  const { data, error } = await supabase.rpc('adu_config_counts', {
+    p_workspace_id: workspaceId,
+    p_config_ids: ids,
+  });
+  if (error) {
+    if (aduRpcMissing(error)) {
+      console.error(
+        `ADU counts RPC missing (migration not applied): code=${error.code ?? 'unknown'}; falling back to per-config counts`,
+      );
+      return loadLegacyAduConfigCounts(supabase, configs);
+    }
+    console.error(`ADU counts RPC failed: code=${error.code ?? 'unknown'}`);
+    throw new Error(`ADU counts failed: ${error.message ?? 'unknown error'}`);
+  }
+  for (const row of (data ?? []) as unknown[]) {
+    const parsed = AduConfigCountsSchema.safeParse(row);
+    if (!parsed.success) {
+      console.error('ADU counts RPC returned an invalid row');
+      throw new Error('ADU counts returned an invalid row.');
+    }
+    counts.set(parsed.data.config_id, parsed.data);
+  }
+  for (const config of configs) {
+    if (!counts.has(config.id)) {
+      console.error(`ADU counts missing for config ${config.id}: counted as 0`);
+    }
+  }
+  return counts;
+}
+
+/**
+ * Legacy per-config counts — the exact queries `buildAduConfigView`
+ * ran before F1, kept as the migration-compat fallback in
+ * `loadAduConfigCounts` (RPC missing = migration not yet applied).
+ * Bounded counts only: the old code loaded every reel and every job
+ * for a config and counted in memory, which silently truncates past
+ * PostgREST's 1,000-row limit. Count queries return a number, never
+ * rows, and the jobs table is retention-pruned (see adu-tick.ts).
+ * A count-query failure is logged server-side (code only, no data)
+ * and counted as 0 for this render — a read fallback, never a
+ * fabricated persist.
+ */
+async function loadLegacyAduConfigCounts(
   supabase: SupabaseClient,
-  config: AduConfigRow,
-  options?: { hub?: false },
-): Promise<AduConfigView>;
-export async function buildAduConfigView(
-  supabase: SupabaseClient,
-  config: AduConfigRow,
-  options?: { hub?: boolean },
-): Promise<AduConfigView | AduHubConfigView> {
-  const hub = options?.hub === true;
-  const { data: destination } = await supabase
-    .from('destinations')
-    .select(
-      hub
-        ? 'id, name, external_destination_id, avatar_url, status, account_id, platform, social_accounts(display_name)'
-        : 'id, name, external_destination_id, avatar_url, status, account_id, handle, platform, social_accounts(display_name, avatar_url)',
-    )
-    .eq('id', config.destination_id)
-    .eq('section', 'adu')
-    .maybeSingle();
-  const dest = destination as DestinationJoin | null;
-  // Bounded counts only: the old code loaded every reel and every job
-  // for a config and counted in memory, which silently truncates past
-  // PostgREST's 1,000-row limit. Count queries return a number, never
-  // rows, and the jobs table is retention-pruned (see adu-tick.ts).
-  // A count-query failure is logged server-side (code only, no data)
-  // and counted as 0 for this render — a read fallback, never a
-  // fabricated persist.
-  // Pending = reels still in the pipeline (pending, processing,
-  // downloaded) minus failed jobs whose reel is STILL in the
-  // pipeline. A terminally-failed reel leaves the pipeline (status
-  // 'failed', written by the tick on settlement), so its job must not
-  // be subtracted again — the reel leaving the pipeline already
-  // removed it from the count. Only the crash window (job settled,
-  // reel update not yet applied) still subtracts, via the
-  // embedded-reel filtered count below. The max(0, ...) floor guards
-  // only against that invariant ever breaking (a duplicate job for
-  // one reel), never against a miscount: both terms are exact count
-  // queries, never rows.
-  const failedStatuses = ['failed_to_publish', 'publish_error', 'integrity_error'];
-  const midnight = startOfDayInTimezone(config.timezone).toISOString();
+  configs: AduConfigRow[],
+): Promise<Map<string, AduConfigCounts>> {
+  const failedStatuses = ADU_FAILED_JOB_STATUSES;
   async function countRows(
+    config: AduConfigRow,
     table: 'adu_reels' | 'adu_posting_jobs',
     status: string | string[],
     since?: string,
@@ -915,13 +957,13 @@ export async function buildAduConfigView(
   // A failure here falls back to 0 (logged, same read-fallback rule
   // as countRows) — pending then counts the stranded reel, the safe
   // pre-fix direction.
-  async function countFailedInPipeline(): Promise<number> {
+  async function countFailedInPipeline(config: AduConfigRow): Promise<number> {
     const { count, error } = await supabase
       .from('adu_posting_jobs')
       .select('id, adu_reels!inner(status)', { count: 'exact', head: true })
       .eq('config_id', config.id)
       .in('status', failedStatuses)
-      .in('adu_reels.status', ['pending', 'processing', 'downloaded']);
+      .in('adu_reels.status', ADU_PIPELINE_REEL_STATUSES);
     if (error) {
       console.error(
         `ADU count failed: table=adu_posting_jobs code=${error.code ?? 'unknown'}`,
@@ -930,25 +972,64 @@ export async function buildAduConfigView(
     }
     return count ?? 0;
   }
-  // The six counts are independent — run them concurrently (adu-opt-a
-  // F3). Latency becomes max(count) instead of sum(count); the two
-  // derived values below are computed after resolution, unchanged.
-  const [
-    inPipelineCount,
-    postedCount,
-    failedCount,
-    failedInPipeline,
-    postedToday,
-    failedToday,
-  ] = await Promise.all([
-    countRows('adu_reels', ['pending', 'processing', 'downloaded']),
-    countRows('adu_posting_jobs', 'published'),
-    countRows('adu_posting_jobs', failedStatuses),
-    countFailedInPipeline(),
-    countRows('adu_posting_jobs', 'published', midnight),
-    countRows('adu_posting_jobs', failedStatuses, midnight),
-  ]);
-  const pendingCount = Math.max(0, inPipelineCount - failedInPipeline);
+  async function countOne(config: AduConfigRow): Promise<AduConfigCounts> {
+    const midnight = startOfDayInTimezone(config.timezone).toISOString();
+    // The six counts are independent — run them concurrently (adu-opt-a
+    // F3). Latency becomes max(count) instead of sum(count).
+    const [
+      inPipeline,
+      published,
+      failed,
+      failedInPipeline,
+      publishedToday,
+      failedToday,
+    ] = await Promise.all([
+      countRows(config, 'adu_reels', ADU_PIPELINE_REEL_STATUSES),
+      countRows(config, 'adu_posting_jobs', 'published'),
+      countRows(config, 'adu_posting_jobs', failedStatuses),
+      countFailedInPipeline(config),
+      countRows(config, 'adu_posting_jobs', 'published', midnight),
+      countRows(config, 'adu_posting_jobs', failedStatuses, midnight),
+    ]);
+    return {
+      config_id: config.id,
+      in_pipeline: inPipeline,
+      published,
+      failed,
+      failed_in_pipeline: failedInPipeline,
+      published_today: publishedToday,
+      failed_today: failedToday,
+    };
+  }
+  const entries = await Promise.all(
+    configs.map(async (config) => [config.id, await countOne(config)] as const),
+  );
+  return new Map(entries);
+}
+
+/**
+ * Pure view assembly from one config + its destination + its counts.
+ * The field mapping is verbatim the old `buildAduConfigView` body;
+ * only the data source changed (grouped counts instead of per-config
+ * queries). Pending = reels still in the pipeline (pending,
+ * processing, downloaded) minus failed jobs whose reel is STILL in
+ * the pipeline. A terminally-failed reel leaves the pipeline (status
+ * 'failed', written by the tick on settlement), so its job must not
+ * be subtracted again — the reel leaving the pipeline already
+ * removed it from the count. Only the crash window (job settled,
+ * reel update not yet applied) still subtracts. The max(0, ...) floor
+ * guards only against that invariant ever breaking (a duplicate job
+ * for one reel), never against a miscount: both terms are exact
+ * counts, never rows.
+ */
+function viewFromParts(
+  config: AduConfigRow,
+  dest: DestinationJoin | null,
+  counts: AduConfigCounts,
+  hub: boolean,
+): AduConfigView | AduHubConfigView {
+  const pendingCount = Math.max(0, counts.in_pipeline - counts.failed_in_pipeline);
+  const postedToday = counts.published_today;
   const full: AduConfigView = {
     id: config.id,
     destinationId: config.destination_id,
@@ -1002,12 +1083,12 @@ export async function buildAduConfigView(
     displayName: config.display_name,
     createdAt: config.created_at,
     updatedAt: config.updated_at,
-    postedCount,
+    postedCount: counts.published,
     pendingCount,
-    failedCount,
+    failedCount: counts.failed,
     postedToday,
     pendingToday: Math.max(0, config.posts_per_day - postedToday),
-    failedToday,
+    failedToday: counts.failed_today,
   };
   if (!hub) return full;
   // Hub-only view (adu-opt-a F7): same values, without the fields the
@@ -1038,6 +1119,90 @@ export async function buildAduConfigView(
     pendingToday: full.pendingToday,
     failedToday: full.failedToday,
   };
+}
+
+export async function buildAduConfigViews(
+  supabase: SupabaseClient,
+  configs: AduConfigRow[],
+  options: { hub: true },
+): Promise<AduHubConfigView[]>;
+export async function buildAduConfigViews(
+  supabase: SupabaseClient,
+  configs: AduConfigRow[],
+  options?: { hub?: false },
+): Promise<AduConfigView[]>;
+export async function buildAduConfigViews(
+  supabase: SupabaseClient,
+  configs: AduConfigRow[],
+  options?: { hub?: boolean },
+): Promise<Array<AduConfigView | AduHubConfigView>> {
+  const hub = options?.hub === true;
+  if (configs.length === 0) return [];
+  // Two trips for the whole page, however many configs it holds: one
+  // destinations lookup for every distinct destination id, and one
+  // grouped-counts RPC for every config id (F1). The old code paid
+  // 7 trips per config.
+  const destinationIds = [...new Set(configs.map((c) => c.destination_id))];
+  const [destinationsResult, counts] = await Promise.all([
+    supabase
+      .from('destinations')
+      .select(
+        hub
+          ? 'id, name, external_destination_id, avatar_url, status, account_id, platform, social_accounts(display_name)'
+          : 'id, name, external_destination_id, avatar_url, status, account_id, handle, platform, social_accounts(display_name, avatar_url)',
+      )
+      .in('id', destinationIds)
+      .eq('section', 'adu'),
+    loadAduConfigCounts(supabase, configs),
+  ]);
+  const { data: destinationRows, error: destinationsError } = destinationsResult;
+  if (destinationsError) {
+    console.error(
+      `ADU destinations lookup failed: code=${destinationsError.code ?? 'unknown'}`,
+    );
+  }
+  const destById = new Map<string, DestinationJoin>();
+  // The union select string (hub vs full) does not parse under the
+  // supabase-js query-builder types, so the rows arrive as an
+  // unparsed type — cast through unknown, exactly like the old
+  // `destination as DestinationJoin | null` cast.
+  for (const row of (destinationRows ?? []) as unknown as DestinationJoin[]) {
+    destById.set(row.id, row);
+  }
+  return configs.map((config) =>
+    viewFromParts(
+      config,
+      destById.get(config.destination_id) ?? null,
+      counts.get(config.id) ?? { ...ZERO_ADU_COUNTS, config_id: config.id },
+      hub,
+    ),
+  );
+}
+
+export async function buildAduConfigView(
+  supabase: SupabaseClient,
+  config: AduConfigRow,
+  options: { hub: true },
+): Promise<AduHubConfigView>;
+export async function buildAduConfigView(
+  supabase: SupabaseClient,
+  config: AduConfigRow,
+  options?: { hub?: false },
+): Promise<AduConfigView>;
+export async function buildAduConfigView(
+  supabase: SupabaseClient,
+  config: AduConfigRow,
+  options?: { hub?: boolean },
+): Promise<AduConfigView | AduHubConfigView> {
+  const views =
+    options?.hub === true
+      ? await buildAduConfigViews(supabase, [config], { hub: true })
+      : await buildAduConfigViews(supabase, [config]);
+  const [view] = views;
+  if (!view) {
+    throw new Error('ADU config view build returned no view.');
+  }
+  return view;
 }
 
 /**

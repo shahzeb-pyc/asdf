@@ -99,8 +99,66 @@ class FakeBuilder {
   }
 }
 
+const ADU_FAILED_STATUSES = ['failed_to_publish', 'publish_error', 'integrity_error'];
+const ADU_PIPELINE_STATUSES = ['pending', 'processing', 'downloaded'];
+
+/** Page-local midnight for a timezone, exactly like startOfDayInTimezone. */
+function aduMidnightIso(timezone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      timeZone: timezone,
+    }).formatToParts(new Date());
+    const year = parts.find((x) => x.type === 'year')?.value ?? '1970';
+    const month = parts.find((x) => x.type === 'month')?.value ?? '01';
+    const day = parts.find((x) => x.type === 'day')?.value ?? '01';
+    return new Date(`${year}-${month}-${day}T00:00:00.000Z`).toISOString();
+  } catch {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  }
+}
+
 function fakeSupabase(db: Record<string, Row[]>, errors: Record<string, string> = {}) {
-  return { from: (table: string) => new FakeBuilder(table, db, errors) };
+  return {
+    // The grouped-counts RPC (adu-opt-f1), answered from the same
+    // canned rows the old count queries read.
+    rpc: (name: string, params: { p_workspace_id: string; p_config_ids: string[] }) => {
+      if (name !== 'adu_config_counts') {
+        return Promise.resolve({ data: null, error: { code: '42883', message: 'not found' } });
+      }
+      const data = (params.p_config_ids ?? []).map((id) => {
+        const timezone = String(
+          (db['adu_configs'] ?? []).find((c) => c.id === id)?.['timezone'] ?? 'UTC',
+        );
+        const midnight = aduMidnightIso(timezone);
+        const reels = (db['adu_reels'] ?? []).filter((r) => r['config_id'] === id);
+        const jobs = (db['adu_posting_jobs'] ?? []).filter((j) => j['config_id'] === id);
+        const inPipeline = reels.filter((r) =>
+          ADU_PIPELINE_STATUSES.includes(String(r['status'])),
+        ).length;
+        const published = jobs.filter((j) => j['status'] === 'published');
+        const failed = jobs.filter((j) => ADU_FAILED_STATUSES.includes(String(j['status'])));
+        const failedInPipeline = failed.filter((j) => {
+          const reel = reels.find((r) => r['id'] === j['reel_id']);
+          return reel && ADU_PIPELINE_STATUSES.includes(String(reel['status']));
+        }).length;
+        return {
+          config_id: id,
+          in_pipeline: inPipeline,
+          published: published.length,
+          failed: failed.length,
+          failed_in_pipeline: failedInPipeline,
+          published_today: published.filter((j) => String(j['created_at']) >= midnight).length,
+          failed_today: failed.filter((j) => String(j['created_at']) >= midnight).length,
+        };
+      });
+      return Promise.resolve({ data, error: null });
+    },
+    from: (table: string) => new FakeBuilder(table, db, errors),
+  };
 }
 
 function configRow(overrides: Partial<Row> = {}): Row {

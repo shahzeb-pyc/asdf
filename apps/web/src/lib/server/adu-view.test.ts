@@ -9,10 +9,10 @@
  * - 1 failed job + reel still 'processing' → Pending 0, Failed 1.
  * Posted / Failed counts are job-based and unchanged.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AduConfigRow } from '@fbuploadpro/contracts';
-import { buildAduConfigView } from './adu';
+import { buildAduConfigView, buildAduConfigViews } from './adu';
 
 type Row = Record<string, unknown>;
 
@@ -69,7 +69,27 @@ class FakeQuery {
   }
 }
 
-function makeFakeSupabase(counts: CountSetup, destinationPlatform = 'facebook') {
+function countsRow(configId: string, c: CountSetup) {
+  return {
+    config_id: configId,
+    in_pipeline: c.pipeline,
+    published: c.published,
+    failed: c.failed,
+    failed_in_pipeline: c.failedInPipeline,
+    published_today: c.publishedToday,
+    failed_today: c.failedToday,
+  };
+}
+
+function makeFakeSupabase(
+  counts: CountSetup,
+  destinationPlatform = 'facebook',
+  perConfig?: Record<string, CountSetup>,
+  rpcOverride?: (
+    name: string,
+    params: { p_workspace_id: string; p_config_ids: string[] },
+  ) => { data: unknown; error: { code?: string; message?: string } | null },
+) {
   const calls: Array<{ table: string; ops: Op[] }> = [];
   const destination: Row = {
     id: 'dest-1',
@@ -82,11 +102,38 @@ function makeFakeSupabase(counts: CountSetup, destinationPlatform = 'facebook') 
     platform: destinationPlatform,
     social_accounts: { display_name: 'Test Account', avatar_url: null },
   };
+  const resolveCounts = (configId: string): CountSetup =>
+    perConfig?.[configId] ?? counts;
   const db = {
     calls,
+    rpc: (
+      name: string,
+      params: { p_workspace_id: string; p_config_ids: string[] },
+    ) => {
+      calls.push({ table: 'rpc', ops: [{ kind: 'rpc', args: [name, params] }] });
+      if (rpcOverride) return Promise.resolve(rpcOverride(name, params));
+      if (name !== 'adu_config_counts') {
+        return Promise.resolve({ data: null, error: { code: '42883', message: 'not found' } });
+      }
+      return Promise.resolve({
+        data: (params.p_config_ids ?? []).map((id) => countsRow(id, resolveCounts(id))),
+        error: null,
+      });
+    },
     from: (table: string) =>
       new FakeQuery(table, (t, ops) => {
-        if (t === 'destinations') return { data: destination, error: null };
+        if (t === 'destinations') {
+          // Single-config lookup uses maybeSingle (one row); the batch
+          // path uses .in('id', [...]) and reads an array.
+          const single = ops.some((o) => o.kind === 'maybeSingle');
+          return single
+            ? { data: destination, error: null }
+            : { data: [destination], error: null };
+        }
+        const configId =
+          (ops.find((o) => o.kind === 'eq' && o.args[0] === 'config_id')?.args[1] as string) ??
+          'c1';
+        const c = resolveCounts(configId);
         const hasReelFilter = ops.some(
           (o) => o.kind === 'in' && o.args[0] === 'adu_reels.status',
         );
@@ -97,13 +144,13 @@ function makeFakeSupabase(counts: CountSetup, destinationPlatform = 'facebook') 
         const eqStatus = ops.find(
           (o) => o.kind === 'eq' && o.args[0] === 'status',
         )?.args[1] as string | undefined;
-        if (t === 'adu_reels') return { count: counts.pipeline, error: null };
-        if (hasReelFilter) return { count: counts.failedInPipeline, error: null };
+        if (t === 'adu_reels') return { count: c.pipeline, error: null };
+        if (hasReelFilter) return { count: c.failedInPipeline, error: null };
         if (inStatus) {
-          return { count: hasGte ? counts.failedToday : counts.failed, error: null };
+          return { count: hasGte ? c.failedToday : c.failed, error: null };
         }
         if (eqStatus === 'published') {
-          return { count: hasGte ? counts.publishedToday : counts.published, error: null };
+          return { count: hasGte ? c.publishedToday : c.published, error: null };
         }
         return { count: 0, error: null };
       }, calls),
@@ -195,28 +242,241 @@ describe('buildAduConfigView pendingCount (spec §3.5)', () => {
     expect(view.postedCount).toBe(1);
   });
 
-  it('issues the embedded-reel filtered count for the subtraction', async () => {
+  it('zero posts: pending 0, pendingToday is the full daily quota', async () => {
     const db = makeFakeSupabase({
-      pipeline: 1,
+      pipeline: 0,
       published: 0,
-      failed: 1,
-      failedInPipeline: 1,
+      failed: 0,
+      failedInPipeline: 0,
       publishedToday: 0,
-      failedToday: 1,
+      failedToday: 0,
     });
-    await buildAduConfigView(db, configRow());
-    const embedded = (db as unknown as { calls: Array<{ table: string; ops: Op[] }> }).calls.find(
-      (c) =>
-        c.table === 'adu_posting_jobs' &&
-        c.ops.some(
-          (o) =>
-            o.kind === 'select' &&
-            typeof o.args[0] === 'string' &&
-            (o.args[0] as string).includes('adu_reels!inner(status)'),
-        ) &&
-        c.ops.some((o) => o.kind === 'in' && o.args[0] === 'adu_reels.status'),
+    const view = await buildAduConfigView(db, configRow());
+    expect(view.pendingCount).toBe(0);
+    expect(view.postedCount).toBe(0);
+    expect(view.failedCount).toBe(0);
+    expect(view.pendingToday).toBe(2);
+  });
+
+  it('pendingToday floors at 0 when postedToday exceeds the daily quota', async () => {
+    const db = makeFakeSupabase({
+      pipeline: 0,
+      published: 5,
+      failed: 0,
+      failedInPipeline: 0,
+      publishedToday: 5,
+      failedToday: 0,
+    });
+    const view = await buildAduConfigView(db, configRow());
+    expect(view.postedToday).toBe(5);
+    expect(view.pendingToday).toBe(0);
+  });
+});
+
+describe('buildAduConfigViews grouped counts (adu-opt-f1)', () => {
+  const callsOf = (db: unknown) =>
+    (db as unknown as { calls: Array<{ table: string; ops: Op[] }> }).calls;
+
+  function configWithId(id: string): AduConfigRow {
+    return { ...configRow(), id };
+  }
+
+  it('one batch of 9 configs issues exactly 1 destinations query + 1 counts RPC', async () => {
+    const db = makeFakeSupabase({
+      pipeline: 3,
+      published: 1,
+      failed: 2,
+      failedInPipeline: 1,
+      publishedToday: 1,
+      failedToday: 2,
+    });
+    const configs = Array.from({ length: 9 }, (_, i) => configWithId(`c${i + 1}`));
+    const views = await buildAduConfigViews(db, configs, { hub: true });
+    expect(views).toHaveLength(9);
+    // Order is preserved and every view carries the grouped counts.
+    expect(views.map((v) => v.id)).toEqual(configs.map((c) => c.id));
+    for (const view of views) {
+      expect(view.pendingCount).toBe(2);
+      expect(view.failedCount).toBe(2);
+      expect(view.postedCount).toBe(1);
+      expect(view.pendingToday).toBe(1);
+    }
+    const calls = callsOf(db);
+    expect(calls.filter((c) => c.table === 'destinations')).toHaveLength(1);
+    expect(
+      calls.filter(
+        (c) =>
+          c.table === 'rpc' &&
+          c.ops.some((o) => o.kind === 'rpc' && o.args[0] === 'adu_config_counts'),
+      ),
+    ).toHaveLength(1);
+    // No per-config count queries at all on the RPC path.
+    expect(calls.filter((c) => c.table === 'adu_reels')).toHaveLength(0);
+    expect(calls.filter((c) => c.table === 'adu_posting_jobs')).toHaveLength(0);
+    // The single destinations query carries every config's destination.
+    const destCall = calls.find((c) => c.table === 'destinations');
+    const inOp = destCall?.ops.find((o) => o.kind === 'in' && o.args[0] === 'id');
+    expect(inOp?.args[1]).toEqual(['dest-1']);
+  });
+
+  it('per-config counts stay distinct in one batch (parity across configs)', async () => {
+    const perConfig: Record<string, CountSetup> = {
+      c1: { pipeline: 3, published: 1, failed: 2, failedInPipeline: 1, publishedToday: 1, failedToday: 2 },
+      c2: { pipeline: 0, published: 0, failed: 0, failedInPipeline: 0, publishedToday: 0, failedToday: 0 },
+      c3: { pipeline: 1, published: 4, failed: 1, failedInPipeline: 1, publishedToday: 4, failedToday: 1 },
+    };
+    const db = makeFakeSupabase(
+      { pipeline: 0, published: 0, failed: 0, failedInPipeline: 0, publishedToday: 0, failedToday: 0 },
+      'facebook',
+      perConfig,
     );
-    expect(embedded).toBeDefined();
+    const views = await buildAduConfigViews(
+      db,
+      [configWithId('c1'), configWithId('c2'), configWithId('c3')],
+      { hub: true },
+    );
+    expect(views[0]?.pendingCount).toBe(2);
+    expect(views[0]?.pendingToday).toBe(1);
+    expect(views[1]?.pendingCount).toBe(0);
+    expect(views[1]?.pendingToday).toBe(2);
+    expect(views[2]?.pendingCount).toBe(0);
+    expect(views[2]?.postedCount).toBe(4);
+    expect(views[2]?.pendingToday).toBe(0);
+    expect(views[2]?.failedToday).toBe(1);
+  });
+
+  it('an empty batch issues no queries at all', async () => {
+    const db = makeFakeSupabase({
+      pipeline: 0, published: 0, failed: 0, failedInPipeline: 0, publishedToday: 0, failedToday: 0,
+    });
+    expect(await buildAduConfigViews(db, [], { hub: true })).toEqual([]);
+    expect(callsOf(db)).toHaveLength(0);
+  });
+
+  it('a config missing from the RPC result reads as zeros (logged, not fatal)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const db = makeFakeSupabase(
+        { pipeline: 3, published: 1, failed: 2, failedInPipeline: 1, publishedToday: 1, failedToday: 2 },
+        'facebook',
+        undefined,
+        () => ({ data: [], error: null }),
+      );
+      const [view] = await buildAduConfigViews(db, [configRow()], { hub: true });
+      expect(view?.pendingCount).toBe(0);
+      expect(view?.postedCount).toBe(0);
+      expect(view?.pendingToday).toBe(2);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('ADU counts missing for config c1'),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+describe('buildAduConfigViews legacy fallback (adu-opt-f1)', () => {
+  it('a missing counts RPC (migration not applied) falls back to the per-config counts', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const db = makeFakeSupabase(
+        { pipeline: 3, published: 1, failed: 2, failedInPipeline: 1, publishedToday: 1, failedToday: 2 },
+        'facebook',
+        undefined,
+        () => ({ data: null, error: { code: 'PGRST202', message: 'not found' } }),
+      );
+      const view = await buildAduConfigView(db, configRow());
+      expect(view.pendingCount).toBe(2);
+      expect(view.failedCount).toBe(2);
+      expect(view.postedCount).toBe(1);
+      expect(view.pendingToday).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('ADU counts RPC missing'),
+      );
+      // The fallback still issues the embedded-reel filtered count
+      // for the crash-window subtraction.
+      const embedded = (
+        db as unknown as { calls: Array<{ table: string; ops: Op[] }> }
+      ).calls.find(
+        (c) =>
+          c.table === 'adu_posting_jobs' &&
+          c.ops.some(
+            (o) =>
+              o.kind === 'select' &&
+              typeof o.args[0] === 'string' &&
+              (o.args[0] as string).includes('adu_reels!inner(status)'),
+          ) &&
+          c.ops.some((o) => o.kind === 'in' && o.args[0] === 'adu_reels.status'),
+      );
+      expect(embedded).toBeDefined();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('any other counts RPC error fails loud (no silent zeros)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const db = makeFakeSupabase(
+        { pipeline: 0, published: 0, failed: 0, failedInPipeline: 0, publishedToday: 0, failedToday: 0 },
+        'facebook',
+        undefined,
+        () => ({ data: null, error: { code: 'XX000', message: 'boom' } }),
+      );
+      await expect(buildAduConfigView(db, configRow())).rejects.toThrow(
+        /ADU counts failed/,
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('an invalid counts row fails loud (no wrong numbers rendered)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const db = makeFakeSupabase(
+        { pipeline: 0, published: 0, failed: 0, failedInPipeline: 0, publishedToday: 0, failedToday: 0 },
+        'facebook',
+        undefined,
+        () => ({
+          data: [{ config_id: 'c1', in_pipeline: 1 }],
+          error: null,
+        }),
+      );
+      await expect(buildAduConfigView(db, configRow())).rejects.toThrow(
+        /invalid row/,
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('legacy midnight is page-local midnight in the config timezone', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // Frozen at 02:30 UTC on 2026-11-13: New York is still on
+      // 2026-11-12, UTC is on 2026-11-13 — the two midnights differ.
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-11-13T02:30:00.000Z'));
+      const zero: CountSetup = {
+        pipeline: 0, published: 0, failed: 0, failedInPipeline: 0, publishedToday: 0, failedToday: 0,
+      };
+      const missingRpc = () => ({ data: null, error: { code: 'PGRST202', message: 'not found' } });
+      const nyDb = makeFakeSupabase(zero, 'facebook', undefined, missingRpc);
+      await buildAduConfigView(nyDb, { ...configRow(), timezone: 'America/New_York' });
+      const utcDb = makeFakeSupabase(zero, 'facebook', undefined, missingRpc);
+      await buildAduConfigView(utcDb, { ...configRow(), timezone: 'UTC' });
+      const gteValues = (db: unknown) =>
+        (db as unknown as { calls: Array<{ table: string; ops: Op[] }> }).calls
+          .flatMap((c) => c.ops)
+          .filter((o) => o.kind === 'gte')
+          .map((o) => o.args[1]);
+      expect(new Set(gteValues(nyDb))).toEqual(new Set(['2026-11-12T00:00:00.000Z']));
+      expect(new Set(gteValues(utcDb))).toEqual(new Set(['2026-11-13T00:00:00.000Z']));
+    } finally {
+      vi.useRealTimers();
+      errorSpy.mockRestore();
+    }
   });
 });
 
@@ -328,117 +588,12 @@ describe('buildAduConfigView hub view (adu-opt-a F7)', () => {
   });
 });
 
-describe('buildAduConfigView counts run concurrently (adu-opt-a F3)', () => {
-  it('issues all six counts before any of them resolves', async () => {
-    const started: string[] = [];
-    let openGate: (() => void) | null = null;
-    const gate = new Promise<void>((resolve) => {
-      openGate = resolve;
-    });
-    const poll = setInterval(() => {
-      if (started.length >= 6) {
-        clearInterval(poll);
-        openGate?.();
-      }
-    }, 0);
-    try {
-      const counts: CountSetup = {
-        pipeline: 3,
-        published: 1,
-        failed: 2,
-        failedInPipeline: 1,
-        publishedToday: 1,
-        failedToday: 2,
-      };
-      const destination: Row = {
-        id: 'dest-1',
-        name: 'Test Page',
-        external_destination_id: 'page-1',
-        avatar_url: null,
-        status: 'active',
-        account_id: 'acc-1',
-        handle: null,
-        platform: 'facebook',
-        social_accounts: { display_name: 'Test Account', avatar_url: null },
-      };
-      const db = {
-        from: (table: string) => {
-          const ops: Op[] = [];
-          const query = {
-            select(...args: unknown[]) {
-              ops.push({ kind: 'select', args });
-              return query;
-            },
-            eq(col: string, val: unknown) {
-              ops.push({ kind: 'eq', args: [col, val] });
-              return query;
-            },
-            in(col: string, val: unknown[]) {
-              ops.push({ kind: 'in', args: [col, val] });
-              return query;
-            },
-            gte(col: string, val: unknown) {
-              ops.push({ kind: 'gte', args: [col, val] });
-              return query;
-            },
-            maybeSingle() {
-              ops.push({ kind: 'maybeSingle', args: [] });
-              return query;
-            },
-            then(resolve: (value: unknown) => void) {
-              if (ops.some((o) => o.kind === 'maybeSingle')) {
-                resolve({ data: destination, error: null });
-                return;
-              }
-              // A count query: record the start and wait for the gate.
-              // Sequential code would start one count and wait on it
-              // forever — the gate only opens once all six started.
-              started.push(table);
-              void gate.then(() => {
-                const hasReelFilter = ops.some(
-                  (o) => o.kind === 'in' && o.args[0] === 'adu_reels.status',
-                );
-                const hasGte = ops.some((o) => o.kind === 'gte');
-                const inStatus = ops.find(
-                  (o) => o.kind === 'in' && o.args[0] === 'status',
-                )?.args[1] as string[] | undefined;
-                const eqStatus = ops.find(
-                  (o) => o.kind === 'eq' && o.args[0] === 'status',
-                )?.args[1] as string | undefined;
-                let count = 0;
-                if (table === 'adu_reels') count = counts.pipeline;
-                else if (hasReelFilter) count = counts.failedInPipeline;
-                else if (inStatus) count = hasGte ? counts.failedToday : counts.failed;
-                else if (eqStatus === 'published') {
-                  count = hasGte ? counts.publishedToday : counts.published;
-                }
-                resolve({ count, error: null });
-              });
-            },
-          };
-          return query;
-        },
-      } as unknown as SupabaseClient;
-      const view = await Promise.race([
-        buildAduConfigView(db, configRow()),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error('counts ran serially: gate never opened')),
-            3000,
-          ),
-        ),
-      ]);
-      expect(started.length).toBe(6);
-      expect(view.pendingCount).toBe(2);
-      expect(view.failedCount).toBe(2);
-      expect(view.postedCount).toBe(1);
-      expect(view.pendingToday).toBe(1);
-    } finally {
-      clearInterval(poll);
-    }
-  });
-});
-
+// F3 (adu-opt-a) is superseded by F1: the six per-config counts no
+// longer exist on the RPC path, so there is nothing to run
+// concurrently. Concurrency of the legacy fallback's six counts is
+// covered by the fallback test above (it returns the same values the
+// old F3 test asserted), and the trip-count test in the grouped-counts
+// describe pins the one-RPC shape that replaces it.
 describe('buildAduConfigView follower last-updated (spec 162)', () => {
   const zeroCounts: CountSetup = {
     pipeline: 0,

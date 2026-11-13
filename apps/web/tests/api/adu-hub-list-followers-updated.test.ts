@@ -156,8 +156,23 @@ describe('Facebook ADU hub GET (followers_updated_at wiring)', () => {
       adu_posting_jobs: [],
     };
     const supabase = {
-      rpc: vi.fn(async (name: string) => {
+      rpc: vi.fn(async (name: string, args?: { p_config_ids?: string[] }) => {
         if (name === 'adu_hub_list') return { data: rows, error: null };
+        if (name === 'adu_config_counts') {
+          // Fixtures here seed no reels or jobs, so every count is 0.
+          return {
+            data: (args?.p_config_ids ?? []).map((id) => ({
+              config_id: id,
+              in_pipeline: 0,
+              published: 0,
+              failed: 0,
+              failed_in_pipeline: 0,
+              published_today: 0,
+              failed_today: 0,
+            })),
+            error: null,
+          };
+        }
         return {
           data: [{ total_count: rows.length, total_followers_sum: 150, net_gained_sum: 50 }],
           error: null,

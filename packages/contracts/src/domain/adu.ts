@@ -762,6 +762,27 @@ export const AduConfigRowSchema = z
   .passthrough();
 export type AduConfigRow = z.infer<typeof AduConfigRowSchema>;
 
+/**
+ * One row of `adu_config_counts` (ADU optimization F1): the six grouped
+ * counts for one config. Validated at the RPC boundary in
+ * `loadAduConfigCounts` before any consumer reads a number — a shape
+ * change must fail loud, never render as wrong counts.
+ */
+export const AduConfigCountsSchema = z.object({
+  // Non-empty string, not .uuid(): the column type already guarantees
+  // a uuid in production, and the fakes in the view/route tests use
+  // short ids — the schema's job here is catching a missing or
+  // wrong-typed field, not re-proving the column type.
+  config_id: z.string().min(1),
+  in_pipeline: z.number().int().nonnegative(),
+  published: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  failed_in_pipeline: z.number().int().nonnegative(),
+  published_today: z.number().int().nonnegative(),
+  failed_today: z.number().int().nonnegative(),
+});
+export type AduConfigCounts = z.infer<typeof AduConfigCountsSchema>;
+
 export const AduReelRowSchema = z
   .object({
     id: z.string().uuid(),
