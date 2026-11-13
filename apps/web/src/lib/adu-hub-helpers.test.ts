@@ -123,19 +123,19 @@ class FakeOptionsQuery {
 
 }
 
-function makeOptionsFake(options: FakeOptions = {}) {
+function makeOptionsFake(options: FakeOptions = {}, platform = 'instagram') {
   const accountRows: Row[] = Array.from({ length: 2500 }, (_, i) => ({
     id: `acc-${String(i).padStart(4, '0')}`,
     workspace_id: 'ws-1',
-    platform: 'instagram',
+    platform,
     display_name: `Account ${String(i).padStart(4, '0')}`,
   }));
   const destinationRows: Row[] = [
-    { id: 'dest-1', workspace_id: 'ws-1', platform: 'instagram', section: 'adu', name: 'A', account_id: 'acc-0000' },
-    { id: 'dest-2', workspace_id: 'ws-1', platform: 'instagram', section: null, name: 'B', account_id: 'acc-0001' },
+    { id: 'dest-1', workspace_id: 'ws-1', platform, section: 'adu', name: 'A', account_id: 'acc-0000' },
+    { id: 'dest-2', workspace_id: 'ws-1', platform, section: null, name: 'B', account_id: 'acc-0001' },
   ];
   const configuredRows: Row[] = [
-    { destination_id: 'dest-1', source_platform: 'instagram', source_username: 'a' },
+    { workspace_id: 'ws-1', destination_id: 'dest-1', source_platform: platform, source_username: 'a' },
   ];
   const rangeCalls: Record<string, Array<[number, number]>> = {
     social_accounts: [],
@@ -189,9 +189,12 @@ describe('loadAduOptionsListsForPlatform', () => {
   });
 
   it('a missing adu_configs table is flagged, not fatal', async () => {
-    const fake = makeOptionsFake({
-      configuredError: { message: 'relation "adu_configs" does not exist', code: '42P01' },
-    });
+    const fake = makeOptionsFake(
+      {
+        configuredError: { message: 'relation "adu_configs" does not exist', code: '42P01' },
+      },
+      'threads',
+    );
     const lists = await loadAduOptionsListsForPlatform(fake, 'ws-1', 'threads');
     expect(lists.migrationMissing).toBe(true);
     expect(lists.configured).toEqual([]);

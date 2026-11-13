@@ -115,21 +115,27 @@ export async function GET(
   // RPC names match the old in-memory stats exactly: totalFollowers
   // is the sum of current_followers, followersGained is the sum of the
   // net growth (current_followers minus starting_followers, floored at 0).
+  // A failed stats RPC reads as zeros (the pre-existing behaviour).
+  // Ignore any rows that arrive alongside the error — the stats are
+  // untrusted once the call has failed (same rule as the Facebook route).
   const statsRow = (statsRows as Array<{
     total_count?: number;
     total_followers_sum?: number;
     net_gained_sum?: number;
   }> | null)?.[0];
+  const stats = statsError
+    ? { totalPages: total, followersGained: 0, totalFollowers: 0 }
+    : {
+        totalPages: total,
+        followersGained: statsRow?.net_gained_sum ?? 0,
+        totalFollowers: statsRow?.total_followers_sum ?? 0,
+      };
   return NextResponse.json({
     configs: views,
     total,
     page,
     totalPages,
-    stats: {
-      totalPages: total,
-      followersGained: statsRow?.net_gained_sum ?? 0,
-      totalFollowers: statsRow?.total_followers_sum ?? 0,
-    },
+    stats,
   });
 }
 
