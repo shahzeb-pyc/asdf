@@ -129,6 +129,15 @@ function aduFailureFields(
 // get skipped, the way offset paging would skip them.
 export const ADU_TICK_PAGE_SIZE = 500;
 
+// Publish window: at most this many actionable jobs are processed per
+// tick — the old code's oldest-100 load, kept as the throttle.
+export const ADU_PUBLISH_BATCH_SIZE = 100;
+
+// Publish scan cap: at most this many pending rows are examined per
+// tick while looking for actionable jobs. Past the cap the tick
+// publishes what it found; if it found nothing it logs loudly.
+export const ADU_PUBLISH_SCAN_CAP = 1000;
+
 // Retention for adu_posting_jobs (SEND BACK fix): the table used to
 // grow forever — the old worker retention cleans only queue_items /
 // publish_logs. Settled jobs older than this window are deleted once
@@ -360,6 +369,236 @@ function aduSettlementFailure(
     return { code: failure.code, message: ADU_GENERIC_BACKEND_MESSAGE };
   }
   return failure;
+}
+
+/**
+ * Head-of-line fix (spec: adu-publish-head-of-line): load the jobs the
+ * publish loop will work on this tick. The old code loaded only the
+ * oldest 100 pending jobs, so 100 permanently-blocked jobs on dead
+ * destinations filled the window and live jobs behind them starved
+ * (proven 2026-11-13: D = 100 exactly, 91% of pending jobs never
+ * touched by the loop). The scan pages the oldest pending jobs and
+ * keeps only jobs that can make progress this tick, until the batch is
+ * full or the scan cap is hit. Blocked jobs stay pending_publish —
+ * recoverable on destination recovery — they are skipped, never failed
+ * or deleted. The per-job loop below runs unchanged on the selected
+ * jobs, so gates, claim, publish, settlement and bounce semantics are
+ * exactly as before.
+ *
+ * Actionable = the job settles without any gate (retries exhausted, or
+ * a stored Graph id), or its config is active, its destination is not
+ * disconnected/error, its account is active, a publisher is registered
+ * for the destination platform, and the workspace is entitled for the
+ * destination. The config / destination / account checks are bulk
+ * loads per page, not per-job queries; the entitlement RPC is memoized
+ * per (workspace, platform, destination key) within the tick.
+ *
+ * Keyset cursor: created_at is not unique, so a plain .gt() cursor
+ * could skip the tail of a timestamp tie group straddling a page
+ * boundary. .gte() re-fetches the boundary timestamp's rows and the
+ * in-memory seen set drops the duplicates; a page yielding zero new
+ * rows breaks the loop with a loud log instead of spinning. Every
+ * adu_posting_jobs insert in the codebase is a single-row insert, so a
+ * tie group larger than the page cannot occur in practice — the loud
+ * log covers the theoretical case rather than assuming it away.
+ */
+interface PublishScanJobRow {
+  id: string;
+  config_id: string;
+  reel_id: string;
+  publish_retries: number;
+  graph_post_id?: string | null;
+  created_at: string;
+}
+
+async function loadActionablePublishJobs(
+  supabase: SupabaseClient,
+  now: Date,
+): Promise<{ jobs: unknown[]; skipped: boolean; entitledByKey: Map<string, boolean> }> {
+  const entitledByKey = new Map<string, boolean>();
+  const selectedIds: string[] = [];
+  const seenIds = new Set<string>();
+  let scanned = 0;
+  let lastCreatedAt: string | null = null;
+  while (selectedIds.length < ADU_PUBLISH_BATCH_SIZE && scanned < ADU_PUBLISH_SCAN_CAP) {
+    let pageQuery = supabase
+      .from('adu_posting_jobs')
+      .select('id, config_id, reel_id, publish_retries, graph_post_id, created_at')
+      .eq('status', 'pending_publish')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .limit(ADU_TICK_PAGE_SIZE);
+    if (lastCreatedAt) pageQuery = pageQuery.gte('created_at', lastCreatedAt);
+    const { data: pageData, error: pageError } = await pageQuery;
+    if (pageError) {
+      if (isMissingTable(pageError)) return { jobs: [], skipped: true, entitledByKey };
+      throw new InternalError(`ADU publish job load failed: ${pageError.message}`);
+    }
+    const page = (pageData ?? []) as unknown as PublishScanJobRow[];
+    if (page.length === 0) break;
+    const fresh = page.filter((row) => !seenIds.has(row.id));
+    if (fresh.length === 0) {
+      // Every row on this page was already seen: the boundary
+      // created_at holds a tie group larger than the page. Do not
+      // spin; log loudly — this is the same invisible-wedge shape the
+      // fix removes, and the rows past the tie group wait for the next
+      // tick.
+      console.error(
+        `[adu-tick] publish scan stalled on a created_at tie group at ${lastCreatedAt}; ${seenIds.size} rows already seen, unscanned rows past this timestamp wait for the next tick`,
+      );
+      break;
+    }
+    for (const row of fresh) seenIds.add(row.id);
+    scanned += fresh.length;
+    lastCreatedAt = page[page.length - 1]!.created_at;
+    // Bulk-load the gate rows for this page: one query per table, not
+    // one per job. An empty id list is never sent (PostgREST rejects
+    // an empty IN list) — it just means an empty map.
+    const configIds = [...new Set(fresh.map((row) => row.config_id))];
+    let configsById = new Map<
+      string,
+      { workspace_id: string; destination_id: string; status: string }
+    >();
+    if (configIds.length > 0) {
+      const { data: configData, error: configError } = await supabase
+        .from('adu_configs')
+        .select('id, workspace_id, destination_id, status')
+        .in('id', configIds);
+      if (configError) {
+        if (isMissingTable(configError)) return { jobs: [], skipped: true, entitledByKey };
+        throw new InternalError(`ADU publish config load failed: ${configError.message}`);
+      }
+      configsById = new Map(
+        ((configData ?? []) as unknown as {
+          id: string;
+          workspace_id: string;
+          destination_id: string;
+          status: string;
+        }[]).map((c) => [c.id, c]),
+      );
+    }
+    const destinationIds = [
+      ...new Set(
+        [...configsById.values()].map((c) => c.destination_id).filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    let destinationsById = new Map<
+      string,
+      {
+        id: string;
+        account_id: string;
+        platform: string;
+        external_destination_id: string | null;
+        status: string;
+      }
+    >();
+    if (destinationIds.length > 0) {
+      const { data: destinationData, error: destinationError } = await supabase
+        .from('destinations')
+        .select('id, account_id, platform, external_destination_id, status')
+        .in('id', destinationIds);
+      if (destinationError) {
+        if (isMissingTable(destinationError)) return { jobs: [], skipped: true, entitledByKey };
+        throw new InternalError(
+          `ADU publish destination load failed: ${destinationError.message}`,
+        );
+      }
+      destinationsById = new Map(
+        ((destinationData ?? []) as unknown as {
+          id: string;
+          account_id: string;
+          platform: string;
+          external_destination_id: string | null;
+          status: string;
+        }[]).map((d) => [d.id, d]),
+      );
+    }
+    const accountIds = [
+      ...new Set(
+        [...destinationsById.values()].map((d) => d.account_id).filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    let accountsById = new Map<string, { status: string }>();
+    if (accountIds.length > 0) {
+      const { data: accountData, error: accountError } = await supabase
+        .from('social_accounts')
+        .select('id, status')
+        .in('id', accountIds);
+      if (accountError) {
+        if (isMissingTable(accountError)) return { jobs: [], skipped: true, entitledByKey };
+        throw new InternalError(`ADU publish account load failed: ${accountError.message}`);
+      }
+      accountsById = new Map(
+        ((accountData ?? []) as unknown as { id: string; status: string }[]).map((a) => [
+          a.id,
+          a,
+        ]),
+      );
+    }
+    for (const row of fresh) {
+      if (selectedIds.length >= ADU_PUBLISH_BATCH_SIZE) break;
+      // Settles without any gate: retries exhausted fails the job, a
+      // stored Graph id settles it published. Both make progress, so
+      // they are always actionable.
+      if (row.publish_retries > ADU_MAX_PUBLISH_RETRIES || row.graph_post_id) {
+        selectedIds.push(row.id);
+        continue;
+      }
+      const config = configsById.get(row.config_id);
+      if (!config || config.status !== 'active') continue;
+      const destination = destinationsById.get(config.destination_id);
+      if (!destination || destination.status === 'disconnected' || destination.status === 'error')
+        continue;
+      const account = accountsById.get(destination.account_id);
+      if (!account || account.status !== 'active') continue;
+      // No publisher-registration filter here: a job for a platform
+      // with no registered publisher is still actionable — the loop
+      // stamps it publisher_not_registered and counts a retry, which
+      // is the loud signal that the platform is misconfigured.
+      // Filtering it in the scan would swallow that signal.
+      const destinationKey = destination.external_destination_id ?? destination.id;
+      const entitlementKey = `${config.workspace_id}|${destination.platform}|${destinationKey}`;
+      let entitled = entitledByKey.get(entitlementKey);
+      if (entitled === undefined) {
+        entitled = await workspaceCanPublishForDestination(
+          supabase,
+          config.workspace_id,
+          destination.platform,
+          destinationKey,
+          now,
+        );
+        entitledByKey.set(entitlementKey, entitled);
+      }
+      if (!entitled) continue;
+      selectedIds.push(row.id);
+    }
+    if (page.length < ADU_TICK_PAGE_SIZE) break;
+  }
+  if (scanned >= ADU_PUBLISH_SCAN_CAP && selectedIds.length === 0) {
+    console.error(
+      `[adu-tick] publish scan hit the ${ADU_PUBLISH_SCAN_CAP}-row cap with zero actionable jobs; ${scanned} pending jobs examined, none publishable — the queue is fully blocked`,
+    );
+  }
+  if (selectedIds.length === 0) return { jobs: [], skipped: false, entitledByKey };
+  // Load the full rows (with the reel embed) for the selected jobs
+  // only, and restore created_at order — the .in() result order is not
+  // guaranteed.
+  const { data: fullData, error: fullError } = await supabase
+    .from('adu_posting_jobs')
+    .select('*, adu_reels(*)')
+    .in('id', selectedIds)
+    .eq('status', 'pending_publish');
+  if (fullError) {
+    if (isMissingTable(fullError)) return { jobs: [], skipped: true, entitledByKey };
+    throw new InternalError(`ADU publish job load failed: ${fullError.message}`);
+  }
+  const fullById = new Map(
+    ((fullData ?? []) as unknown as { id: string }[]).map((row) => [row.id, row]),
+  );
+  const jobs = selectedIds
+    .map((id) => fullById.get(id))
+    .filter((row): row is { id: string } => row !== undefined);
+  return { jobs, skipped: false, entitledByKey };
 }
 
 export async function runAduTick(options: {
@@ -616,9 +855,18 @@ export async function runAduTick(options: {
     // 'downloaded' and the next slot intaken it again (same video
     // posted twice). A lost claim (0 rows) means another tick took
     // this reel — skip, never insert a second job for it.
+    // The claim also clears download_claimed_at: mark_adu_reel_downloaded
+    // leaves the downloader's claim timestamp set, and the VPS
+    // downloader's per-loop reset_stale_adu_reel_downloads(40) resets
+    // any 'processing' reel with a >40-min-old claim timestamp back to
+    // 'pending' — which undid this claim, re-downloaded the reel, and
+    // re-minted it at the next slot (duplicate jobs, Nov 9–13 2026).
+    // A tick-claimed reel carries no download claim, so NULL is the
+    // correct steady state; the reset then skips it (it requires a
+    // non-null timestamp).
     const { data: claimedReel, error: claimReelError } = await supabase
       .from('adu_reels')
-      .update({ status: 'processing' })
+      .update({ status: 'processing', download_claimed_at: null })
       .eq('id', (oldest as { id: string }).id)
       .eq('status', 'downloaded')
       .select('id');
@@ -686,16 +934,11 @@ export async function runAduTick(options: {
   // registered publisher is left pending with a loud error instead of
   // being dropped or mis-published (handled below, after the
   // destination is loaded).
-  const { data: jobs, error: jobError } = await supabase
-    .from('adu_posting_jobs')
-    .select('*, adu_reels(*)')
-    .eq('status', 'pending_publish')
-    .order('created_at', { ascending: true })
-    .limit(100);
-  if (jobError) {
-    if (isMissingTable(jobError)) return { ...result, skipped: true };
-    throw new InternalError(`ADU publish job load failed: ${jobError.message}`);
-  }
+  const { jobs, skipped: publishSkipped, entitledByKey } = await loadActionablePublishJobs(
+    supabase,
+    now,
+  );
+  if (publishSkipped) return { ...result, skipped: true };
   for (const rawJob of jobs ?? []) {
     const job = rawJob as Record<string, unknown> & {
       id: string;
@@ -786,15 +1029,23 @@ export async function runAduTick(options: {
         platform?: string;
         external_destination_id?: string | null;
       } | null;
+      // The scan already checked entitlement for this job (memoized
+      // per workspace|platform|destinationKey); reuse its answer so
+      // the RPC is called once per key per tick, not once per load.
+      // A missing entry (e.g. a job selected by the settle path)
+      // falls back to the RPC — safe by default.
       const entitled =
         gateWorkspaceId && gateDestination?.platform && gateDestinationId
-          ? await workspaceCanPublishForDestination(
+          ? entitledByKey.get(
+              `${gateWorkspaceId}|${gateDestination.platform}|${gateDestination.external_destination_id ?? gateDestinationId}`,
+            ) ??
+            (await workspaceCanPublishForDestination(
               supabase,
               gateWorkspaceId,
               gateDestination.platform,
               gateDestination.external_destination_id ?? gateDestinationId,
-              now
-            )
+              now,
+            ))
           : false;
       if (!entitled) {
         console.error(
