@@ -429,7 +429,7 @@ export function CalendarViewPanel({
                         <span
                           className={[
                             'rounded-md px-1.5 py-0.5 text-xs font-bold',
-                            isToday ? 'bg-primary text-on-primary' : 'text-ink-sub',
+                            isToday ? 'border border-link bg-primary text-on-primary' : 'text-ink-sub',
                           ].join(' ')}
                         >
                           {dayNumberOfKey(dayKey)}

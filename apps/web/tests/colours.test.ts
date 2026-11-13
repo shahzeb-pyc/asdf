@@ -50,6 +50,56 @@ const buttonSource = readFileSync(
   ),
   'utf8'
 );
+// Inline bg-primary usages the shared Button does not cover (spec 181 fix
+// round): the border rule is uniform, so every primary surface carries it.
+const inlinePrimarySources = {
+  destinationPicker: readFileSync(
+    path.resolve(
+      process.cwd(),
+      'src/components/connect/destination-picker.tsx'
+    ),
+    'utf8'
+  ),
+  toast: readFileSync(
+    path.resolve(process.cwd(), 'src/components/shared/ui/toast.tsx'),
+    'utf8'
+  ),
+  downloadTray: readFileSync(
+    path.resolve(
+      process.cwd(),
+      'src/components/shell/download-tray.tsx'
+    ),
+    'utf8'
+  ),
+  accountsShell: readFileSync(
+    path.resolve(
+      process.cwd(),
+      'src/app/tenant/[subdomain]/accounts/accounts-shell.tsx'
+    ),
+    'utf8'
+  ),
+  inappScheduleShell: readFileSync(
+    path.resolve(
+      process.cwd(),
+      'src/app/tenant/[subdomain]/inapp-schedule/inapp-schedule-shell.tsx'
+    ),
+    'utf8'
+  ),
+  instagramAccountsShell: readFileSync(
+    path.resolve(
+      process.cwd(),
+      'src/components/accounts/instagram-accounts-shell.tsx'
+    ),
+    'utf8'
+  ),
+  threadsAccountsShell: readFileSync(
+    path.resolve(
+      process.cwd(),
+      'src/components/accounts/threads-accounts-shell.tsx'
+    ),
+    'utf8'
+  ),
+};
 
 /** WCAG 2.x relative luminance + contrast ratio (same formula the spec used). */
 function luminance(hex: string): number {
@@ -206,5 +256,28 @@ describe('colours (spec 181 — official Snapchat palette)', () => {
     expect(buttonSource).toContain('border border-link bg-primary');
     expect(buttonSource).toContain('dark:hover:bg-brand-pale');
     expect(contrastRatio('#716400', '#FFFC00')).toBeGreaterThanOrEqual(3);
+  });
+
+  it('gives inline primary buttons the same border (spec 181 fix round)', () => {
+    // The shared Button is not the only primary surface: the Add Page
+    // confirm CTA, every toast actionButton, and the download-tray pill
+    // are inline bg-primary on light backgrounds at ~1.05:1, so the
+    // border rule is uniform — dropping it here would silently return
+    // those buttons to invisible edges.
+    expect(inlinePrimarySources.destinationPicker).toContain(
+      'border border-link bg-primary px-6'
+    );
+    expect(inlinePrimarySources.downloadTray).toContain(
+      'border border-link bg-primary px-4 py-2'
+    );
+    const actionButton =
+      'border border-link bg-primary text-on-primary rounded-sm px-3 h-9 font-medium';
+    expect(inlinePrimarySources.toast).toContain(actionButton);
+    expect(inlinePrimarySources.accountsShell).toContain(actionButton);
+    expect(inlinePrimarySources.inappScheduleShell).toContain(actionButton);
+    expect(inlinePrimarySources.instagramAccountsShell).toContain(
+      actionButton
+    );
+    expect(inlinePrimarySources.threadsAccountsShell).toContain(actionButton);
   });
 });

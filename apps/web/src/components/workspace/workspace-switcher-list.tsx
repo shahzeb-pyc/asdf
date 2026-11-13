@@ -117,7 +117,7 @@ export function SwitcherWorkspaceList({
             <div
               className={cn(
                 'flex size-5 shrink-0 items-center justify-center rounded-xs text-metadata font-bold',
-                isActive ? 'bg-primary text-on-primary' : 'bg-subtle text-ink'
+                isActive ? 'border border-link bg-primary text-on-primary' : 'bg-subtle text-ink'
               )}
             >
               {getUserInitials(ws.name || ws.subdomain)}

@@ -109,7 +109,7 @@ export const ACCOUNTS_CONNECT_TOAST_OPTIONS: NonNullable<ToasterProps['toastOpti
       'group toast group flex items-start gap-2 rounded-md border border-brand-emerald bg-brand-emerald/15 p-4 text-body text-ink shadow-elevated',
     title: 'font-medium',
     description: 'text-ink-sub',
-    actionButton: 'bg-primary text-on-primary rounded-sm px-3 h-9 font-medium',
+    actionButton: 'border border-link bg-primary text-on-primary rounded-sm px-3 h-9 font-medium',
     cancelButton: 'bg-subtle text-ink rounded-sm px-3 h-9 font-medium',
     closeButton: 'text-ink-sub hover:text-ink',
     success: 'text-brand-emerald border-brand-emerald bg-brand-emerald/15',

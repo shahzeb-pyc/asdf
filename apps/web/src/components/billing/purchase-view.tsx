@@ -223,7 +223,7 @@ function PurchaseStepIndicator({ current }: Readonly<{ current: PurchaseStep }>)
               aria-hidden
               className={cn(
                 'flex size-6 items-center justify-center rounded-full text-metadata font-medium',
-                active ? 'bg-primary text-on-primary' : 'bg-subtle text-ink-sub'
+                active ? 'border border-link bg-primary text-on-primary' : 'bg-subtle text-ink-sub'
               )}
             >
               {done ? <CheckIcon className="size-3.5" /> : index + 1}

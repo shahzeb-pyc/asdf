@@ -47,7 +47,7 @@ export function InstagramAccountsEmptyState({
         icon={
           <div
             aria-hidden
-            className="mb-2 flex size-14 items-center justify-center rounded-full bg-primary text-xl font-bold text-on-primary select-none"
+            className="mb-2 flex size-14 items-center justify-center rounded-full border border-link bg-primary text-xl font-bold text-on-primary select-none"
           >
             IG
           </div>
