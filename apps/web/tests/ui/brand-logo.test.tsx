@@ -21,9 +21,9 @@ describe('BrandMark Component (Spec 054 / US1)', () => {
     expect(hasAttribute('height', '32')).toBe(true);
 
     // Verify all 4 geometric paths and token fills
-    expect(html).toContain(PALETTE.primary); // #fad734
-    expect(html).toContain(PALETTE.accent1); // #b29527
-    expect(html).toContain(PALETTE.accent2); // #766018
+    expect(html).toContain(PALETTE.primary); // #FFFC00
+    expect(html).toContain(PALETTE.accent1); // #FCF000
+    expect(html).toContain(PALETTE.accent2); // #716400
     expect(html).toContain('fill-opacity="0.35"'); // Specular edge highlight
   });
 
