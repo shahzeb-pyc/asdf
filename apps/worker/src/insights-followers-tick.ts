@@ -6,11 +6,13 @@ import { decryptToken, InternalError } from '@fbuploadpro/contracts';
  *
  * The follower numbers on Pages / ADU / mirrors were written only at
  * import time and never refreshed. This tick runs once a day
- * (03:00 PKT = 22:00 UTC) and, per Facebook destination, fetches the
+ * (03:00 PKT = 22:00 UTC) and, per Facebook PAGE, fetches the
  * live follower total from Graph (`/{page-id}?fields=followers_count`
  * with the per-page destination token, decrypted server-side — the
  * same read pages/import and the live insights route do) and writes
- * ONLY the current total + a last-updated timestamp:
+ * ONLY the current total + a last-updated timestamp, to EVERY section
+ * row for that page (spec 174 3A: one fetch per page, fanned out —
+ * the copies used to drift apart when each row fetched separately):
  *
  *   - destinations.metadata: current_followers + followers_updated_at
  *     (starting_followers untouched — the merge preserves every other
@@ -231,84 +233,150 @@ async function listDestinationPage(
   return (data ?? []) as DestinationScanRow[];
 }
 
-async function processDestination(
+/**
+ * Spec 174 3A: one Graph fetch per PAGE, fanned out to every section
+ * row for that page. A page imported into two sections has two
+ * destination rows; the old per-row processing fetched the live
+ * total once per row at slightly different moments, so the copies
+ * drifted apart (Gate 2A finding 1: Mineralsrock 17525/17528/17530).
+ * Now the total is fetched once and the SAME value is written to
+ * every eligible row. Counters stay per-row (updated/skipped/failed
+ * count destination rows, as before); the fetch itself is per page.
+ *
+ * Eligible rows are the active, ungated, token-carrying ones. A
+ * group with no eligible row is skipped whole. Tokens are tried in
+ * row order until one decrypts and fetches — a 429 is platform-wide,
+ * so it stops the token walk instead of burning the other copies.
+ * A page fetched earlier in this run (its rows straddled two scan
+ * pages) reuses the cached total via fetchedByPage instead of
+ * fetching again.
+ */
+interface PageOutcome {
+  updated: number;
+  skipped: number;
+  failed: number;
+  adu: number;
+  mirrors: number;
+}
+
+async function processPage(
   supabase: SupabaseClient,
-  dest: DestinationScanRow,
+  dests: DestinationScanRow[],
   masterKey: string,
   nowIso: string,
   fetchFollowers: (fbPageId: string, accessToken: string) => Promise<number>,
-  sleep: (ms: number) => Promise<void>
-): Promise<{ outcome: 'updated' | 'skipped' | 'failed'; adu: number; mirrors: number }> {
-  const fbPageId = dest.external_destination_id;
-  if (dest.status !== 'active' || isGatedByFbStatus(dest.metadata)) {
-    return { outcome: 'skipped', adu: 0, mirrors: 0 };
-  }
-  if (!dest.encrypted_destination_token) {
-    console.warn(
-      `[insights-followers] page ${fbPageId} has no stored token; skipping`
-    );
-    return { outcome: 'skipped', adu: 0, mirrors: 0 };
-  }
-  let accessToken: string;
-  try {
-    accessToken = await decryptToken(dest.encrypted_destination_token, masterKey);
-  } catch (err) {
-    console.error(
-      `[insights-followers] page ${fbPageId} token decrypt failed; leaving stored followers untouched:`,
-      err instanceof Error ? err.message : err
-    );
-    return { outcome: 'failed', adu: 0, mirrors: 0 };
-  }
-  let live: number;
-  try {
-    live = await fetchLiveFollowersWithBackoff(
-      fbPageId,
-      accessToken,
-      fetchFollowers,
-      sleep
-    );
-  } catch (err) {
-    console.error(
-      `[insights-followers] page ${fbPageId} live check failed; leaving stored followers untouched:`,
-      err instanceof Error ? err.message : err
-    );
-    return { outcome: 'failed', adu: 0, mirrors: 0 };
+  sleep: (ms: number) => Promise<void>,
+  fetchedByPage: Map<string, number>
+): Promise<PageOutcome> {
+  const fbPageId = dests[0]!.external_destination_id;
+  const eligible = dests.filter(
+    (d) =>
+      d.status === 'active' &&
+      !isGatedByFbStatus(d.metadata) &&
+      typeof d.encrypted_destination_token === 'string' &&
+      d.encrypted_destination_token.length > 0
+  );
+  const skipped = dests.length - eligible.length;
+  if (eligible.length === 0) {
+    return { updated: 0, skipped: dests.length, failed: 0, adu: 0, mirrors: 0 };
   }
 
-  // Success only from here: every write below is a targeted
-  // single-row update of the freshly fetched total. A write error
-  // is logged loudly with its code and counts as a failure; the
-  // next daily run rewrites the same values (idempotent), so a
-  // partial write self-heals instead of inventing data.
-  try {
-    const nextMetadata: Record<string, unknown> = {
-      ...(dest.metadata ?? {}),
-      current_followers: live,
-      followers_updated_at: nowIso,
-    };
-    const { error: destError } = await supabase
-      .from('destinations')
-      .update({ metadata: nextMetadata, updated_at: nowIso })
-      .eq('id', dest.id);
-    if (destError) {
-      throw new InternalError(`destinations update failed: ${dbErrorDetail(destError)}`);
+  let live = fetchedByPage.get(fbPageId);
+  if (live === undefined) {
+    let lastErr: unknown = null;
+    for (const row of eligible) {
+      let accessToken: string;
+      try {
+        accessToken = await decryptToken(row.encrypted_destination_token!, masterKey);
+      } catch (err) {
+        lastErr = err;
+        continue;
+      }
+      try {
+        live = await fetchLiveFollowersWithBackoff(
+          fbPageId,
+          accessToken,
+          fetchFollowers,
+          sleep
+        );
+        break;
+      } catch (err) {
+        lastErr = err;
+        // A 429 is a platform-wide limit, not a bad token — do not
+        // burn the other copies' tokens on it.
+        if ((err as { status?: unknown }).status === 429) break;
+      }
     }
+    if (live === undefined) {
+      console.error(
+        `[insights-followers] page ${fbPageId} live check failed; leaving stored followers untouched:`,
+        lastErr instanceof Error ? lastErr.message : lastErr
+      );
+      return { updated: 0, skipped, failed: eligible.length, adu: 0, mirrors: 0 };
+    }
+    fetchedByPage.set(fbPageId, live);
+  }
 
+  // Success only from here: every write below is a targeted update
+  // of the freshly fetched total. A write error is logged loudly
+  // and fails only the store it hit; the next daily run rewrites
+  // the same values (idempotent), so a partial write self-heals
+  // instead of inventing data.
+  let updated = 0;
+  let failed = 0;
+  for (const dest of eligible) {
+    try {
+      const nextMetadata: Record<string, unknown> = {
+        ...(dest.metadata ?? {}),
+        current_followers: live,
+        followers_updated_at: nowIso,
+      };
+      const { error: destError } = await supabase
+        .from('destinations')
+        .update({ metadata: nextMetadata, updated_at: nowIso })
+        .eq('id', dest.id);
+      if (destError) {
+        throw new InternalError(`destinations update failed: ${dbErrorDetail(destError)}`);
+      }
+      updated += 1;
+    } catch (err) {
+      console.error(
+        `[insights-followers] page ${fbPageId} write failed after a successful live check:`,
+        err instanceof Error ? err.message : err
+      );
+      failed += 1;
+    }
+  }
+
+  // ADU configs attach to the adu copy only, so the IN-list over the
+  // group's rows hits exactly that row's configs, once per page.
+  let aduUpdated = 0;
+  try {
     const { error: aduError, count: aduCount } = await supabase
       .from('adu_configs')
       .update(
         { current_followers: live, followers_updated_at: nowIso },
         { count: 'exact' }
       )
-      .eq('destination_id', dest.id)
+      .in('destination_id', eligible.map((d) => d.id))
       .eq('status', 'active');
     if (aduError) {
       throw new InternalError(`adu_configs update failed: ${dbErrorDetail(aduError)}`);
     }
     // The count is informational only — the row write itself is what
     // matters, and a null count is never treated as a failure.
-    const aduUpdated = typeof aduCount === 'number' ? aduCount : 0;
+    aduUpdated = typeof aduCount === 'number' ? aduCount : 0;
+  } catch (err) {
+    console.error(
+      `[insights-followers] page ${fbPageId} adu write failed after a successful live check:`,
+      err instanceof Error ? err.message : err
+    );
+  }
 
+  // Mirrors are keyed by external id (as before), now once per page
+  // instead of once per section row.
+  let mirrorsUpdated = 0;
+  try {
     const { data: mirrorRows, error: mirrorError } = await supabase
       .from('mirrors')
       .select('id, status, fb_status, starting_followers')
@@ -317,7 +385,6 @@ async function processDestination(
     if (mirrorError) {
       throw new InternalError(`mirrors scan failed: ${dbErrorDetail(mirrorError)}`);
     }
-    let mirrorsUpdated = 0;
     for (const mirror of (mirrorRows ?? []) as MirrorScanRow[]) {
       if (mirror.status !== 'active') continue;
       if (typeof mirror.fb_status === 'string' && mirror.fb_status.length > 0) {
@@ -347,14 +414,13 @@ async function processDestination(
       }
       mirrorsUpdated += 1;
     }
-    return { outcome: 'updated', adu: aduUpdated, mirrors: mirrorsUpdated };
   } catch (err) {
     console.error(
-      `[insights-followers] page ${fbPageId} write failed after a successful live check:`,
+      `[insights-followers] page ${fbPageId} mirror write failed after a successful live check:`,
       err instanceof Error ? err.message : err
     );
-    return { outcome: 'failed', adu: 0, mirrors: 0 };
   }
+  return { updated, skipped, failed, adu: aduUpdated, mirrors: mirrorsUpdated };
 }
 
 /**
@@ -386,20 +452,33 @@ export async function runInsightsFollowersCycle(
   };
 
   let offset = 0;
+  // Spec 174 3A: one Graph fetch per page. Rows are grouped by
+  // external id (a page imported into two sections has two rows);
+  // a page whose rows straddle two scan pages reuses the fetched
+  // total via fetchedByPage instead of fetching again.
+  const fetchedByPage = new Map<string, number>();
   for (;;) {
     const page = await listDestinationPage(supabase, offset);
     result.scanned += page.length;
-    for (let i = 0; i < page.length; i += INSIGHTS_FOLLOWERS_CONCURRENCY) {
-      const chunk = page.slice(i, i + INSIGHTS_FOLLOWERS_CONCURRENCY);
+    const groups = new Map<string, DestinationScanRow[]>();
+    for (const dest of page) {
+      const key = dest.external_destination_id || dest.id;
+      const group = groups.get(key);
+      if (group) group.push(dest);
+      else groups.set(key, [dest]);
+    }
+    const groupList = [...groups.values()];
+    for (let i = 0; i < groupList.length; i += INSIGHTS_FOLLOWERS_CONCURRENCY) {
+      const chunk = groupList.slice(i, i + INSIGHTS_FOLLOWERS_CONCURRENCY);
       const outcomes = await Promise.all(
-        chunk.map((dest) =>
-          processDestination(supabase, dest, masterKey, nowIso, fetchFollowers, sleep)
+        chunk.map((dests) =>
+          processPage(supabase, dests, masterKey, nowIso, fetchFollowers, sleep, fetchedByPage)
         )
       );
       for (const outcome of outcomes) {
-        if (outcome.outcome === 'updated') result.updated += 1;
-        else if (outcome.outcome === 'skipped') result.skipped += 1;
-        else result.failed += 1;
+        result.updated += outcome.updated;
+        result.skipped += outcome.skipped;
+        result.failed += outcome.failed;
         result.aduUpdated += outcome.adu;
         result.mirrorsUpdated += outcome.mirrors;
       }

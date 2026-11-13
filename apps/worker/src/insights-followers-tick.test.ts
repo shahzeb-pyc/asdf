@@ -73,6 +73,11 @@ class FakeBuilder {
     return this;
   }
 
+  in(col: string, val: unknown[]): this {
+    this.filters.push((r) => val.includes(r[col]));
+    return this;
+  }
+
   order(column: string, opts?: { ascending?: boolean }): this {
     this.orderColumn = column;
     this.orderAscending = opts?.ascending ?? true;
@@ -410,6 +415,39 @@ describe('runInsightsFollowersCycle', () => {
       tiktokMirror,
       pausedMirror,
     })).toBe(before);
+  });
+
+  it('spec 174 3A: one page in two sections fetches once and writes the same count to both rows', async () => {
+    const db = fakeDb();
+    // Both rows are the same page (same external id) — the Gate 2A
+    // Mineralsrock drift: separate fetches wrote 17525/17528/17530
+    // to the copies at slightly different moments.
+    const schedule = await seedDestination(db, {
+      id: 'dest-schedule',
+      metadata: { starting_followers: 1000, current_followers: 1200 },
+    });
+    const adu = await seedDestination(db, {
+      id: 'dest-adu',
+      metadata: { starting_followers: 1000, current_followers: 1250 },
+    });
+    let fetches = 0;
+    const result = await runInsightsFollowersCycle({
+      db: fakeClient(db) as never,
+      masterKey: MASTER_KEY,
+      now: NOW,
+      fetchFollowers: async () => {
+        fetches += 1;
+        return 1300;
+      },
+    });
+    expect(fetches).toBe(1);
+    expect(result.scanned).toBe(2);
+    expect(result.updated).toBe(2);
+    expect(result.failed).toBe(0);
+    expect((schedule.metadata as Row).current_followers).toBe(1300);
+    expect((adu.metadata as Row).current_followers).toBe(1300);
+    expect((schedule.metadata as Row).followers_updated_at).toBe(NOW_ISO);
+    expect((adu.metadata as Row).followers_updated_at).toBe(NOW_ISO);
   });
 
   it('pages the scan in 200-row bounds, ordered by id', async () => {

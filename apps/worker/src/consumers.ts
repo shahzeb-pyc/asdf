@@ -824,10 +824,27 @@ async function processPublishMessage(
     if (freshToken) {
       try {
         const encrypted = await encryptToken(freshToken, masterKey);
-        const { error: updateError } = await deps.db
+        // Spec 174 3A: the re-discovered token is the PAGE's token,
+        // so it fans out to every section copy of the page — not
+        // just the row being published. Disconnected copies are
+        // excluded: a removed page must never regain a token (the
+        // disconnect strip owns that). A missing external id falls
+        // back to the single-row write.
+        let fanout = deps.db
           .from('destinations')
-          .update({ encrypted_destination_token: encrypted })
-          .eq('id', destination.id);
+          .update({ encrypted_destination_token: encrypted });
+        if (
+          typeof destination.external_destination_id === 'string' &&
+          destination.external_destination_id.length > 0
+        ) {
+          fanout = fanout
+            .eq('account_id', destination.account_id)
+            .eq('external_destination_id', destination.external_destination_id)
+            .neq('status', 'disconnected');
+        } else {
+          fanout = fanout.eq('id', destination.id);
+        }
+        const { error: updateError } = await fanout;
         if (updateError) {
           console.error(
             `[consumer] BG5 failed to persist re-discovered page token for destination ${destination.id}:`,

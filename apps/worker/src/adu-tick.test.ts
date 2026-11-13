@@ -323,6 +323,7 @@ describe('runAduTick', () => {
         account_id: 'acc-dead',
         workspace_id: 'ws-1',
         platform: 'facebook',
+        section: 'adu',
         status: 'error',
         encrypted_destination_token: null,
       },
@@ -331,6 +332,7 @@ describe('runAduTick', () => {
         account_id: 'acc-live',
         workspace_id: 'ws-1',
         platform: 'facebook',
+        section: 'adu',
         status: 'active',
         encrypted_destination_token: null,
       },
@@ -502,6 +504,11 @@ describe('runAduTick', () => {
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
       }
+      // Spec 174 3A: the intake gate reads the destination row; the
+      // fake answers it as the active ADU copy.
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { id: 'dest-1', section: 'adu', status: 'active' }, error: null };
+      }
       return { data: [], error: null };
     });
     const result = await runAduTick({
@@ -522,6 +529,11 @@ describe('runAduTick', () => {
       }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
+      }
+      // Spec 174 3A: the intake gate reads the destination row; the
+      // fake answers it as the active ADU copy.
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { id: 'dest-1', section: 'adu', status: 'active' }, error: null };
       }
       return { data: [], error: null };
     });
@@ -629,6 +641,7 @@ describe('runAduTick', () => {
             account_id: 'acc-1',
             workspace_id: 'ws-1',
             platform: 'facebook',
+            section: 'adu',
             status: 'active',
             encrypted_destination_token: null,
           },
@@ -643,6 +656,7 @@ describe('runAduTick', () => {
               account_id: 'acc-1',
               workspace_id: 'ws-1',
               platform: 'facebook',
+              section: 'adu',
               status: 'active',
               encrypted_destination_token: null,
             },
@@ -751,6 +765,7 @@ describe('runAduTick', () => {
               account_id: 'acc-1',
               workspace_id: 'ws-1',
               platform: 'threads',
+              section: 'adu',
               status: 'active',
               encrypted_destination_token: null,
             },
@@ -765,6 +780,7 @@ describe('runAduTick', () => {
             account_id: 'acc-1',
             workspace_id: 'ws-1',
             platform: 'threads',
+            section: 'adu',
             status: 'active',
             encrypted_destination_token: null,
           },
@@ -906,6 +922,7 @@ describe('runAduTick', () => {
               account_id: 'acc-1',
               workspace_id: 'ws-1',
               platform: 'threads',
+              section: 'adu',
               status: 'active',
               encrypted_destination_token: null,
             },
@@ -920,6 +937,7 @@ describe('runAduTick', () => {
             account_id: 'acc-1',
             workspace_id: 'ws-1',
             platform: 'threads',
+            section: 'adu',
             status: 'active',
             encrypted_destination_token: null,
           },
@@ -1054,6 +1072,7 @@ describe('runAduTick', () => {
               account_id: 'acc-1',
               workspace_id: 'ws-1',
               platform: 'instagram',
+              section: 'adu',
               status: 'active',
               encrypted_destination_token: null,
             },
@@ -1068,6 +1087,7 @@ describe('runAduTick', () => {
             account_id: 'acc-1',
             workspace_id: 'ws-1',
             platform: 'instagram',
+            section: 'adu',
             status: 'active',
             encrypted_destination_token: null,
           },
@@ -1174,6 +1194,7 @@ describe('runAduTick', () => {
               account_id: 'acc-1',
               workspace_id: 'ws-1',
               platform: 'youtube',
+              section: 'adu',
               status: 'active',
               encrypted_destination_token: null,
             },
@@ -1188,6 +1209,7 @@ describe('runAduTick', () => {
             account_id: 'acc-1',
             workspace_id: 'ws-1',
             platform: 'youtube',
+            section: 'adu',
             status: 'active',
             encrypted_destination_token: null,
           },
@@ -1348,7 +1370,7 @@ describe('runAduTick', () => {
       // this test is about.
       if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
         return {
-          data: { platform: 'facebook', external_destination_id: 'ext-dest-1' },
+          data: { platform: 'facebook', external_destination_id: 'ext-dest-1', section: 'adu' },
           error: null,
         };
       }
@@ -1359,6 +1381,7 @@ describe('runAduTick', () => {
               id: 'dest-1',
               account_id: 'acc-1',
               platform: 'facebook',
+              section: 'adu',
               external_destination_id: 'ext-dest-1',
               status: 'active',
             },
@@ -1404,6 +1427,11 @@ describe('runAduTick', () => {
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
       }
+      // Spec 174 3A: the intake gate reads the destination row; the
+      // fake answers it as the active ADU copy.
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { id: 'dest-1', section: 'adu', status: 'active' }, error: null };
+      }
       return { data: [], error: null };
     });
     await expect(
@@ -1429,6 +1457,11 @@ describe('runAduTick', () => {
       }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
+      }
+      // Spec 174 3A: the intake gate reads the destination row; the
+      // fake answers it as the active ADU copy.
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { id: 'dest-1', section: 'adu', status: 'active' }, error: null };
       }
       return { data: [], error: null };
     });
@@ -1458,6 +1491,11 @@ describe('runAduTick', () => {
       }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
+      }
+      // Spec 174 3A: the intake gate reads the destination row; the
+      // fake answers it as the active ADU copy.
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { id: 'dest-1', section: 'adu', status: 'active' }, error: null };
       }
       return { data: [], error: null };
     });
@@ -1500,6 +1538,11 @@ describe('runAduTick', () => {
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
       }
+      // Spec 174 3A: the intake gate reads the destination row; the
+      // fake answers it as the active ADU copy.
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { id: 'dest-1', section: 'adu', status: 'active' }, error: null };
+      }
       return { data: [], error: null };
     });
     await expect(
@@ -1531,6 +1574,11 @@ describe('runAduTick', () => {
       }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
+      }
+      // Spec 174 3A: the intake gate reads the destination row; the
+      // fake answers it as the active ADU copy.
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { id: 'dest-1', section: 'adu', status: 'active' }, error: null };
       }
       return { data: [], error: null };
     });
@@ -1590,7 +1638,7 @@ describe('runAduTick', () => {
       // backstop).
       if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
         return {
-          data: { platform: 'facebook', external_destination_id: 'ext-dest-1' },
+          data: { platform: 'facebook', external_destination_id: 'ext-dest-1', section: 'adu' },
           error: null,
         };
       }
@@ -1669,6 +1717,7 @@ describe('runAduTick', () => {
                   account_id: 'acc-1',
                   workspace_id: 'ws-1',
                   platform: 'facebook',
+                  section: 'adu',
                   status: 'active',
                   encrypted_destination_token: encryptedDestination,
                   ...opts.destinationRow,
@@ -1687,6 +1736,7 @@ describe('runAduTick', () => {
                     account_id: 'acc-1',
                     workspace_id: 'ws-1',
                     platform: 'facebook',
+                    section: 'adu',
                     status: 'active',
                     encrypted_destination_token: encryptedDestination,
                     ...opts.destinationRow,
@@ -1745,6 +1795,8 @@ describe('runAduTick', () => {
     expect(publisher.publish).toHaveBeenCalled();
     expect(result.published).toBe(1);
     // Key agreement (§6 criterion 8): the external id, not the row id.
+    // Spec 174 3A: the gate passes the section too, so a Schedule
+    // claim can no longer pass on an ADU-only registration.
     expect(rpcCapture).toEqual([
       {
         fn: 'can_publish_for',
@@ -1752,6 +1804,7 @@ describe('runAduTick', () => {
         p_platform: 'facebook',
         p_destination_key: 'ext-dest-1',
         p_at: NOW.toISOString(),
+        p_section: 'adu',
       },
     ]);
   });
@@ -1873,6 +1926,7 @@ describe('runAduTick', () => {
             account_id: 'acc-1',
             workspace_id: 'ws-1',
             platform: 'facebook',
+            section: 'adu',
             status: 'active',
             encrypted_destination_token: encryptedDestination,
           },
@@ -1887,6 +1941,7 @@ describe('runAduTick', () => {
               account_id: 'acc-1',
               workspace_id: 'ws-1',
               platform: 'facebook',
+              section: 'adu',
               status: 'active',
               encrypted_destination_token: encryptedDestination,
             },
@@ -2164,6 +2219,7 @@ describe('runAduTick', () => {
             account_id: 'acc-1',
             workspace_id: 'ws-1',
             platform: 'facebook',
+            section: 'adu',
             status: 'active',
             encrypted_destination_token: null,
           },
@@ -2178,6 +2234,7 @@ describe('runAduTick', () => {
               account_id: 'acc-1',
               workspace_id: 'ws-1',
               platform: 'facebook',
+              section: 'adu',
               status: 'active',
               encrypted_destination_token: null,
             },
@@ -2525,6 +2582,11 @@ describe('runAduTick', () => {
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
       }
+      // Spec 174 3A: the intake gate reads the destination row; the
+      // fake answers it as the active ADU copy.
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { id: 'dest-1', section: 'adu', status: 'active' }, error: null };
+      }
       return { data: [], error: null };
     });
     const result = await runAduTick({
@@ -2546,5 +2608,263 @@ describe('runAduTick', () => {
       ),
     ).toBe(true);
     expect(flippedTo(db, 'adu_configs', 'completed', 'c1')).toBeDefined();
+  });
+
+  // --- Spec 174 3A: section-scoped worker -------------------------
+  // The tick reads the Auto Download copy only: the invalid-token
+  // cascade lists ADU rows, intake skips configs whose destination
+  // is missing / wrong-section / not active (Gate 2A finding 3: the
+  // six configs on disconnected pages used to mint jobs that could
+  // never publish), and the publish loop re-verifies the section
+  // after the claim. A destination-load failure still throws.
+
+  it('spec 174 3A: the invalid-token cascade lists ADU rows only', async () => {
+    const { db } = await aduPublishTick(
+      {
+        status: 'failed',
+        error: { kind: 'auth', code: '190', message: 'Access token is invalid or revoked.' },
+      },
+      {
+        cascadeDestinations: [{ id: 'dest-2' }],
+        cascadeConfigs: [{ id: 'c2' }],
+      },
+    );
+    const cascadeDestCall = db.calls.find(
+      (c) =>
+        c.table === 'destinations' &&
+        !c.ops.some((o) => o.kind === 'maybeSingle') &&
+        c.ops.some((o) => o.kind === 'select'),
+    );
+    expect(
+      cascadeDestCall?.ops.some(
+        (o) => o.kind === 'eq' && o.args[0] === 'section' && o.args[1] === 'adu',
+      ),
+    ).toBe(true);
+  });
+
+  it('spec 174 3A: the publish-loop gate skips a job whose destination is not the ADU copy', async () => {
+    const rpcCapture: Array<Record<string, unknown>> = [];
+    const { result, publisher } = await s2GateTick({
+      rpcResult: true,
+      rpcCapture,
+      destinationRow: { section: 'schedule' },
+    });
+    expect(publisher.publish).not.toHaveBeenCalled();
+    expect(result.published).toBe(0);
+    // The gate skips before the entitlement RPC is ever called.
+    expect(rpcCapture).toHaveLength(0);
+  });
+
+  it('spec 174 3A: the publish loop re-verifies the section after the claim', async () => {
+    // The gate passes on the ADU row; the post-claim load returns
+    // the schedule copy instead (a row swapped between the two
+    // loads). The job goes back to pending_publish with the
+    // wrong-section code and is retried, never published.
+    const job = {
+      id: 'job-1',
+      config_id: 'c1',
+      reel_id: 'reel-1',
+      publish_retries: 0,
+      graph_post_id: null,
+      adu_reels: { caption: 'hi', media_url: 'https://example.invalid/r.mp4', media_object_key: 'r.mp4' },
+    };
+    const publisher = fakePublisher(async () => ({ status: 'published', externalPostId: 'g1' }));
+    const encryptedAccess = await encryptToken('access', MASTER_KEY);
+    const encryptedDestination = await encryptToken('dest-token', MASTER_KEY);
+    let destLoads = 0;
+    const db = makeDb((table, ops) => {
+      if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
+      if (table === 'users') return { data: { role: 'user' }, error: null };
+      if (table === 'subscription_periods') {
+        return {
+          data: [
+            {
+              starts_at: new Date(NOW.getTime() - 86400000).toISOString(),
+              ends_at: new Date(NOW.getTime() + 86400000 * 20).toISOString(),
+              superseded_at: null,
+            },
+          ],
+          error: null,
+        };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'pending_publish')) {
+        return { data: [job], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')) {
+        return { data: [], error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
+      }
+      // Spec 174 3A + #233: the scan bulk-loads the gate rows
+      // before the per-job gate runs — the bulk rows must carry
+      // the ADU copy, or the job never reaches the gate.
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return { data: [{ id: 'c1', destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }], error: null };
+      }
+      if (table === 'adu_configs') return { data: [], error: null };
+      if (table === 'destinations' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return {
+          data: [
+            {
+              id: 'dest-1',
+              account_id: 'acc-1',
+              workspace_id: 'ws-1',
+              platform: 'facebook',
+              status: 'active',
+              section: 'adu',
+              external_destination_id: 'ext-dest-1',
+              encrypted_destination_token: encryptedDestination,
+            },
+          ],
+          error: null,
+        };
+      }
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        destLoads += 1;
+        return {
+          data: {
+            id: 'dest-1',
+            account_id: 'acc-1',
+            workspace_id: 'ws-1',
+            platform: 'facebook',
+            status: 'active',
+            section: destLoads === 1 ? 'adu' : 'schedule',
+            external_destination_id: 'ext-dest-1',
+            encrypted_destination_token: encryptedDestination,
+          },
+          error: null,
+        };
+      }
+      if (table === 'destinations') return { data: [], error: null };
+      if (table === 'social_accounts' && ops.some((o) => o.kind === 'in' && o.args[0] === 'id')) {
+        return { data: [{ id: 'acc-1', status: 'active' }], error: null };
+      }
+      if (table === 'social_accounts') {
+        return {
+          data: {
+            id: 'acc-1',
+            status: 'active',
+            encrypted_access_token: encryptedAccess,
+            encrypted_refresh_token: null,
+          },
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(publisher),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(publisher.publish).not.toHaveBeenCalled();
+    expect(result.published).toBe(0);
+    expect(result.retried).toBe(1);
+    const backToPending = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some(
+          (o) =>
+            o.kind === 'update' &&
+            (o.args[0] as Row).status === 'pending_publish' &&
+            (o.args[0] as Row).last_error_code === 'destination_wrong_section',
+        ),
+    );
+    expect(backToPending).toBeDefined();
+  });
+
+  it('spec 174 3A: intake skips a config whose destination is disconnected (Gate 2A finding 3)', async () => {
+    const config = configRow('c1', ['09:00']);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs') return { data: [config], error: null };
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { id: 'dest-1', section: 'adu', status: 'disconnected' }, error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(null),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(result.intakeJobsCreated).toBe(0);
+    expect(result.intakeCompleted).toBe(0);
+    // The config stays active — the skip is per-tick, not a flip —
+    // and no reel was ever loaded for it.
+    expect(flippedTo(db, 'adu_configs', 'completed', 'c1')).toBeUndefined();
+    expect(db.calls.some((c) => c.table === 'adu_reels')).toBe(false);
+  });
+
+  it('spec 174 3A: intake skips a config pointing at a schedule-section row', async () => {
+    const config = configRow('c1', ['09:00']);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs') return { data: [config], error: null };
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { id: 'dest-1', section: 'schedule', status: 'active' }, error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(null),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(result.intakeJobsCreated).toBe(0);
+    expect(result.intakeCompleted).toBe(0);
+    expect(flippedTo(db, 'adu_configs', 'completed', 'c1')).toBeUndefined();
+    expect(db.calls.some((c) => c.table === 'adu_reels')).toBe(false);
+  });
+
+  it('spec 174 3A: intake skips a config whose destination row is gone', async () => {
+    const config = configRow('c1', ['09:00']);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs') return { data: [config], error: null };
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: null, error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(null),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(result.intakeJobsCreated).toBe(0);
+    expect(result.intakeCompleted).toBe(0);
+    expect(flippedTo(db, 'adu_configs', 'completed', 'c1')).toBeUndefined();
+  });
+
+  it('spec 174 3A: an intake destination-load failure throws instead of skipping', async () => {
+    const config = configRow('c1', ['09:00']);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs') return { data: [config], error: null };
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: null, error: { code: '500', message: 'dest boom' } };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    await expect(
+      runAduTick({ db: db as never, registry: registryWith(null), masterKey: MASTER_KEY, now: NOW }),
+    ).rejects.toThrow(/ADU intake destination load failed/);
   });
 });
