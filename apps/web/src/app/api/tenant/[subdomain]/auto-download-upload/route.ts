@@ -171,12 +171,19 @@ export async function GET(
   if (statsError) {
     console.error(`ADU hub stats failed: code=${statsError.code ?? 'unknown'}`);
   }
+  // A failed stats RPC reads as zeros (the pre-existing behaviour:
+  // the RPC returns no rows on error, so the sums fall back to 0).
+  // Ignore any rows that arrive alongside the error — the stats are
+  // untrusted once the call has failed.
+  const stats = statsError
+    ? { totalPages: total, followersGained: 0, totalFollowers: 0 }
+    : { ...statsFromRows(statsRows), totalPages: total };
   return NextResponse.json({
     configs: views,
     total,
     page,
     totalPages,
-    stats: { ...statsFromRows(statsRows), totalPages: total },
+    stats,
   });
 }
 
