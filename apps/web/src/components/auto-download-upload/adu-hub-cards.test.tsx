@@ -10,6 +10,7 @@
 import * as React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AduHubPage } from './adu-hub-page';
 
 vi.mock('next/image', () => ({
@@ -17,9 +18,23 @@ vi.mock('next/image', () => ({
     React.createElement('img', { src: props.src, alt: props.alt }),
 }));
 
+vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(''),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}));
+
 vi.mock('@/components/billing/entitlement-provider', () => ({
   useSharedEntitlement: () => ({ entitlement: null, isLoading: false }),
 }));
+
+function renderHub() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <AduHubPage subdomain="testws" />
+    </QueryClientProvider>,
+  );
+}
 
 function config(overrides: Record<string, unknown> = {}) {
   return {
@@ -80,7 +95,7 @@ afterEach(() => {
 describe('AduHubPage followers last-updated (spec 162)', () => {
   it('shows when the stored total was last updated, in the posting timezone', async () => {
     stubFetch([config()]);
-    render(<AduHubPage subdomain="testws" />);
+    renderHub();
     // 22:00 UTC = 03:00 next day in Asia/Karachi.
     const line = await screen.findByTestId('adu-page-followers-updated');
     expect(line.textContent).toContain('Updated 11 Nov 2026, 03:00');
@@ -88,7 +103,7 @@ describe('AduHubPage followers last-updated (spec 162)', () => {
 
   it('shows no Updated line before the first stamp (timestamp null)', async () => {
     stubFetch([config({ followersUpdatedAt: null })]);
-    render(<AduHubPage subdomain="testws" />);
+    renderHub();
     await screen.findByTestId('adu-page-followers-line');
     expect(screen.queryByTestId('adu-page-followers-updated')).toBeNull();
   });
