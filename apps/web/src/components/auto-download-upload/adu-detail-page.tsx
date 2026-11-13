@@ -504,6 +504,21 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
     setCaptionDraft('');
   }, []);
 
+  // Spec 179: Escape collapses the expanded card. A document listener
+  // (not a handler on the grid div) so no non-interactive element
+  // carries a keyboard handler. It fires from the textarea too — the
+  // draft is re-prefilled on the next expand, so nothing is lost
+  // silently. Skipped while the delete dialog is open: its own Escape
+  // handling dismisses it, exactly as before.
+  React.useEffect(() => {
+    if (expandedReelId === null || deleteReelId !== null) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') collapseExpanded();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [expandedReelId, deleteReelId, collapseExpanded]);
+
   React.useEffect(() => { void loadConfig(); }, [loadConfig]);
 
   // F13: reels/failed fetch on first visit to their tab only — never
@@ -864,13 +879,6 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
               <div
                 className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-3"
                 data-testid="adu-reels-grid"
-                onKeyDown={(e) => {
-                  // Escape collapses the expanded card. The handler
-                  // sits on the grid so it works from the textarea
-                  // too — the draft is re-prefilled on the next
-                  // expand, so nothing is lost silently.
-                  if (e.key === 'Escape' && expandedReelId !== null) collapseExpanded();
-                }}
               >
                 {reels.map((reel) => {
                   const expanded = expandedReelId === reel.id;
@@ -936,6 +944,9 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
                       )}
                       {expanded ? (
                         <div
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Edit reel: ${reel.caption ?? 'No caption'}`}
                           className="absolute inset-0 flex flex-col overflow-y-auto bg-panel"
                           onClick={(e) => {
                             // Clicking the card again collapses it —
@@ -944,6 +955,17 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
                             // which keep their own behaviour.
                             if ((e.target as HTMLElement).closest('button, textarea, input, select, a, video')) return;
                             collapseExpanded();
+                          }}
+                          onKeyDown={(e) => {
+                            // Enter/Space on the card itself collapses
+                            // it, mirroring the click — but never from
+                            // an interactive descendant (typing a space
+                            // in the textarea must not collapse it).
+                            if ((e.target as HTMLElement).closest('button, textarea, input, select, a, video')) return;
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              collapseExpanded();
+                            }
                           }}
                         >
                           <div className="my-auto flex w-full flex-col items-center gap-3 p-4 text-center">
