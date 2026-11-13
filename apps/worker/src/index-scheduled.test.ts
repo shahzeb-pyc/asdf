@@ -48,6 +48,7 @@ function stubFrom(
     select: () => emptyChain,
     eq: () => emptyChain,
     neq: () => emptyChain,
+    not: () => emptyChain,
     is: () => emptyChain,
     lte: () => emptyChain,
     lt: () => emptyChain,
@@ -74,6 +75,7 @@ function stubFrom(
     select: () => failingChain,
     eq: () => failingChain,
     neq: () => failingChain,
+    not: () => failingChain,
     is: () => failingChain,
     lte: () => failingChain,
     lt: () => failingChain,
@@ -265,7 +267,7 @@ describe('handleScheduled downgrade-activation tick wiring (C3)', () => {
     errSpy.mockRestore();
   });
 
-  it.each(['*/15 * * * *', '0 2 * * *', '*/10 * * * *', '0 22 * * *'])(
+  it.each(['*/15 * * * *', '0 2 * * *', '*/10 * * * *', '0 22 * * *', '0 4 * * *'])(
     'cron %s does not run the downgrade tick',
     async (cron) => {
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -288,6 +290,112 @@ describe('handleScheduled downgrade-activation tick wiring (C3)', () => {
     expect(heartbeatRow).toBeDefined();
     expect(heartbeatRow!.last_success_at).toBeUndefined();
     expect(heartbeatRow!.last_skip_reason).toBe('downgrade_tick_failed');
+    errSpy.mockRestore();
+  });
+});
+
+describe('handleScheduled daily section check (spec 174 3B)', () => {
+  const NOW = new Date('2026-11-13T04:00:00.000Z');
+
+  /**
+   * `from()` stub answering exact counts per table (the shape the
+   * section check reads). A table missing from `counts` answers 0.
+   * `failTables` makes those tables error instead.
+   */
+  function countFrom(
+    counts: Record<string, number>,
+    failTables: string[] = []
+  ) {
+    return (table: string) => {
+      const chain: any = {
+        select: () => chain,
+        is: () => chain,
+        eq: () => chain,
+        neq: () => chain,
+        not: () => chain,
+        then: (resolve: (v: unknown) => void) => {
+          if (failTables.includes(table)) {
+            resolve({ data: null, count: null, error: new Error(`boom on ${table}`) });
+          } else {
+            resolve({ data: [], count: counts[table] ?? 0, error: null });
+          }
+        },
+      };
+      return chain;
+    };
+  }
+
+  async function runSectionCron(db: unknown) {
+    await handleScheduled(
+      { cron: '0 4 * * *', scheduledTime: NOW.getTime() } as never,
+      { TOKEN_ENCRYPTION_KEY: 'test-key' } as never,
+      undefined,
+      {
+        db: db as never,
+        queues: { fast: fakeQueue() as never, heavy: fakeQueue() as never },
+        now: NOW,
+        waitUntil: () => {},
+      }
+    );
+  }
+
+  it('runs clean and stays silent: no error log, no heartbeat write', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const upsertRows: Record<string, unknown>[] = [];
+    const fromTables: string[] = [];
+    const db = {
+      from: (table: string) => {
+        fromTables.push(table);
+        return countFrom({})(table);
+      },
+    };
+    await expect(runSectionCron(db)).resolves.toBeUndefined();
+    // The check reads exactly its five tables, and nothing else —
+    // in particular it never runs the claimer (no heartbeat upsert).
+    expect(fromTables).toEqual([
+      'destinations',
+      'posting_slots',
+      'queue_items',
+      'adu_configs',
+      'posting_slot_claims',
+    ]);
+    expect(upsertRows).toEqual([]);
+    expect(errSpy).not.toHaveBeenCalled();
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringContaining('section check: dirty=false')
+    );
+    errSpy.mockRestore();
+    infoSpy.mockRestore();
+  });
+
+  it('flags a seeded labelless row loudly but does not fail the run', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const db = { from: countFrom({ destinations: 2, adu_configs: 1 }) };
+    await expect(runSectionCron(db)).resolves.toBeUndefined();
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'section check: dirty=true unsectioned=2 slots=0 queueItems=0 aduConfigs=1 slotClaims=0'
+      )
+    );
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('section check DIRTY')
+    );
+    errSpy.mockRestore();
+    infoSpy.mockRestore();
+  });
+
+  it('fails loud when a count query errors', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const db = { from: countFrom({}, ['queue_items']) };
+    await expect(runSectionCron(db)).rejects.toThrow(
+      'section check failed: table=queue_items'
+    );
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('section check failed'),
+      expect.anything()
+    );
     errSpy.mockRestore();
   });
 });

@@ -47,10 +47,10 @@ BEGIN
     ('f0000000-0000-0000-0000-000000000001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
      'facebook', 'ext-acct-a', 'Rig Unified Account A', 'dummy-encrypted-access-token', 'active');
 
-  INSERT INTO public.destinations (id, workspace_id, account_id, platform, external_destination_id, name, encrypted_destination_token, status) VALUES
+  INSERT INTO public.destinations (id, workspace_id, account_id, platform, external_destination_id, name, encrypted_destination_token, status, section) VALUES
     ('f0000000-0000-0000-0000-000000000002', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
      'f0000000-0000-0000-0000-000000000001', 'facebook', 'ext-dest-a', 'Rig Unified Dest A',
-     'dummy-encrypted-destination-token', 'active');
+     'dummy-encrypted-destination-token', 'active', 'schedule');
 
   INSERT INTO public.media_folders (id, user_id, name, parent_id) VALUES
     ('f001f001-f001-f001-f001-f001f001f001', '11111111-1111-1111-1111-111111111111', 'Rig Folder Parent', NULL),

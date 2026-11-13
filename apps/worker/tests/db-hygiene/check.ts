@@ -552,8 +552,8 @@ async function sectionPostingSlots(pool: Pool): Promise<void> {
 
   const mkDest = await attemptSuper(
     pool,
-    `INSERT INTO public.destinations (id, workspace_id, account_id, platform, external_destination_id, name, encrypted_destination_token, status)
-     VALUES ($1::uuid, $2::uuid, $3::uuid, 'facebook', 'ext-dest-b', 'Rig Unified Dest B', 'dummy-encrypted-destination-token', 'active')`,
+    `INSERT INTO public.destinations (id, workspace_id, account_id, platform, external_destination_id, name, encrypted_destination_token, status, section)
+     VALUES ($1::uuid, $2::uuid, $3::uuid, 'facebook', 'ext-dest-b', 'Rig Unified Dest B', 'dummy-encrypted-destination-token', 'active', 'schedule')`,
     [DEST_B, WS_A, ACCOUNT_A]
   );
   check(mkDest.ok, 'second destination fixture inserts', `${mkDest.code} ${mkDest.message}`);

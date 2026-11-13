@@ -13,7 +13,10 @@ import {
  */
 type CapturedQuery = {
   table: string;
+  select: string | null;
   filters: Record<string, unknown>;
+  neq: Record<string, unknown>;
+  not: Array<{ column: string; operator: string; value: unknown }>;
   lte: Record<string, unknown>;
   or: string | null;
 };
@@ -25,15 +28,52 @@ function createMockDb(options: {
   oldestScheduledTime?: string | null;
   pageCounts?: Record<string, number>;
   accountCounts?: Record<string, number>;
+  sectionCheck?: {
+    unsectioned?: number;
+    slots?: number;
+    queueItems?: number;
+    aduConfigs?: number;
+    slotClaims?: number;
+  };
 }) {
   const queries: CapturedQuery[] = [];
   const makeBuilder = (table: string) => {
     const filters: Record<string, unknown> = {};
+    const neq: Record<string, unknown> = {};
+    const not: Array<{ column: string; operator: string; value: unknown }> = [];
     const lte: Record<string, unknown> = {};
-    const captured: CapturedQuery = { table, filters, lte, or: null };
+    const captured: CapturedQuery = {
+      table,
+      select: null,
+      filters,
+      neq,
+      not,
+      lte,
+      or: null,
+    };
     queries.push(captured);
     const builder: Record<string, unknown> = {};
     const resolveCount = () => {
+      // Spec 174 3B: the section-check queries. The destinations
+      // query has NO status filter (unlike the per-section buckets,
+      // which always carry one); child queries carry the
+      // `destinations!inner` embed.
+      if (
+        table === 'destinations' &&
+        filters.section === null &&
+        filters.status === undefined
+      ) {
+        return { count: options.sectionCheck?.unsectioned ?? 0, error: null };
+      }
+      if (captured.select?.includes('destinations!inner')) {
+        const perTable: Record<string, number | undefined> = {
+          posting_slots: options.sectionCheck?.slots,
+          queue_items: options.sectionCheck?.queueItems,
+          adu_configs: options.sectionCheck?.aduConfigs,
+          posting_slot_claims: options.sectionCheck?.slotClaims,
+        };
+        return { count: perTable[table] ?? 0, error: null };
+      }
       if (table === 'queue_items') {
         return {
           count: filters.status === 'publishing' ? (options.stuckCount ?? 0) : (options.dueCount ?? 0),
@@ -48,9 +88,20 @@ function createMockDb(options: {
       }
       return { count: 0, error: null };
     };
-    builder.select = () => builder;
+    builder.select = (columns: string) => {
+      captured.select = columns;
+      return builder;
+    };
     builder.eq = (_col: string, val: unknown) => {
       filters[_col] = val;
+      return builder;
+    };
+    builder.neq = (_col: string, val: unknown) => {
+      neq[_col] = val;
+      return builder;
+    };
+    builder.not = (_col: string, op: string, val: unknown) => {
+      not.push({ column: _col, operator: op, value: val });
       return builder;
     };
     builder.is = (col: string, val: unknown) => {
@@ -289,6 +340,103 @@ describe('Internal Health Probe (/api/internal/health)', () => {
     expect(res.payload.status).toBe('degraded');
     expect(res.payload.checks.queue.dueCount).toBe(42);
     expect(res.payload.checks.queue.oldestDueAgeSeconds).toBe(7200);
+  });
+
+  it('reports sectionCheck clean when every destination is labelled', async () => {
+    const db = createMockDb({
+      heartbeat: freshHeartbeat,
+      pageCounts: { active: 10 },
+      accountCounts: { active: 4 },
+    });
+    const res = await probeInternalHealth({
+      db,
+      checkStorage: async () => true,
+      now: NOW,
+    });
+    expect(res.payload.status).toBe('ok');
+    expect(res.payload.checks.facebook.sectionCheck).toEqual({
+      dirty: false,
+      unsectionedDestinations: 0,
+      wrongSectionChildren: 0,
+      checkedAt: NOW.toISOString(),
+    });
+  });
+
+  it('flags unsectioned destinations in sectionCheck and degrades', async () => {
+    const db = createMockDb({
+      heartbeat: freshHeartbeat,
+      sectionCheck: { unsectioned: 1 },
+    });
+    const res = await probeInternalHealth({
+      db,
+      checkStorage: async () => true,
+      now: NOW,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.payload.status).toBe('degraded');
+    expect(res.payload.checks.facebook.sectionCheck).toEqual({
+      dirty: true,
+      unsectionedDestinations: 1,
+      wrongSectionChildren: 0,
+      checkedAt: NOW.toISOString(),
+    });
+    // The unsectioned query is Facebook-scoped like the rest of
+    // the block, and carries no status filter (unlike the
+    // per-section buckets).
+    const sectionQuery = queriesFor(db, 'destinations').find(
+      (q) => q.filters.section === null && q.filters.status === undefined
+    );
+    expect(sectionQuery).toBeDefined();
+    expect(sectionQuery?.filters.platform).toBe('facebook');
+  });
+
+  it('flags wrong-section children in sectionCheck with per-table predicates', async () => {
+    const db = createMockDb({
+      heartbeat: freshHeartbeat,
+      sectionCheck: { slots: 1, queueItems: 2, aduConfigs: 0, slotClaims: 1 },
+    });
+    const res = await probeInternalHealth({
+      db,
+      checkStorage: async () => true,
+      now: NOW,
+    });
+    expect(res.payload.status).toBe('degraded');
+    expect(res.payload.checks.facebook.sectionCheck).toEqual({
+      dirty: true,
+      unsectionedDestinations: 0,
+      wrongSectionChildren: 4,
+      checkedAt: NOW.toISOString(),
+    });
+    // Every child query joins destinations, scopes to Facebook
+    // pages, and filters on the owning section: slots/claims want
+    // schedule, ADU configs want adu, queue items accept schedule
+    // or publish_now.
+    const childQueries = db.__queries.filter((q) =>
+      q.select?.includes('destinations!inner')
+    );
+    expect(childQueries.map((q) => q.table).sort()).toEqual([
+      'adu_configs',
+      'posting_slot_claims',
+      'posting_slots',
+      'queue_items',
+    ]);
+    for (const q of childQueries) {
+      expect(q.filters['destinations.platform']).toBe('facebook');
+    }
+    const slots = childQueries.find((q) => q.table === 'posting_slots');
+    expect(slots?.neq['destinations.section']).toBe('schedule');
+    const claims = childQueries.find((q) => q.table === 'posting_slot_claims');
+    expect(claims?.neq['destinations.section']).toBe('schedule');
+    const adu = childQueries.find((q) => q.table === 'adu_configs');
+    expect(adu?.neq['destinations.section']).toBe('adu');
+    const queue = childQueries.find((q) => q.table === 'queue_items');
+    expect(queue?.not).toEqual([
+      {
+        column: 'destinations.section',
+        operator: 'in',
+        value: '(schedule,publish_now)',
+      },
+    ]);
   });
 
   it('flips to unhealthy when storage is down', async () => {
