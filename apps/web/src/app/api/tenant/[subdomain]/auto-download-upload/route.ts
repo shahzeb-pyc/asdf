@@ -20,7 +20,7 @@ import {
   aduMissingTable,
   aduRpcMissing,
   buildAduConfigView,
-  type AduConfigView,
+  type AduHubConfigView,
   type AduDiscoveredGraphPage,
 } from '@/lib/server/adu';
 import {
@@ -54,6 +54,27 @@ function statusFilterToValue(filter: string): string | null {
   return map[filter] ?? null;
 }
 
+function statsFromRows(statsRows: unknown): {
+  totalPages: number;
+  followersGained: number;
+  totalFollowers: number;
+} {
+  // RPC names match the old in-memory stats exactly: totalFollowers
+  // is the sum of current_followers, followersGained is the sum of the
+  // net growth (current_followers minus starting_followers, floored at 0).
+  // totalPages here is the total config count (misnamed, kept).
+  const statsRow = (statsRows as Array<{
+    total_count?: number;
+    total_followers_sum?: number;
+    net_gained_sum?: number;
+  }> | null)?.[0];
+  return {
+    totalPages: statsRow?.total_count ?? 0,
+    followersGained: statsRow?.net_gained_sum ?? 0,
+    totalFollowers: statsRow?.total_followers_sum ?? 0,
+  };
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ subdomain: string }> }
@@ -74,14 +95,55 @@ export async function GET(
   const page = Math.max(1, Number(request.nextUrl.searchParams.get('page') ?? '1') || 1);
   const pageSize = 9;
   const statusValue = statusFilterToValue(statusFilter);
-  const { data: rows, error } = await supabase.rpc('adu_hub_list', {
-    p_workspace_id: workspaceId,
-    p_search: search || null,
-    p_status: statusValue,
-    p_sort: sort,
-    p_limit: pageSize,
-    p_offset: (page - 1) * pageSize,
-  });
+  // F6 (adu-opt-a): the client caches stats on a longer TTL than the
+  // list, so it can ask for stats alone (`stats=only`) or skip them
+  // on page turns (`stats=none`). Default (no param, or any other
+  // value) is the current combined response, unchanged.
+  const statsParam = request.nextUrl.searchParams.get('stats');
+  if (statsParam === 'only') {
+    const { data: statsRows, error: statsError } = await supabase.rpc('adu_hub_stats', {
+      p_workspace_id: workspaceId,
+      p_search: search || null,
+      p_status: statusValue,
+    });
+    if (statsError) {
+      // A stats-only response cannot fall back to zeros silently —
+      // the stats ARE the response. A missing RPC means the ADU
+      // migrations have not been applied yet (same banner as the list
+      // path); any other failure is a loud 500.
+      if (aduRpcMissing(statsError)) {
+        return NextResponse.json({
+          stats: { totalPages: 0, followersGained: 0, totalFollowers: 0 },
+          migrationMissing: true,
+        });
+      }
+      console.error(`ADU hub stats failed: code=${statsError.code ?? 'unknown'}`);
+      return NextResponse.json({ error: 'Failed to load pages.' }, { status: 500 });
+    }
+    return NextResponse.json({ stats: statsFromRows(statsRows) });
+  }
+  // F2 (adu-opt-a): list + stats run concurrently instead of
+  // sequentially — the same filtered scan, one trip saved per load.
+  // `stats=none` skips the stats RPC entirely (the resolved stub
+  // keeps the Promise.all shape; its result is never read).
+  const [listResult, statsResult] = await Promise.all([
+    supabase.rpc('adu_hub_list', {
+      p_workspace_id: workspaceId,
+      p_search: search || null,
+      p_status: statusValue,
+      p_sort: sort,
+      p_limit: pageSize,
+      p_offset: (page - 1) * pageSize,
+    }),
+    statsParam === 'none'
+      ? Promise.resolve({ data: null, error: null })
+      : supabase.rpc('adu_hub_stats', {
+          p_workspace_id: workspaceId,
+          p_search: search || null,
+          p_status: statusValue,
+        }),
+  ]);
+  const { data: rows, error } = listResult;
   if (error) {
     // 42P01 = ADU tables missing; 42883 / PGRST202 = the RPC itself
     // missing, which also means the ADU migrations have not been
@@ -97,36 +159,24 @@ export async function GET(
   const listRows = (rows ?? []) as Array<Record<string, unknown> & { total_count?: number }>;
   const total = listRows[0]?.total_count ?? 0;
   const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-  const views: AduConfigView[] = [];
-  for (const row of listRows) {
-    views.push(await buildAduConfigView(supabase, row as never));
+  // Hub views are slim (F7) and built concurrently — each build is
+  // independent and Promise.all preserves row order.
+  const views: AduHubConfigView[] = await Promise.all(
+    listRows.map((row) => buildAduConfigView(supabase, row as never, { hub: true })),
+  );
+  if (statsParam === 'none') {
+    return NextResponse.json({ configs: views, total, page, totalPages });
   }
-  const { data: statsRows, error: statsError } = await supabase.rpc('adu_hub_stats', {
-    p_workspace_id: workspaceId,
-    p_search: search || null,
-    p_status: statusValue,
-  });
+  const { data: statsRows, error: statsError } = statsResult;
   if (statsError) {
     console.error(`ADU hub stats failed: code=${statsError.code ?? 'unknown'}`);
   }
-  // RPC names match the old in-memory stats exactly: totalFollowers
-  // is the sum of current_followers, followersGained is the sum of the
-  // net growth (current_followers minus starting_followers, floored at 0).
-  const statsRow = (statsRows as Array<{
-    total_count?: number;
-    total_followers_sum?: number;
-    net_gained_sum?: number;
-  }> | null)?.[0];
   return NextResponse.json({
     configs: views,
     total,
     page,
     totalPages,
-    stats: {
-      totalPages: total,
-      followersGained: statsRow?.net_gained_sum ?? 0,
-      totalFollowers: statsRow?.total_followers_sum ?? 0,
-    },
+    stats: { ...statsFromRows(statsRows), totalPages: total },
   });
 }
 

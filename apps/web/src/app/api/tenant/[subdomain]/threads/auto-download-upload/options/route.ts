@@ -50,7 +50,9 @@ export async function GET(
   const { data: configured } = await supabase
     .from('adu_configs')
     .select('destination_id, source_platform, source_username')
-    .eq('workspace_id', workspaceId);
+    .eq('workspace_id', workspaceId)
+    .order('destination_id')
+    .limit(1000);
   if (configured === null) {
     // Table missing is not fatal for the picker: pages are still shown.
     const { error } = await supabase.from('adu_configs').select('id').limit(1);

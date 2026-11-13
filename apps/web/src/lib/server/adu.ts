@@ -343,39 +343,44 @@ export async function loadAduOptionsLists(
   supabase: SupabaseClient,
   workspaceId: string,
 ): Promise<AduOptionsLists> {
-  const accounts = await selectAllPages<Record<string, unknown>>((from, to) =>
-    supabase
-      .from('social_accounts')
-      .select('id, external_account_id, display_name, avatar_url, status')
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'facebook')
-      .order('display_name')
-      .range(from, to),
-  );
+  // The three selects are independent — run them concurrently
+  // (adu-opt-a F11). Error precedence is the old sequential order:
+  // accounts first, then pages, then configured.
+  const [accounts, pages, configured] = await Promise.all([
+    selectAllPages<Record<string, unknown>>((from, to) =>
+      supabase
+        .from('social_accounts')
+        .select('id, external_account_id, display_name, avatar_url, status')
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'facebook')
+        .order('display_name')
+        .range(from, to),
+    ),
+    selectAllPages<Record<string, unknown>>((from, to) =>
+      supabase
+        .from('destinations')
+        .select('id, account_id, external_destination_id, name, avatar_url, status, metadata')
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'facebook')
+        .eq('section', 'adu')
+        .order('name')
+        .range(from, to),
+    ),
+    selectAllPages<Record<string, unknown>>((from, to) =>
+      supabase
+        .from('adu_configs')
+        .select('destination_id, source_platform, source_username')
+        .eq('workspace_id', workspaceId)
+        .order('destination_id')
+        .range(from, to),
+    ),
+  ]);
   if (accounts.error) {
     throw new Error(accounts.error.message ?? 'Could not load Facebook accounts.');
   }
-  const pages = await selectAllPages<Record<string, unknown>>((from, to) =>
-    supabase
-      .from('destinations')
-      .select('id, account_id, external_destination_id, name, avatar_url, status, metadata')
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'facebook')
-      .eq('section', 'adu')
-      .order('name')
-      .range(from, to),
-  );
   if (pages.error) {
     throw new Error(pages.error.message ?? 'Could not load Facebook pages.');
   }
-  const configured = await selectAllPages<Record<string, unknown>>((from, to) =>
-    supabase
-      .from('adu_configs')
-      .select('destination_id, source_platform, source_username')
-      .eq('workspace_id', workspaceId)
-      .order('destination_id')
-      .range(from, to),
-  );
   if (configured.error) {
     if (aduMissingTable(configured.error)) {
       return {
@@ -805,13 +810,54 @@ export async function loadAduConfigView(
   return buildAduConfigView(supabase, config as AduConfigRow);
 }
 
+/**
+ * Hub-only view (adu-opt-a F7): the hub card renders a subset of the
+ * full view — `accountName` is the only account field it reads, and
+ * it never renders `scheduleType`, `postingTimes`, `syncStatus`,
+ * `alert`, `displayName`, `updatedAt`, `destinationHandle`,
+ * `destinationPlatform`, `accountAvatarUrl` or `destinationStatus`
+ * (verified against `AduPageCard` + the list code in
+ * `adu-hub-page.tsx`, the list route's only consumer). The detail
+ * page, the Instagram hub and Threads detail keep the full shape;
+ * only the Facebook list GET builds hub views.
+ */
+export type AduHubConfigView = Omit<
+  AduConfigView,
+  | 'scheduleType'
+  | 'postingTimes'
+  | 'syncStatus'
+  | 'alert'
+  | 'displayName'
+  | 'updatedAt'
+  | 'destinationHandle'
+  | 'destinationPlatform'
+  | 'accountAvatarUrl'
+  | 'destinationStatus'
+>;
+
 export async function buildAduConfigView(
   supabase: SupabaseClient,
-  config: AduConfigRow
-): Promise<AduConfigView> {
+  config: AduConfigRow,
+  options: { hub: true },
+): Promise<AduHubConfigView>;
+export async function buildAduConfigView(
+  supabase: SupabaseClient,
+  config: AduConfigRow,
+  options?: { hub?: false },
+): Promise<AduConfigView>;
+export async function buildAduConfigView(
+  supabase: SupabaseClient,
+  config: AduConfigRow,
+  options?: { hub?: boolean },
+): Promise<AduConfigView | AduHubConfigView> {
+  const hub = options?.hub === true;
   const { data: destination } = await supabase
     .from('destinations')
-    .select('id, name, external_destination_id, avatar_url, status, account_id, handle, platform, social_accounts(display_name, avatar_url)')
+    .select(
+      hub
+        ? 'id, name, external_destination_id, avatar_url, status, account_id, platform, social_accounts(display_name)'
+        : 'id, name, external_destination_id, avatar_url, status, account_id, handle, platform, social_accounts(display_name, avatar_url)',
+    )
     .eq('id', config.destination_id)
     .eq('section', 'adu')
     .maybeSingle();
@@ -854,9 +900,6 @@ export async function buildAduConfigView(
     }
     return count ?? 0;
   }
-  const inPipelineCount = await countRows('adu_reels', ['pending', 'processing', 'downloaded']);
-  const postedCount = await countRows('adu_posting_jobs', 'published');
-  const failedCount = await countRows('adu_posting_jobs', failedStatuses);
   // Failed jobs whose reel is still in the pipeline (the crash window
   // between the job settling and the reel going 'failed'). The !inner
   // join keeps only jobs whose reel is in a pipeline status, so a
@@ -866,24 +909,41 @@ export async function buildAduConfigView(
   // A failure here falls back to 0 (logged, same read-fallback rule
   // as countRows) — pending then counts the stranded reel, the safe
   // pre-fix direction.
-  const { count: failedInPipelineCount, error: failedInPipelineError } = await supabase
-    .from('adu_posting_jobs')
-    .select('id, adu_reels!inner(status)', { count: 'exact', head: true })
-    .eq('config_id', config.id)
-    .in('status', failedStatuses)
-    .in('adu_reels.status', ['pending', 'processing', 'downloaded']);
-  let failedInPipeline = 0;
-  if (failedInPipelineError) {
-    console.error(
-      `ADU count failed: table=adu_posting_jobs code=${failedInPipelineError.code ?? 'unknown'}`,
-    );
-  } else {
-    failedInPipeline = failedInPipelineCount ?? 0;
+  async function countFailedInPipeline(): Promise<number> {
+    const { count, error } = await supabase
+      .from('adu_posting_jobs')
+      .select('id, adu_reels!inner(status)', { count: 'exact', head: true })
+      .eq('config_id', config.id)
+      .in('status', failedStatuses)
+      .in('adu_reels.status', ['pending', 'processing', 'downloaded']);
+    if (error) {
+      console.error(
+        `ADU count failed: table=adu_posting_jobs code=${error.code ?? 'unknown'}`,
+      );
+      return 0;
+    }
+    return count ?? 0;
   }
+  // The six counts are independent — run them concurrently (adu-opt-a
+  // F3). Latency becomes max(count) instead of sum(count); the two
+  // derived values below are computed after resolution, unchanged.
+  const [
+    inPipelineCount,
+    postedCount,
+    failedCount,
+    failedInPipeline,
+    postedToday,
+    failedToday,
+  ] = await Promise.all([
+    countRows('adu_reels', ['pending', 'processing', 'downloaded']),
+    countRows('adu_posting_jobs', 'published'),
+    countRows('adu_posting_jobs', failedStatuses),
+    countFailedInPipeline(),
+    countRows('adu_posting_jobs', 'published', midnight),
+    countRows('adu_posting_jobs', failedStatuses, midnight),
+  ]);
   const pendingCount = Math.max(0, inPipelineCount - failedInPipeline);
-  const postedToday = await countRows('adu_posting_jobs', 'published', midnight);
-  const failedToday = await countRows('adu_posting_jobs', failedStatuses, midnight);
-  return {
+  const full: AduConfigView = {
     id: config.id,
     destinationId: config.destination_id,
     destinationName:
@@ -915,12 +975,15 @@ export async function buildAduConfigView(
     // leak the wrong platform into the Instagram and Threads sections.
     // (Threads re-overrides this below in loadThreadsAduConfigView;
     // the same wording is selected here so every caller agrees.)
+    // The hub view drops `alert`, so it is not computed there.
     alert:
-      dest?.platform === 'instagram'
-        ? instagramAduStatusAlert(config.status, config.sync_status)
-        : dest?.platform === 'threads'
-          ? threadsAduStatusAlert(config.status, config.sync_status)
-          : aduStatusAlert(config.status, config.sync_status),
+      hub
+        ? null
+        : dest?.platform === 'instagram'
+          ? instagramAduStatusAlert(config.status, config.sync_status)
+          : dest?.platform === 'threads'
+            ? threadsAduStatusAlert(config.status, config.sync_status)
+            : aduStatusAlert(config.status, config.sync_status),
     followersCount: config.starting_followers,
     followersGained: config.current_followers,
     // Spec 162: the last successful follower check. A caller that
@@ -939,6 +1002,35 @@ export async function buildAduConfigView(
     postedToday,
     pendingToday: Math.max(0, config.posts_per_day - postedToday),
     failedToday,
+  };
+  if (!hub) return full;
+  // Hub-only view (adu-opt-a F7): same values, without the fields the
+  // hub card never renders. Keys stay in the full view's relative order.
+  return {
+    id: full.id,
+    destinationId: full.destinationId,
+    destinationName: full.destinationName,
+    destinationExternalId: full.destinationExternalId,
+    destinationAvatarUrl: full.destinationAvatarUrl,
+    accountName: full.accountName,
+    sourcePlatform: full.sourcePlatform,
+    sourceUsername: full.sourceUsername,
+    sourceLink: full.sourceLink,
+    sourceIdentity: full.sourceIdentity,
+    timezone: full.timezone,
+    postsPerDay: full.postsPerDay,
+    status: full.status,
+    displayStatus: full.displayStatus,
+    followersCount: full.followersCount,
+    followersGained: full.followersGained,
+    followersUpdatedAt: full.followersUpdatedAt,
+    createdAt: full.createdAt,
+    postedCount: full.postedCount,
+    pendingCount: full.pendingCount,
+    failedCount: full.failedCount,
+    postedToday: full.postedToday,
+    pendingToday: full.pendingToday,
+    failedToday: full.failedToday,
   };
 }
 
