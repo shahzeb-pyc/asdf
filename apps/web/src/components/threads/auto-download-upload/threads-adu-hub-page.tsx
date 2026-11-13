@@ -28,7 +28,10 @@ import { Textarea } from '@/components/shared/ui/textarea';
 import { buildTenantApiPath } from '@/lib/api/client';
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 import { StatusMark } from '@/components/shared/ui/status-mark';
-import { getAduStatusMarkKind } from '@/lib/adu-hub-helpers';
+import { getAduStatusMarkKind, type AduStatusMarkKind } from '@/lib/adu-hub-helpers';
+
+// Re-exported: UI tests import the mark-kind helper from this page.
+export { getAduStatusMarkKind, type AduStatusMarkKind };
 
 const STATUS_OPTIONS = ADU_STATUS_FILTER_OPTIONS;
 const SORT_OPTIONS = ['Newest First', 'Most Followers', 'Least Followers'] as const;

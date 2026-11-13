@@ -33,6 +33,9 @@ import {
 import { Textarea } from '@/components/shared/ui/textarea';
 import { StatusMark } from '@/components/shared/ui/status-mark';
 import { getAduStatusMarkKind, type AduStatusMarkKind } from '@/lib/adu-hub-helpers';
+
+// Re-exported: UI tests import the mark-kind helper from this page.
+export { getAduStatusMarkKind, type AduStatusMarkKind };
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
 import {
   DiscoverPagesResponseSchema,
