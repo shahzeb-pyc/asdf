@@ -40,11 +40,11 @@ export const SPACING = {
   /** 4px: Micro gaps, inline icon margins */
   xs: '4px',
   /** 8px: Compact element spacing, input internal padding Y */
-  sm: '8px',
+  sm: '10px',
   /** 12px: Standard control padding X */
-  md: '12px',
+  md: '16px',
   /** 16px: Standard container padding, card inner margins */
-  lg: '16px',
+  lg: '20px',
   /** 24px: Card sectional gap, grid gutters */
   xl: '24px',
   /** 32px: Page section rhythm */
