@@ -406,8 +406,8 @@ describe('POST /tiktok-mirrors', () => {
     expect(mirrorUpdate?.params).toContain(body.immediatePost.error);
   });
 
-  it('records the post failed and the mirror in error when video resolve fails', async () => {
-    const { db, calls } = fakeDb();
+  it('falls back to the feed play URL when video resolve fails, and posts the latest reel', async () => {
+    const { db } = fakeDb();
     const deps = createDeps();
     deps.resolveTikwmVideo = vi.fn().mockRejectedValue(new Error('Could not resolve video'));
     const res = await handleCreateMirror(
@@ -418,11 +418,17 @@ describe('POST /tiktok-mirrors', () => {
     );
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.immediatePost.status).toBe('failed');
-    expect(body.immediatePost.error).toContain('Could not resolve video');
-    expect(deps.publishReel).not.toHaveBeenCalled();
-    const mirrorUpdate = calls.find((c) => c.sql.includes('UPDATE mirrors'));
-    expect(mirrorUpdate?.params).toContain('error');
+    expect(body.immediatePost.status).toBe('posted');
+    expect(body.immediatePost.error).toBeNull();
+    expect(body.immediatePost.publishedPostId).toBe('fb_post_123');
+    // The published URL is the feed's no-watermark play URL, not a
+    // resolved one.
+    expect(deps.publishReel).toHaveBeenCalledWith({
+      pageId: fbPageId,
+      pageToken: 'page-token-plain',
+      videoUrl: 'https://example.com/no-wm.mp4',
+      caption: 'My exact caption',
+    });
   });
 
   it('reuses an existing destination without touching its status', async () => {
@@ -821,13 +827,72 @@ describe('POST /tiktok-mirrors/[mirrorId]/posts/[postId]/retry', () => {
     ]);
   });
 
-  it('keeps the row failed when the re-resolve fails and never publishes', async () => {
+  it('keeps the row failed when the re-resolve fails and the video aged out of the feed window', async () => {
     const { db } = fakeDb({ postRowOverride: { video_url: null } });
     const publishReel = vi.fn();
     const resolveTikwmVideo = vi.fn().mockRejectedValue(new Error('Resolve failed.'));
+    const fetchTikwmPosts = vi.fn().mockResolvedValue([]);
     const res = await handleRetryMirrorPost(retryRequest(), 'acme', mirrorId, postId, db, {
       publishReel,
       resolveTikwmVideo,
+      fetchTikwmPosts,
+    } as never);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.post.status).toBe('failed');
+    expect(body.post.error).toBe('Resolve failed.');
+    expect(publishReel).not.toHaveBeenCalled();
+    expect(fetchTikwmPosts).toHaveBeenCalledWith(
+      'alice',
+      expect.objectContaining({ count: 30 })
+    );
+  });
+
+  it('falls back to the paid feed play URL when the re-resolve fails, and publishes', async () => {
+    const { db, calls } = fakeDb({ postRowOverride: { video_url: null } });
+    const publishReel = vi.fn().mockResolvedValue('fb_post_777');
+    const resolveTikwmVideo = vi.fn().mockRejectedValue(new Error('Resolve failed.'));
+    const fetchTikwmPosts = vi.fn().mockResolvedValue([
+      feedVideo({ video_id: 'v1', play: 'https://example.com/feed-play.mp4' }),
+    ]);
+    const res = await handleRetryMirrorPost(retryRequest(), 'acme', mirrorId, postId, db, {
+      publishReel,
+      resolveTikwmVideo,
+      fetchTikwmPosts,
+    } as never);
+    expect(res.status).toBe(200);
+    expect((await res.json()).post.status).toBe('posted');
+    expect(fetchTikwmPosts).toHaveBeenCalledWith(
+      'alice',
+      expect.objectContaining({ count: 30 })
+    );
+    expect(publishReel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        videoUrl: 'https://example.com/feed-play.mp4',
+      })
+    );
+    const postUpdate = calls.find((c) => c.sql.includes('UPDATE mirror_posts'));
+    expect(postUpdate?.params).toEqual([
+      postId,
+      'posted',
+      'fb_post_777',
+      null,
+      'https://example.com/feed-play.mp4',
+      'My exact caption',
+    ]);
+  });
+
+  it('never falls back to the watermarked URL: a feed item with no play URL keeps the row failed', async () => {
+    const { db } = fakeDb({ postRowOverride: { video_url: null } });
+    const publishReel = vi.fn();
+    const resolveTikwmVideo = vi.fn().mockRejectedValue(new Error('Resolve failed.'));
+    const fetchTikwmPosts = vi.fn().mockResolvedValue([
+      feedVideo({ video_id: 'v1', play: undefined, wmplay: 'https://example.com/wm.mp4' }),
+    ]);
+    const res = await handleRetryMirrorPost(retryRequest(), 'acme', mirrorId, postId, db, {
+      publishReel,
+      resolveTikwmVideo,
+      fetchTikwmPosts,
     } as never);
     expect(res.status).toBe(200);
     const body = await res.json();

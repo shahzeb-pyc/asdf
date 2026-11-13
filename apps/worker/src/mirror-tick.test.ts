@@ -281,22 +281,32 @@ describe('processMirrorCheck', () => {
     expect(stamp?.patch.lastError).toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
   });
 
-  it('records a resolve failure as failed, marks the mirror error, and stops that mirror', async () => {
+  it('falls back to the feed play URL when the resolve fails, and posts both reels', async () => {
     const state = newState();
-    const deps = fakeDeps(state, [reel('v1', 100), reel('v2', 200)]);
+    const feed = [
+      reel('v1', 100, { play: 'https://feed.example.com/v1-play.mp4' }),
+      reel('v2', 200, { play: 'https://feed.example.com/v2-play.mp4' }),
+    ];
+    const deps = fakeDeps(state, feed);
     deps.resolveVideo = async () => {
       throw new InternalError('Could not resolve video');
     };
     const result = await processMirrorCheck(deps, mirror());
-    expect(result.posted).toBe(0);
-    expect(result.failed).toBe(1);
-    expect(state.published).toHaveLength(0);
-    // Only v1 claimed (failed with the resolve error); v2 never attempted.
-    expect(state.claimed.map((c) => c.post.sourcePostId)).toEqual(['v1']);
-    expect(state.claimed[0]?.post.status).toBe('failed');
-    expect(state.claimed[0]?.post.error).toContain('Could not resolve video');
+    expect(result.posted).toBe(2);
+    expect(result.failed).toBe(0);
+    // The published URL is the feed's no-watermark play URL, not a
+    // resolved one — and the caption is the feed title. The
+    // watermarked URL is never used as a fallback.
+    expect(state.published.map((p) => p.videoUrl)).toEqual([
+      'https://feed.example.com/v1-play.mp4',
+      'https://feed.example.com/v2-play.mp4',
+    ]);
+    expect(state.published[0]?.caption).toBe('Caption for v1');
+    expect(state.claimed.map((c) => c.post.sourcePostId)).toEqual(['v1', 'v2']);
+    expect(state.claimed.every((c) => c.post.status === 'pending')).toBe(true);
+    expect(state.claimed[0]?.post.videoUrl).toBe('https://feed.example.com/v1-play.mp4');
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
-    expect(stamp?.patch.status).toBe('error');
+    expect(stamp?.patch.status).toBe('active');
   });
 
   it('skips watermarked-only items with a skipped row + mirror error, never posting them', async () => {
