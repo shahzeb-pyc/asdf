@@ -80,7 +80,7 @@ interface ConfigView {
 }
 interface Reel {
   id: string; source_reel_id: string; caption: string | null; media_url: string | null;
-  status: string; downloaded_at: string | null; created_at: string;
+  status: string; downloaded_at: string | null;
 }
 interface FailedJob {
   id: string; reel_id: string; status: string; last_error_code: string | null;
@@ -89,6 +89,9 @@ interface FailedJob {
 }
 
 const QUICK_TAGS = ['#reels', '#viral', '#trending', '#foryou', '#shorts'];
+
+/** Reels page size (owner decision) — must match the reels route. */
+const REELS_PAGE_SIZE = 24;
 
 /**
  * Added date, "2 Nov 2026" — the same rule as the hub cards'
@@ -345,6 +348,21 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
+  // F15: paginated reels state — the page holds one page of rows at a
+  // time, never the whole queue.
+  const [reelsPage, setReelsPage] = React.useState(1);
+  const [reelsTotal, setReelsTotal] = React.useState(0);
+  const [reelsTotalPages, setReelsTotalPages] = React.useState(1);
+  const [reelsLoading, setReelsLoading] = React.useState(false);
+  const [reelsError, setReelsError] = React.useState<string | null>(null);
+  const [failedLoading, setFailedLoading] = React.useState(false);
+  const [failedError, setFailedError] = React.useState<string | null>(null);
+  // F13: pages already fetched for the current queue (revisits never
+  // refetch) and whether failed jobs were ever loaded. Cleared only
+  // when the queue itself changes (source switch), never on a tab
+  // switch.
+  const reelsLoadedPagesRef = React.useRef(new Set<number>());
+  const failedLoadedRef = React.useRef(false);
   const [selectedReel, setSelectedReel] = React.useState<Reel | null>(null);
   const [captionDraft, setCaptionDraft] = React.useState('');
   const [deleteOpen, setDeleteOpen] = React.useState(false);
@@ -363,32 +381,94 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   const [failedAccountAvatarUrl, setFailedAccountAvatarUrl] = React.useState<string | null>(null);
 
   const base = buildTenantApiPath(subdomain, `/auto-download-upload/${configId}`);
-  const load = React.useCallback(async () => {
-    setLoading(true);
+
+  const applyConfig = React.useCallback((next: ConfigView) => {
+    setConfig(next);
+    setEditPosts(next.postsPerDay);
+    setEditTimezone(next.timezone);
+    setEditLogic(next.scheduleType);
+    setEditTimes(next.postingTimes ?? []);
+    setDisplayName(next.destinationName);
+  }, []);
+
+  // F13/F17: the config is fetched on its own — the skeleton gates on
+  // it alone. A config failure sets the page error but never touches
+  // reels/failed state, and a reels/failed failure never touches the
+  // config: paid-for data is not discarded on an error path.
+  const loadConfig = React.useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
-      const [configRes, reelsRes, failedRes] = await Promise.all([
-        fetch(base), fetch(`${base}/reels`), fetch(`${base}/failed`),
-      ]);
+      const configRes = await fetch(base);
       const configBody = await configRes.json().catch(() => ({}));
       if (!configRes.ok) throw new Error(configBody.error ?? 'Page not found.');
-      setConfig(configBody.config);
-      setEditPosts(configBody.config.postsPerDay);
-      setEditTimezone(configBody.config.timezone);
-      setEditLogic(configBody.config.scheduleType);
-      setEditTimes(configBody.config.postingTimes ?? []);
-      setDisplayName(configBody.config.destinationName);
-      const reelsBody = await reelsRes.json().catch(() => ({}));
-      setReels(reelsBody.reels ?? []);
-      const failedBody = await failedRes.json().catch(() => ({}));
-      setFailed(failedBody.jobs ?? []);
+      applyConfig(configBody.config);
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load page.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
+    }
+  }, [base, applyConfig]);
+
+  // F13/F15: one page of the queue, fetched on first visit to the
+  // Reels tab (or a page turn). keepPreviousData: only a successful
+  // response replaces the rows — a failed page turn leaves the
+  // previous page on screen.
+  const loadReels = React.useCallback(async (page: number, force = false) => {
+    if (!force && reelsLoadedPagesRef.current.has(page)) return;
+    setReelsLoading(true);
+    setReelsError(null);
+    try {
+      const res = await fetch(`${base}/reels?page=${page}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not load reels.');
+      setReels(body.reels ?? []);
+      setReelsPage(body.page ?? page);
+      setReelsTotal(typeof body.total === 'number' ? body.total : 0);
+      setReelsTotalPages(typeof body.totalPages === 'number' ? body.totalPages : 1);
+      reelsLoadedPagesRef.current.add(page);
+    } catch (err) {
+      setReelsError(err instanceof Error ? err.message : 'Could not load reels.');
+    } finally {
+      setReelsLoading(false);
     }
   }, [base]);
 
-  React.useEffect(() => { void load(); }, [load]);
+  // F13: failed jobs fetch once, on first visit to the Failed tab.
+  const loadFailed = React.useCallback(async () => {
+    if (failedLoadedRef.current) return;
+    setFailedLoading(true);
+    setFailedError(null);
+    try {
+      const res = await fetch(`${base}/failed`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not load failed posts.');
+      setFailed(body.jobs ?? []);
+      failedLoadedRef.current = true;
+    } catch (err) {
+      setFailedError(err instanceof Error ? err.message : 'Could not load failed posts.');
+    } finally {
+      setFailedLoading(false);
+    }
+  }, [base]);
+
+  // F19: the draft follows the selected reel — it starts from the
+  // reel's own caption, never empty for a captioned reel. Typing only
+  // changes the draft, never the reel, so it cannot reset mid-edit.
+  const selectedForDraft = selectedReel ?? reels[0] ?? null;
+  React.useEffect(() => {
+    setCaptionDraft(selectedForDraft?.caption ?? '');
+  }, [selectedForDraft?.id, selectedForDraft?.caption]);
+
+  React.useEffect(() => { void loadConfig(); }, [loadConfig]);
+
+  // F13: reels/failed fetch on first visit to their tab only — never
+  // on an Overview/Settings landing. The initial tab is already in
+  // visitedTabs, so a ?tab=reels / ?tab=failed landing fetches too.
+  React.useEffect(() => {
+    if (activeTab === 'reels') void loadReels(reelsPage);
+    else if (activeTab === 'failed') void loadFailed();
+  }, [activeTab, reelsPage, loadReels, loadFailed]);
 
   // Back/forward navigation: when the URL's ?tab= changes without a
   // click (popstate), adopt it — including its visited mount — so the
@@ -445,8 +525,22 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) { setError(result.error ?? `Could not save ${label}.`); return false; }
+    // F14: apply the fresh config the PATCH route already returned —
+    // no full reload, no skeleton flash.
+    if (result.config) applyConfig(result.config);
     setNotice(`${label} saved.`);
-    await load();
+    // A source change deletes the old source's queue server-side, so
+    // the cached reels are gone with it: drop the cache + selection
+    // and refetch page 1 (the tab effect covers the active-tab case;
+    // a visited-but-inactive tab needs the explicit fetch).
+    if (body.sourcePlatform || body.sourceUsername) {
+      reelsLoadedPagesRef.current.clear();
+      setSelectedReel(null);
+      setCaptionDraft('');
+      setReelsPage(1);
+      if (activeTab === 'reels' && reelsPage === 1) await loadReels(1, true);
+      else if (visitedTabs.has('reels') && activeTab !== 'reels') await loadReels(1, true);
+    }
     return true;
   };
 
@@ -458,7 +552,28 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
     const result = await response.json().catch(() => ({}));
     if (!response.ok) { setError(result.error ?? `${label} failed.`); return; }
     setNotice(`${label} done.`);
-    await load();
+    // F14: discovery only flips sync_status — a silent config-only
+    // refresh updates the banner without touching reels/failed.
+    await loadConfig(true);
+  };
+
+  // F14/F19: skip/delete update local state only — the row leaves the
+  // list, the selection and draft clear, and the pending tile drops by
+  // one. No full reload. If the page empties, step back a page (its
+  // rows are refetched: the loaded-set entry is dropped first).
+  const handleReelRemoved = (reelId: string) => {
+    const wasLastOnPage = reels.length <= 1;
+    setReels((prev) => prev.filter((r) => r.id !== reelId));
+    setSelectedReel(null);
+    setCaptionDraft('');
+    setConfig((prev) => (prev ? { ...prev, pendingCount: Math.max(0, prev.pendingCount - 1) } : prev));
+    const nextTotal = Math.max(0, reelsTotal - 1);
+    setReelsTotal(nextTotal);
+    setReelsTotalPages(Math.max(1, Math.ceil(nextTotal / REELS_PAGE_SIZE)));
+    if (wasLastOnPage && reelsPage > 1) {
+      reelsLoadedPagesRef.current.delete(reelsPage - 1);
+      setReelsPage(reelsPage - 1);
+    }
   };
 
   if (loading) return <AduDetailSkeleton />;
@@ -666,7 +781,7 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
 
         {visitedTabs.has('insights') && (
           <TabsContent value="insights" forceMount className="data-[state=inactive]:hidden">
-            <PageTabInsights page={{ id: config.destinationId }} subdomain={subdomain} />
+            <PageTabInsights page={{ id: config.destinationId }} subdomain={subdomain} pageTimezone={config.timezone} />
           </TabsContent>
         )}
 
@@ -679,9 +794,17 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
               </div>
               <Button type="button" variant="outline" onClick={() => void runAction('discover', 'Discovery')}>Discover reels</Button>
             </div>
-            {reels.length === 0 ? (
-              <EmptyState type="first-use" title="No reels in queue" description="The automated buffer downloader has no pending downloads for this page." />
+            {reelsError && reels.length === 0 ? (
+              <Banner variant="critical" title="Could not load reels" description={reelsError} />
+            ) : reels.length === 0 ? (
+              reelsLoading ? (
+                <p className="mt-4 text-body text-ink-sub">Loading reels…</p>
+              ) : (
+                <EmptyState type="first-use" title="No reels in queue" description="The automated buffer downloader has no pending downloads for this page." />
+              )
             ) : (
+              <>
+              {reelsError ? <Banner variant="critical" title="Could not load reels" description={reelsError} /> : null}
               <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_360px]">
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   {reels.map((reel) => (
@@ -710,11 +833,11 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
                     <div className="flex flex-wrap gap-2">
                       <Button type="button" onClick={async () => {
                         const response = await fetch(`${base}/reels/${selected.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption: captionDraft }) });
-                        if (!response.ok) { const body = await response.json().catch(() => ({})); setError(body.error ?? 'Could not save caption.'); } else { setNotice('Caption saved.'); await load(); }
+                        if (!response.ok) { const body = await response.json().catch(() => ({})); setError(body.error ?? 'Could not save caption.'); } else { setNotice('Caption saved.'); setReels((prev) => prev.map((r) => (r.id === selected.id ? { ...r, caption: captionDraft } : r))); }
                       }}>Save Caption</Button>
                       <Button type="button" variant="outline" onClick={async () => {
                         const response = await fetch(`${base}/reels/${selected.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'skip' }) });
-                        if (response.ok) { setNotice('Reel skipped.'); await load(); }
+                        if (response.ok) { setNotice('Reel skipped.'); handleReelRemoved(selected.id); }
                       }}>Skip</Button>
                       <Button type="button" variant="outline" onClick={() => setDeleteReelOpen(true)}>Delete</Button>
                       <AlertDialog open={deleteReelOpen} onOpenChange={(open) => { if (!open) setDeleteReelOpen(false); }}>
@@ -730,7 +853,7 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
                               onClick={async (event) => {
                                 event.preventDefault();
                                 const response = await fetch(`${base}/reels/${selected.id}`, { method: 'DELETE' });
-                                if (response.ok) { setNotice('Reel removed.'); setSelectedReel(null); await load(); }
+                                if (response.ok) { setNotice('Reel removed.'); handleReelRemoved(selected.id); }
                                 setDeleteReelOpen(false);
                               }}
                             >Remove reel</AlertDialogAction>
@@ -742,14 +865,31 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
                   </CardContent></Card>
                 ) : null}
               </div>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-body text-ink-sub" data-testid="adu-reels-page-label">
+                  Page {reelsPage} of {reelsTotalPages} · {reelsTotal.toLocaleString('en-US')} reels
+                </p>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" disabled={reelsPage <= 1 || reelsLoading} data-testid="adu-reels-prev-page" onClick={() => setReelsPage((p) => Math.max(1, p - 1))}>Previous</Button>
+                  <Button type="button" variant="outline" disabled={reelsPage >= reelsTotalPages || reelsLoading} data-testid="adu-reels-next-page" onClick={() => setReelsPage((p) => Math.min(reelsTotalPages, p + 1))}>Next</Button>
+                </div>
+              </div>
+              {reelsLoading ? <p className="mt-2 text-body text-ink-sub">Loading reels…</p> : null}
+              </>
             )}
           </TabsContent>
         )}
 
         {visitedTabs.has('failed') && (
           <TabsContent value="failed" forceMount className="data-[state=inactive]:hidden">
-            {failed.length === 0 ? (
-              <EmptyState type="first-use" title="No Failed Posts Found" description="All systems are operating normally. There are no failed publish attempts recorded for this page." />
+            {failedError && failed.length === 0 ? (
+              <Banner variant="critical" title="Could not load failed posts" description={failedError} />
+            ) : failed.length === 0 ? (
+              failedLoading ? (
+                <p className="mt-4 text-body text-ink-sub">Loading failed posts…</p>
+              ) : (
+                <EmptyState type="first-use" title="No Failed Posts Found" description="All systems are operating normally. There are no failed publish attempts recorded for this page." />
+              )
             ) : (
               <div className="flex flex-col gap-3">
                 {failed.map((job) => (
