@@ -41,7 +41,6 @@ import {
   runSectionCheck,
   SECTION_CHECK_CRON,
   type SectionCheckDbClient,
-  type SectionCheckResult,
 } from './section-check.js';
 import { captureWorkerError, captureWorkerEvent } from './analytics.js';
 import { resolveWorkerMasterKey } from './master-key.js';

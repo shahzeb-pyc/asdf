@@ -86,7 +86,8 @@ function createFakeDb(store: FakeStore): SectionCheckDbClient {
                   if (value !== filter.value) return false;
                 } else if (filter.kind === 'neq') {
                   if (value === null || value === filter.value) return false;
-                } else if (filter.kind === 'not') {
+                } else {
+                  // 'not' — the last remaining kind.
                   if (filter.operator === 'in' && typeof filter.value === 'string') {
                     const set = filter.value.slice(1, -1).split(',');
                     if (value === null || set.includes(String(value))) return false;
@@ -111,7 +112,8 @@ function createFakeDb(store: FakeStore): SectionCheckDbClient {
                   }
                 } else if (filter.kind === 'eq') {
                   if (section !== filter.value) return false;
-                } else if (filter.kind === 'is') {
+                } else {
+                  // 'is' — the last remaining kind.
                   if (filter.value === null ? section !== null : section !== filter.value)
                     return false;
                 }
