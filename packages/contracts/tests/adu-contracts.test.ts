@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AduAccountBulkCreateSchema,
+  AduAccountCreateConfigSchema,
   AduBulkCreateSchema,
+  AduBulkItemScheduleSchema,
+  AduCreateConfigSchema,
+  AduTimezoneSchema,
+  AduUpdateConfigSchema,
   aduDisplayStatus,
   generateDailyRandomTimes,
+  isValidTimezone,
   parseAduBulkPaste,
   parseAduCsv,
   resolveAduBulkItemSchedule,
@@ -125,5 +132,104 @@ describe('ADU contracts', () => {
       ],
     };
     expect(validateAduBulkFixedTimes(valid)).toBeNull();
+  });
+
+  describe('AduTimezoneSchema (timezone guard)', () => {
+    const DEST_ID = '11111111-1111-4111-a111-111111111111';
+    const ACCT_ID = '22222222-2222-4222-a222-222222222222';
+
+    it('isValidTimezone accepts real IANA names and rejects display names', () => {
+      for (const tz of ['Asia/Karachi', 'America/New_York', 'Asia/Kolkata', 'Asia/Tokyo', 'UTC']) {
+        expect(isValidTimezone(tz)).toBe(true);
+      }
+      // The exact strings that silently broke intake for days: Intl
+      // throws RangeError for them, and localTimeInTimezone used to
+      // swallow that as '00:00'.
+      for (const tz of ['new york', 'New York', 'New york', 'india', 'not-a-zone', '']) {
+        expect(isValidTimezone(tz)).toBe(false);
+      }
+    });
+
+    it('AduTimezoneSchema rejects display names with a clear IANA error', () => {
+      for (const tz of ['new york', 'india']) {
+        const parsed = AduTimezoneSchema.safeParse(tz);
+        expect(parsed.success).toBe(false);
+        if (!parsed.success) {
+          expect(parsed.error.issues[0]?.message).toContain('IANA timezone');
+        }
+      }
+      expect(AduTimezoneSchema.safeParse('Asia/Karachi').success).toBe(true);
+    });
+
+    it('create schema rejects a display-name timezone and keeps the default', () => {
+      const base = {
+        destinationId: DEST_ID,
+        sourcePlatform: 'tiktok' as const,
+        sourceUsername: 'creator',
+        postsPerDay: 1,
+      };
+      expect(AduCreateConfigSchema.safeParse({ ...base, timezone: 'new york' }).success).toBe(false);
+      expect(AduCreateConfigSchema.safeParse({ ...base, timezone: 'india' }).success).toBe(false);
+      const valid = AduCreateConfigSchema.safeParse({ ...base, timezone: 'Asia/Kolkata' });
+      expect(valid.success).toBe(true);
+      const defaulted = AduCreateConfigSchema.safeParse(base);
+      expect(defaulted.success).toBe(true);
+      if (defaulted.success) expect(defaulted.data.timezone).toBe('Asia/Karachi');
+    });
+
+    it('update schema rejects a display-name timezone and allows omitting it', () => {
+      expect(AduUpdateConfigSchema.safeParse({ timezone: 'new york' }).success).toBe(false);
+      expect(AduUpdateConfigSchema.safeParse({ timezone: 'Asia/Tokyo' }).success).toBe(true);
+      expect(AduUpdateConfigSchema.safeParse({}).success).toBe(true);
+    });
+
+    it('bulk schemas reject a bad timezone in the shared and per-item schedules', () => {
+      const item = {
+        destinationId: DEST_ID,
+        sourcePlatform: 'instagram' as const,
+        sourceUsername: 'creator',
+      };
+      const shared = { items: [item], postsPerDay: 1 };
+      expect(AduBulkCreateSchema.safeParse({ ...shared, timezone: 'new york' }).success).toBe(false);
+      expect(
+        AduBulkCreateSchema.safeParse({
+          ...shared,
+          timezone: 'Asia/Karachi',
+          items: [{ ...item, schedule: { timezone: 'india', postsPerDay: 1 } }],
+        }).success,
+      ).toBe(false);
+      expect(
+        AduBulkItemScheduleSchema.safeParse({ timezone: 'New York', postsPerDay: 1 }).success,
+      ).toBe(false);
+      expect(
+        AduBulkCreateSchema.safeParse({
+          ...shared,
+          timezone: 'America/New_York',
+          items: [{ ...item, schedule: { timezone: 'Asia/Kolkata', postsPerDay: 1 } }],
+        }).success,
+      ).toBe(true);
+    });
+
+    it('account variants reject a display-name timezone too', () => {
+      const base = {
+        accountId: ACCT_ID,
+        sourcePlatform: 'instagram' as const,
+        sourceUsername: 'creator',
+        postsPerDay: 1,
+      };
+      expect(AduAccountCreateConfigSchema.safeParse({ ...base, timezone: 'new york' }).success).toBe(
+        false,
+      );
+      expect(
+        AduAccountCreateConfigSchema.safeParse({ ...base, timezone: 'Asia/Karachi' }).success,
+      ).toBe(true);
+      expect(
+        AduAccountBulkCreateSchema.safeParse({
+          items: [{ accountId: ACCT_ID, sourcePlatform: 'instagram', sourceUsername: 'creator' }],
+          timezone: 'india',
+          postsPerDay: 1,
+        }).success,
+      ).toBe(false);
+    });
   });
 });
