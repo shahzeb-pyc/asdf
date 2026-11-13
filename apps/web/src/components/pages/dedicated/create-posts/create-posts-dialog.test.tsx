@@ -1,7 +1,7 @@
 /**
  * Create Posts dialogue — slots pre-check path.
  *
- * Regression test for the PR #216 rename: the dialog's pre-queue
+ * Regression test for the PR 216 rename: the dialog's pre-queue
  * slots fetch was pointed at `/inapp-schedule/<pageId>/slots`, an API
  * path that does not exist (the route lives at
  * `/pages/<pageId>/slots`), so every Add to Queue attempt failed at
