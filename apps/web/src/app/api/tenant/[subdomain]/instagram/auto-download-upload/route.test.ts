@@ -110,20 +110,34 @@ class FakeQuery {
 
   then(resolve: (value: unknown) => void) {
     if (this.table === 'destinations') {
-      resolve({
-        data: {
-          id: 'dest-1',
-          name: 'Test Account',
-          external_destination_id: 'ig-test',
-          avatar_url: null,
-          status: 'active',
-          account_id: 'acc-1',
-          handle: null,
-          platform: 'instagram',
-          social_accounts: { display_name: 'Test Account', avatar_url: null },
-        },
-        error: null,
+      // The batch path (F1) queries .in('id', [...]) and reads an
+      // array — one row per requested destination id. A maybeSingle
+      // lookup still reads a single row. (Same shape as the Facebook
+      // route test's fake.)
+      const rowFor = (id: string) => ({
+        id,
+        name: 'Test Account',
+        external_destination_id: 'ig-test',
+        avatar_url: null,
+        status: 'active',
+        account_id: 'acc-1',
+        handle: null,
+        platform: 'instagram',
+        social_accounts: { display_name: 'Test Account', avatar_url: null },
       });
+      const single = this.ops.some((o) => o.kind === 'maybeSingle');
+      if (single) {
+        resolve({ data: rowFor('dest-1'), error: null });
+        return;
+      }
+      const inIds = this.ops.find(
+        (o) => o.kind === 'in' && o.args[0] === 'id',
+      )?.args[1] as string[] | undefined;
+      const eqId = this.ops.find(
+        (o) => o.kind === 'eq' && o.args[0] === 'id',
+      )?.args[1] as string | undefined;
+      const ids = inIds ?? (eqId ? [eqId] : ['dest-1']);
+      resolve({ data: ids.map(rowFor), error: null });
       return;
     }
     const hasReelFilter = this.ops.some(
@@ -158,6 +172,26 @@ function makeRouteFake(options: RouteFakeOptions = {}) {
     fromCalls,
     rpc: (name: string, args: unknown) => {
       rpcCalls.push({ name, args });
+      // F1 grouped counts: the shared view builder answers every
+      // config's six counts from one `adu_config_counts` RPC per
+      // config (the route builds views one row at a time), using the
+      // same canned counts the legacy FakeQuery below used to answer
+      // the per-config count queries. Same shape as the Facebook
+      // route test's fake.
+      if (name === 'adu_config_counts') {
+        return Promise.resolve({
+          data: ((args as { p_config_ids?: string[] }).p_config_ids ?? []).map((id) => ({
+            config_id: id,
+            in_pipeline: counts.pipeline,
+            published: counts.published,
+            failed: counts.failed,
+            failed_in_pipeline: 0,
+            published_today: 1,
+            failed_today: 0,
+          })),
+          error: null,
+        });
+      }
       const result =
         name === 'instagram_adu_hub_list'
           ? { data: listRows, error: options.listError ?? null }
@@ -207,9 +241,13 @@ describe('IG ADU hub list GET (stream D F20)', () => {
     expect(body.configs).toHaveLength(2);
     expect(body.configs[0].accountName).toBe('Test Account');
     expect(body.configs[0].pendingCount).toBe(2);
+    // List + stats run concurrently; the view builder then issues one
+    // grouped-counts RPC per config row (two rows in this fixture).
     expect(db.rpcCalls.map((c) => c.name)).toEqual([
       'instagram_adu_hub_list',
       'instagram_adu_hub_stats',
+      'adu_config_counts',
+      'adu_config_counts',
     ]);
     expect(db.rpcCalls[0].args).toMatchObject({
       p_workspace_id: 'ws-1',
