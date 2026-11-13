@@ -12,7 +12,7 @@
  *
  * Canonical loading: the root layout loads Manrope exactly once, via
  * `next/font/google` (`latin`, `display: swap`, variable
- * `--font-manrope`), and applies that variable to `<body>` alongside
+ * `--font-manrope`), and applies that variable to `<html>` alongside
  * the token-backed `font-sans` utility (see `fontSansClassName`).
  * The wired path is therefore:
  * layout (next/font, `--font-manrope`) → token utility `font-sans` →

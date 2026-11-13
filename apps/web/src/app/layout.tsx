@@ -80,11 +80,11 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={manrope.variable}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body className={`${manrope.variable} ${fontSansClassName}`}>
+      <body className={fontSansClassName}>
         <PostHogProvider
           apiKey={process.env.POSTHOG_KEY}
           host={process.env.POSTHOG_HOST || 'https://us.i.posthog.com'}
