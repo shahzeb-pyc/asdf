@@ -136,7 +136,7 @@ function renderWithQuery(node: React.ReactElement) {
 async function openDialog(user: ReturnType<typeof userEvent.setup>) {
   renderWithQuery(<AduHubPage subdomain="acme" />);
   await screen.findByText('No pages found');
-  await user.click(screen.getByRole('button', { name: '+ Add Page' }));
+  await user.click(screen.getByRole('button', { name: 'Add Page' }));
   expect(await screen.findByText('Add New Page')).toBeTruthy();
 }
 

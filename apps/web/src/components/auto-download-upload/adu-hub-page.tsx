@@ -818,7 +818,7 @@ function AduHubPageInner({ subdomain }: { subdomain: string }) {
           ) : null}
         </div>
         <Button type="button" onClick={() => setDialogOpen(true)} disabled={facebookCap?.atCap ?? false}>
-          <PlusIcon aria-hidden /><span>+ Add Page</span>
+          <PlusIcon aria-hidden /><span>Add Page</span>
         </Button>
       </div>
 

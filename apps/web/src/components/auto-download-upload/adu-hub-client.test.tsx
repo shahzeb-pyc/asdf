@@ -416,7 +416,7 @@ describe('AduHubPage create (F12)', () => {
     expect(listCalls()).toHaveLength(1);
     expect(statsCalls()).toHaveLength(1);
 
-    fireEvent.click(screen.getByText('+ Add Page'));
+    fireEvent.click(screen.getByText('Add Page'));
     await screen.findByText('Shahzeb Malik');
     fireEvent.click(screen.getByText('Shahzeb Malik'));
     fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
