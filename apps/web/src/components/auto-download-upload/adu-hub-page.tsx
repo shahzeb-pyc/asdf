@@ -4,6 +4,8 @@
 import * as React from 'react';
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MoveUpRightIcon, PlusIcon, SearchIcon } from 'lucide-react';
 import { parseAduBulkPaste, ADU_STATUS_FILTER_OPTIONS } from '@fbuploadpro/contracts';
 import { formatSlotDisplay } from '@/components/pages/dedicated/posting-times/posting-time-utils';
@@ -43,6 +45,7 @@ import {
 } from '@/lib/timezones';
 import { getUserInitials } from '@/lib/user-initials';
 import { formatFollowersUpdatedAt } from '@/lib/format-followers-updated-at';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { cn } from '@/lib/utils';
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 
@@ -239,6 +242,72 @@ export async function fetchAduOptions(subdomain: string): Promise<{
   };
 }
 
+export interface AduHubStats {
+  totalPages: number;
+  followersGained: number;
+  totalFollowers: number;
+}
+
+const EMPTY_ADU_HUB_STATS: AduHubStats = { totalPages: 0, followersGained: 0, totalFollowers: 0 };
+
+/**
+ * Hub list fetch (F5/F6): one page of configs for the current filters.
+ * Passes `stats=none` so the stats half of the response is skipped once
+ * Stream A implements the split — and reads nothing but configs /
+ * totalPages / migrationMissing, so the combined pre-split response
+ * (which still carries `stats`) is equally fine. The React Query
+ * `signal` aborts the fetch when the key changes or the component
+ * unmounts, so a superseded request can never resolve over a newer one.
+ */
+async function fetchAduHubList(
+  subdomain: string,
+  params: { q: string; status: string; sort: string; page: number },
+  signal: AbortSignal,
+): Promise<{ configs: AduConfigView[]; totalPages: number; migrationMissing: boolean }> {
+  const query = new URLSearchParams({
+    q: params.q,
+    status: params.status,
+    sort: params.sort,
+    page: String(params.page),
+    stats: 'none',
+  });
+  const response = await fetch(
+    `${buildTenantApiPath(subdomain, '/auto-download-upload')}?${query}`,
+    { signal },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error ?? 'Failed to load pages.');
+  return {
+    configs: body.configs ?? [],
+    totalPages: body.totalPages ?? 0,
+    migrationMissing: Boolean(body.migrationMissing),
+  };
+}
+
+/**
+ * Hub stats fetch (F6): the same filters, no page, no sort — the key
+ * never changes on a pure page turn, so a page turn never refetches
+ * stats. Passes `stats=only` for Stream A's split route and reads
+ * `response.stats` only; pre-split the server ignores the unknown
+ * param and returns the combined response, whose configs are ignored
+ * here. A stats failure falls back to zeros (the old stats-RPC-failure
+ * path) and never blanks the page.
+ */
+async function fetchAduHubStats(
+  subdomain: string,
+  params: { q: string; status: string },
+  signal: AbortSignal,
+): Promise<AduHubStats> {
+  const query = new URLSearchParams({ q: params.q, status: params.status, stats: 'only' });
+  const response = await fetch(
+    `${buildTenantApiPath(subdomain, '/auto-download-upload')}?${query}`,
+    { signal },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error ?? 'Failed to load pages.');
+  return body.stats ?? EMPTY_ADU_HUB_STATS;
+}
+
 /**
  * Added date for the card, from the page's import date (`createdAt`),
  * formatted like "2 Nov 2026" — the same rule as page-card's
@@ -307,6 +376,8 @@ const ADU_RING_CLASSES: Record<AduStatusMarkKind, string> = {
  */
 function AduPageCard({ config, subdomain }: { config: AduConfigView; subdomain: string }) {
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(null);
+  const router = useRouter();
+  const queryClient = useQueryClient();
 
   const kind = getAduStatusMarkKind(config.displayStatus);
   const ringClass = ADU_RING_CLASSES[kind];
@@ -335,12 +406,44 @@ function AduPageCard({ config, subdomain }: { config: AduConfigView; subdomain: 
     return Boolean(target && typeof target.closest === 'function' && target.closest('a'));
   };
 
+  // Client navigation, not a full document reload: `router.push` is
+  // the same client-side navigation a Next <Link> performs (same
+  // router, shell/sidebar/topbar/QueryClient survive). A <Link>
+  // outer element is impossible for this card — it contains a real
+  // source <a target="_blank">, and an <a> nested in an <a> is
+  // split apart by the HTML parser when the SSR HTML is parsed, so
+  // hydration would mismatch in production (the same reason
+  // page-card.tsx uses a div + activation handler).
   const handleActivate = (e?: React.SyntheticEvent) => {
     if (e && isLinkEventTarget(e)) return;
-    if (typeof window !== 'undefined') {
-      window.location.href = targetHref;
-    }
+    router.push(targetHref);
   };
+
+  // Bounded hover prefetch (pagination step 2): one data query per
+  // hover — the detail config under the key Stream C's detail query
+  // will read — fired at most once per card mount, and skipped when
+  // the key is already cached. This is a data prefetch, not RSC
+  // prefetching: no Link is rendered here (see handleActivate), so no
+  // blanket prefetch storm is possible.
+  const prefetchedDetailRef = React.useRef(false);
+  const prefetchDetail = React.useCallback(() => {
+    if (prefetchedDetailRef.current) return;
+    prefetchedDetailRef.current = true;
+    if (queryClient.getQueryData(['adu-detail', config.id])) return;
+    void queryClient.prefetchQuery({
+      queryKey: ['adu-detail', config.id],
+      queryFn: async ({ signal }) => {
+        const response = await fetch(
+          buildTenantApiPath(subdomain, `/auto-download-upload/${config.id}`),
+          { signal },
+        );
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error ?? 'Page not found.');
+        return body.config;
+      },
+      staleTime: 30_000,
+    });
+  }, [queryClient, config.id, subdomain]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (isLinkEventTarget(e)) return;
@@ -359,6 +462,8 @@ function AduPageCard({ config, subdomain }: { config: AduConfigView; subdomain: 
       aria-label={`Open ${config.destinationName} page details`}
       onClick={handleActivate}
       onKeyDown={handleKeyDown}
+      onMouseEnter={prefetchDetail}
+      onFocus={prefetchDetail}
       className="group flex min-w-0 cursor-pointer flex-col rounded-md border border-line bg-panel p-6 shadow-card transition outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
     >
       {/* Top row: avatar with status ring + identity + circled arrow. */}
@@ -562,44 +667,167 @@ function AduPageCard({ config, subdomain }: { config: AduConfigView; subdomain: 
   );
 }
 
-export function AduHubPage({ subdomain }: { subdomain: string }) {
-  const [configs, setConfigs] = React.useState<AduConfigView[]>([]);
-  const [stats, setStats] = React.useState({ totalPages: 0, followersGained: 0, totalFollowers: 0 });
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const [migrationMissing, setMigrationMissing] = React.useState(false);
-  const [searchQuery, setSearchQuery] = React.useState('');
-  const [statusFilter, setStatusFilter] = React.useState<string>('All Statuses');
-  const [sort, setSort] = React.useState<string>('Newest First');
-  const [page, setPage] = React.useState(1);
-  const [totalPages, setTotalPages] = React.useState(0);
+export interface AduHubUrlState {
+  q: string;
+  status: string;
+  sort: string;
+  page: number;
+}
+
+const ADU_HUB_DEFAULT_STATUS = 'All Statuses';
+const ADU_HUB_DEFAULT_SORT = 'Newest First';
+
+/**
+ * URL state (pagination step 1): `?q=&status=&sort=&page=` is the
+ * hub's filter state, so Back from a detail page returns to the same
+ * page, search and sort — and a page-2 link is shareable and
+ * refresh-safe. Invalid values fall back to defaults, never a 404.
+ */
+export function resolveAduHubSearchParams(searchParams: URLSearchParams): AduHubUrlState {
+  const q = searchParams.get('q') ?? '';
+  const rawStatus = searchParams.get('status') ?? ADU_HUB_DEFAULT_STATUS;
+  const status = (STATUS_OPTIONS as readonly string[]).includes(rawStatus)
+    ? rawStatus
+    : ADU_HUB_DEFAULT_STATUS;
+  const rawSort = searchParams.get('sort') ?? ADU_HUB_DEFAULT_SORT;
+  const sort = (SORT_OPTIONS as readonly string[]).includes(rawSort)
+    ? rawSort
+    : ADU_HUB_DEFAULT_SORT;
+  const rawPage = Number.parseInt(searchParams.get('page') ?? '', 10);
+  const page = Number.isFinite(rawPage) && rawPage >= 1 ? rawPage : 1;
+  return { q, status, sort, page };
+}
+
+/** Serialises hub state back to the URL; defaults are omitted so the
+ *  clean hub URL stays bare. */
+function buildAduHubSearchParams(state: AduHubUrlState): URLSearchParams {
+  const params = new URLSearchParams();
+  if (state.q !== '') params.set('q', state.q);
+  if (state.status !== ADU_HUB_DEFAULT_STATUS) params.set('status', state.status);
+  if (state.sort !== ADU_HUB_DEFAULT_SORT) params.set('sort', state.sort);
+  if (state.page > 1) params.set('page', String(state.page));
+  return params;
+}
+
+function AduHubPageInner({ subdomain }: { subdomain: string }) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  // Filter/page state is seeded from the URL once at mount; later URL
+  // changes flow through the adopt effect below, not this initializer.
+  const initial = React.useMemo(() => resolveAduHubSearchParams(searchParams), []);
+  // The last filter/page state the user chose (detail-page `?tab=`
+  // pattern): handlers update it synchronously with the state, so the
+  // adopt effect can tell a popstate apart from our own URL write.
+  const intendedRef = React.useRef<AduHubUrlState>(initial);
+  const [searchQuery, setSearchQuery] = React.useState(initial.q);
+  const [statusFilter, setStatusFilter] = React.useState<string>(initial.status);
+  const [sort, setSort] = React.useState<string>(initial.sort);
+  const [page, setPage] = React.useState(initial.page);
   const [dialogOpen, setDialogOpen] = React.useState(false);
   // Plan cap: the Add Page button disables at the cap, and the
   // ADU create route enforces the same cap server-side.
   const { cap: facebookCap } = useFeatureCap(subdomain, 'facebook');
 
-  const load = React.useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams({ q: searchQuery, status: statusFilter, sort, page: String(page) });
-      const response = await fetch(`${buildTenantApiPath(subdomain, '/auto-download-upload')}?${params}`);
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error ?? 'Failed to load pages.');
-      setConfigs(body.configs ?? []);
-      setStats(body.stats ?? { totalPages: 0, followersGained: 0, totalFollowers: 0 });
-      setTotalPages(body.totalPages ?? 0);
-      setMigrationMissing(Boolean(body.migrationMissing));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load pages.');
-    } finally {
-      setLoading(false);
+  // Search runs on the debounced input (~300 ms, F4): the toolbar
+  // input itself stays immediate, but no list request fires per
+  // keystroke. Clearing to '' applies immediately (hook design).
+  const debouncedSearch = useDebouncedValue(searchQuery, 300);
+  const debouncedQuery = debouncedSearch.trim();
+
+  // Back/forward navigation: when the URL's query string changes
+  // without a click (popstate), adopt it — so Back from a detail
+  // page returns to the same page, search, sort and status. The
+  // guard is the intent ref: a URL that already matches what the
+  // user last chose (including our own replace, below) is ignored,
+  // so the adopt and the write can never chase each other.
+  React.useEffect(() => {
+    const next = resolveAduHubSearchParams(searchParams);
+    const intended = intendedRef.current;
+    if (
+      next.q === intended.q &&
+      next.status === intended.status &&
+      next.sort === intended.sort &&
+      next.page === intended.page
+    ) {
+      return;
     }
-  }, [subdomain, searchQuery, statusFilter, sort, page]);
+    intendedRef.current = next;
+    setSearchQuery(next.q);
+    setStatusFilter(next.status);
+    setSort(next.sort);
+    setPage(next.page);
+  }, [searchParams]);
 
-  React.useEffect(() => { void load(); }, [load]);
+  // Every filter/page change goes through here: state + intent ref +
+  // URL, in the same handler tick. Writing the URL in the handler
+  // (not in an effect) is what keeps the adopt effect from seeing a
+  // stale URL and reverting the change it just made — the detail
+  // page's `?tab=` handler does the same. Replace, never push: a
+  // filter keystroke is not a history entry.
+  const updateHubState = React.useCallback(
+    (patch: Partial<AduHubUrlState>) => {
+      const next: AduHubUrlState = {
+        q: searchQuery,
+        status: statusFilter,
+        sort,
+        page,
+        ...patch,
+      };
+      intendedRef.current = next;
+      setSearchQuery(next.q);
+      setStatusFilter(next.status);
+      setSort(next.sort);
+      setPage(next.page);
+      const serialized = buildAduHubSearchParams(next).toString();
+      if (serialized !== searchParams.toString()) {
+        router.replace(serialized ? `?${serialized}` : '?', { scroll: false });
+      }
+    },
+    [router, searchParams, searchQuery, statusFilter, sort, page],
+  );
 
-  const hasActiveFilter = searchQuery.trim() !== '' || statusFilter !== 'All Statuses';
+  // F5: the hub list is a React Query entry on the shell's client —
+  // keyed by every filter + page, `keepPreviousData` so a page turn
+  // renders over the previous page instead of blanking, staleTime
+  // 60 s (the shared reference default, named here). An earlier
+  // response can only populate its own key's cache entry, never the
+  // current key's data — the F4 stale-response race is gone by
+  // construction. The list query ignores `body.stats` (see F6).
+  const listQuery = useQuery({
+    queryKey: ['adu-hub', subdomain, debouncedQuery, statusFilter, sort, page],
+    queryFn: ({ signal }) =>
+      fetchAduHubList(subdomain, { q: debouncedQuery, status: statusFilter, sort, page }, signal),
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  });
+
+  // F6: stats are their own query — same filters, no page, no sort —
+  // with a 5-minute staleTime, so a pure page turn never refetches
+  // them. Reads `response.stats` only; pre-split the server returns
+  // the combined response and its configs are ignored here.
+  const statsQuery = useQuery({
+    queryKey: ['adu-hub-stats', subdomain, debouncedQuery, statusFilter],
+    queryFn: ({ signal }) =>
+      fetchAduHubStats(subdomain, { q: debouncedQuery, status: statusFilter }, signal),
+    staleTime: 300_000,
+  });
+
+  const configs = listQuery.data?.configs ?? [];
+  const totalPages = listQuery.data?.totalPages ?? 0;
+  const migrationMissing = listQuery.data?.migrationMissing ?? false;
+  const stats = statsQuery.data ?? EMPTY_ADU_HUB_STATS;
+  // `isPending` is true only while no data exists at all: a page turn
+  // serves placeholder data, so the list never blanks mid-flight.
+  const loading = listQuery.isPending;
+  const error = listQuery.isError
+    ? (listQuery.error instanceof Error ? listQuery.error.message : 'Failed to load pages.')
+    : null;
+  // Page buttons disable while a load is in flight (step 7).
+  const isFetchingPage = listQuery.isFetching;
+
+  const hasActiveFilter = debouncedQuery !== '' || statusFilter !== ADU_HUB_DEFAULT_STATUS;
 
   return (
     <div className="mx-auto box-border flex w-full max-w-300 flex-col gap-6 px-6 py-6">
@@ -639,12 +867,12 @@ export function AduHubPage({ subdomain }: { subdomain: string }) {
       </Card>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Input type="search" aria-label="Search pages or sources" placeholder="Search pages or sources…" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }} className="min-w-55 flex-1 sm:max-w-80" />
-        <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
+        <Input type="search" aria-label="Search pages or sources" placeholder="Search pages or sources…" value={searchQuery} onChange={(e) => updateHubState({ q: e.target.value, page: 1 })} className="min-w-55 flex-1 sm:max-w-80" />
+        <Select value={statusFilter} onValueChange={(v) => updateHubState({ status: v, page: 1 })}>
           <SelectTrigger aria-label="Filter by status"><SelectValue /></SelectTrigger>
           <SelectContent>{STATUS_OPTIONS.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
         </Select>
-        <Select value={sort} onValueChange={(v) => { setSort(v); setPage(1); }}>
+        <Select value={sort} onValueChange={(v) => updateHubState({ sort: v, page: 1 })}>
           <SelectTrigger aria-label="Sort pages"><SelectValue /></SelectTrigger>
           <SelectContent>{SORT_OPTIONS.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent>
         </Select>
@@ -656,7 +884,7 @@ export function AduHubPage({ subdomain }: { subdomain: string }) {
         <p className="text-body text-ink-sub">ADU pages cannot be listed or added until the tables are created — see the warning above.</p>
       ) : configs.length === 0 ? (
         hasActiveFilter ? (
-          <EmptyState type="no-results" title="No pages match your search or filters." action={<Button type="button" variant="outline" onClick={() => { setSearchQuery(''); setStatusFilter('All Statuses'); setPage(1); }}>Clear filters</Button>} />
+          <EmptyState type="no-results" title="No pages match your search or filters." action={<Button type="button" variant="outline" onClick={() => updateHubState({ q: '', status: 'All Statuses', page: 1 })}>Clear filters</Button>} />
         ) : (
           <EmptyState type="first-use" title="No pages found" description="Connect a Facebook account and add your first page to start automation." />
         )
@@ -669,9 +897,9 @@ export function AduHubPage({ subdomain }: { subdomain: string }) {
           </div>
           {totalPages > 1 ? (
             <div className="flex items-center gap-2">
-              <Button type="button" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
+              <Button type="button" variant="outline" disabled={page <= 1 || isFetchingPage} onClick={() => updateHubState({ page: page - 1 })}>Previous</Button>
               <span className="text-body text-ink-sub">Page {page} of {totalPages}</span>
-              <Button type="button" variant="outline" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
+              <Button type="button" variant="outline" disabled={page >= totalPages || isFetchingPage} onClick={() => updateHubState({ page: page + 1 })}>Next</Button>
             </div>
           ) : null}
         </>
@@ -681,9 +909,34 @@ export function AduHubPage({ subdomain }: { subdomain: string }) {
         subdomain={subdomain}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        onCreated={() => { setDialogOpen(false); setPage(1); void load(); }}
+        // F12: one load per create. The old code did setPage(1) AND
+        // an explicit load() — if not already on page 1 the setPage
+        // effect fired a second load and the two raced. Now the
+        // invalidation below is the only refetch trigger: it marks
+        // every hub + stats entry stale, so the page-1 query (new key
+        // after setPage, or invalidated cache if already on page 1)
+        // fires exactly one refetch.
+        onCreated={() => {
+          setDialogOpen(false);
+          updateHubState({ page: 1 });
+          void queryClient.invalidateQueries({ queryKey: ['adu-hub', subdomain] });
+          void queryClient.invalidateQueries({ queryKey: ['adu-hub-stats', subdomain] });
+        }}
       />
     </div>
+  );
+}
+
+/**
+ * `useSearchParams` requires a Suspense boundary for prerendering, so
+ * the URL-syncing inner component sits behind one. The route wrapper
+ * itself is untouched (detail-page pattern).
+ */
+export function AduHubPage({ subdomain }: { subdomain: string }) {
+  return (
+    <React.Suspense fallback={<p className="text-body text-ink-sub">Loading pages…</p>}>
+      <AduHubPageInner subdomain={subdomain} />
+    </React.Suspense>
   );
 }
 

@@ -34,6 +34,16 @@ vi.mock('next/image', () => ({
   ),
 }));
 
+// The hub reads its filter/page state from the URL and navigates
+// cards with router.push (adu-opt-b): both need the app router.
+// The replace spy is plain — these tests never change the URL, so no
+// URL simulation is needed here (the colocated client tests cover it).
+const navMocks = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(''),
+  useRouter: () => ({ push: navMocks.push, replace: navMocks.replace }),
+}));
+
 import { AduHubPage } from '@/components/auto-download-upload/adu-hub-page';
 
 const fetchMock = vi.fn();
@@ -637,34 +647,6 @@ async function renderCards(configs: unknown[] = [CARD_CONFIG]) {
   return screen.findByTestId('adu-page-card-cfg-1');
 }
 
-/** Stubs window.location with a plain getter/setter so card
- * navigation (window.location.href = ...) is observable in jsdom
- * without jsdom's "not implemented: navigation" path. Restores the
- * original descriptor afterwards. */
-function stubLocation() {
-  let href = '';
-  const original = Object.getOwnPropertyDescriptor(window, 'location');
-  Object.defineProperty(window, 'location', {
-    configurable: true,
-    value: {
-      get href() {
-        return href;
-      },
-      set href(next: string) {
-        href = next;
-      },
-    },
-  });
-  return {
-    get href() {
-      return href;
-    },
-    restore() {
-      if (original) Object.defineProperty(window, 'location', original);
-    },
-  };
-}
-
 describe('AduHubPage list cards (Pages-section structure)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -774,35 +756,22 @@ describe('AduHubPage list cards (Pages-section structure)', () => {
   it('whole-card click, Enter, and Space navigate to the detail page', async () => {
     installFetchCards([CARD_CONFIG]);
     const card = await renderCards();
-    const loc = stubLocation();
-    try {
-      fireEvent.click(card);
-      expect(loc.href).toBe('/tenant/acme/auto-download-upload/cfg-1');
-      loc.restore();
-      const loc2 = stubLocation();
-      try {
-        fireEvent.keyDown(card, { key: 'Enter' });
-        expect(loc2.href).toBe('/tenant/acme/auto-download-upload/cfg-1');
-        fireEvent.keyDown(card, { key: ' ' });
-        expect(loc2.href).toBe('/tenant/acme/auto-download-upload/cfg-1');
-      } finally {
-        loc2.restore();
-      }
-    } finally {
-      loc.restore();
-    }
+    // Client navigation (adu-opt-b): the card calls router.push, not
+    // window.location.href, so the shell and QueryClient survive.
+    fireEvent.click(card);
+    expect(navMocks.push).toHaveBeenCalledWith('/tenant/acme/auto-download-upload/cfg-1');
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(navMocks.push).toHaveBeenCalledWith('/tenant/acme/auto-download-upload/cfg-1');
+    fireEvent.keyDown(card, { key: ' ' });
+    expect(navMocks.push).toHaveBeenCalledWith('/tenant/acme/auto-download-upload/cfg-1');
+    expect(window.location.href).not.toContain('cfg-1');
   });
 
   it('clicking the source link does not navigate the card', async () => {
     installFetchCards([CARD_CONFIG]);
     await renderCards();
-    const loc = stubLocation();
-    try {
-      fireEvent.click(screen.getByTestId('adu-page-source-link'));
-      expect(loc.href).toBe('');
-    } finally {
-      loc.restore();
-    }
+    fireEvent.click(screen.getByTestId('adu-page-source-link'));
+    expect(navMocks.push).not.toHaveBeenCalled();
   });
 
   it('maps every ADU display status to the right StatusMark kind', () => {
