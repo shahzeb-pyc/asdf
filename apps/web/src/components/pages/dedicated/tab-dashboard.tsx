@@ -119,7 +119,7 @@ export function PageTabDashboard({
   const dataError = queueError || slotsError;
 
   return (
-    <div data-testid="page-tab-dashboard" className="flex flex-col gap-6">
+    <div data-testid="page-tab-dashboard" className="flex flex-col gap-stack">
       {dataError && (
         <Banner
           variant="critical"
@@ -144,7 +144,7 @@ export function PageTabDashboard({
       {/* 4 overview metric cards */}
       <div
         data-testid="dashboard-metrics-grid"
-        className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+        className="grid gap-grid sm:grid-cols-2 xl:grid-cols-4"
       >
         <div data-testid="metric-followers" className={cardClass}>
           <span className={metricLabelClass}>Total Followers</span>

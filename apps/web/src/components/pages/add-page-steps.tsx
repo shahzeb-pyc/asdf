@@ -250,7 +250,7 @@ export function SelectAccountStep({
               onClick={() => {
                 onSelectAccount(account);
               }}
-              className="flex min-h-11 w-full items-center justify-between gap-4 rounded-sm px-3.5 py-3 text-left outline-none transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-link"
+              className="flex min-h-11 w-full items-center justify-between gap-4 rounded-sm px-row py-row text-left outline-none transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-link"
             >
               <div className="flex min-w-0 items-center gap-4">
                 <AccountAvatar account={account} />
@@ -285,7 +285,7 @@ export function SelectAccountStep({
             <div
               key={account.id}
               data-testid={`error-account-${account.id}`}
-              className="flex items-center justify-between gap-4 rounded-sm px-3.5 py-3 opacity-55"
+              className="flex items-center justify-between gap-4 rounded-sm px-row py-row opacity-55"
             >
               <div className="flex min-w-0 items-center gap-4">
                 <AccountAvatar account={account} />
@@ -327,7 +327,7 @@ export function SelectAccountStep({
             <div
               key={account.id}
               data-testid={`expired-account-${account.id}`}
-              className="flex items-center justify-between gap-4 rounded-sm px-3.5 py-3 opacity-55"
+              className="flex items-center justify-between gap-4 rounded-sm px-row py-row opacity-55"
             >
               <div className="flex min-w-0 items-center gap-4">
                 <AccountAvatar account={account} />
