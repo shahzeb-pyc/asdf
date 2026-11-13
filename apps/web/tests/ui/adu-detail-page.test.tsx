@@ -4,7 +4,8 @@
  * The rebuilt detail page matches the Pages dedicated section: a capped
  * centred container, a 56px avatar header with a coloured status mark,
  * URL-driven sticky tabs, grouped Overview tiles with formatted values,
- * a per-status alert banner, and a single Discover button. Behavioural
+ * a per-status alert banner, and no Discover button in the Reels tab
+ * (spec 179 removed it — the tab is the Downloaded Queue only). Behavioural
  * coverage only: every test asserts something a regression would break.
  */
 import React from 'react';
@@ -257,23 +258,20 @@ describe('tabs', () => {
 });
 
 describe('reels tab', () => {
-  it('has exactly one Discover button and it POSTs discover', async () => {
-    const user = userEvent.setup();
+  it('has no Discover button and never POSTs discover', async () => {
     mockTab = 'reels';
     installFetch();
     renderDetail();
-    const discover = await screen.findByRole('button', { name: 'Discover reels' });
+    expect(await screen.findByRole('heading', { name: 'Downloaded Queue' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Discover reels' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
-    await user.click(discover);
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining('/reels'),
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ action: 'discover' }),
-        })
-      );
-    });
+    expect(
+      fetchMock.mock.calls.some(
+        (c) =>
+          (c[1] as { method?: string; body?: string } | undefined)?.method === 'POST' &&
+          (c[1] as { body?: string }).body === JSON.stringify({ action: 'discover' })
+      )
+    ).toBe(false);
   });
 });
 
