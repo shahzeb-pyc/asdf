@@ -1,7 +1,7 @@
 /**
  * @file instagram-schedule-helpers.test.ts
  * @description Behavioural unit tests for the Instagram Schedule server
- * helpers (lib/server/instagram-schedule.ts): the membership flag,
+ * helpers (lib/server/instagram-schedule.ts): section membership,
  * status priority, addability, timezone validation, slot-format
  * normalisation, posting-times validation, cap hook, wire mapping,
  * and metadata parsing. These helpers are the Schedule section's
@@ -22,7 +22,6 @@ import {
   checkScheduleCap,
   isAddableInstagramAccount,
   isPausedDestination,
-  isScheduledDestination,
   isValidTimezone,
   mapDestinationToScheduleItem,
   normalizeScheduleSlotFormats,
@@ -37,16 +36,11 @@ beforeEach(() => {
   mockedLog.mockClear();
 });
 
-describe('isScheduledDestination / isPausedDestination', () => {
-  it('reads the scheduled flag only when it is exactly true', () => {
-    expect(isScheduledDestination({ scheduled: true })).toBe(true);
-    expect(isScheduledDestination({ scheduled: false })).toBe(false);
-    expect(isScheduledDestination({ scheduled: 'yes' })).toBe(false);
-    expect(isScheduledDestination({})).toBe(false);
-    expect(isScheduledDestination(null)).toBe(false);
-    expect(isScheduledDestination(undefined)).toBe(false);
-  });
-
+describe('isPausedDestination', () => {
+  // Spec 174 Phase 4: the old isScheduledDestination helper is gone —
+  // the `scheduled` flag is no longer read anywhere. Membership is the
+  // section column plus the paused marker; see
+  // src/lib/server/schedule-membership.test.ts for the pinned cases.
   it('reads the paused flag only when it is exactly "paused"', () => {
     expect(isPausedDestination({ schedule_paused: 'paused' })).toBe(true);
     expect(isPausedDestination({ schedule_paused: 'resumed' })).toBe(false);

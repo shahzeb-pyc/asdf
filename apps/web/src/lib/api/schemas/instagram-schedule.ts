@@ -9,9 +9,10 @@ import {
  * Instagram Schedule wire schemas — the Instagram equivalent of the
  * Facebook Pages list/detail wire shapes, on the unified destination
  * model. A scheduled Instagram destination is a `destinations` row
- * with `platform='instagram'` and `metadata.scheduled = true`; no
- * separate schedule table exists, so these schemas carry the account
- * fields the cards need alongside the destination fields.
+ * with `platform='instagram'` and `section='schedule'` that is not a
+ * removed stub (spec 174 Phase 4); no separate schedule table exists,
+ * so these schemas carry the account fields the cards need alongside
+ * the destination fields.
  *
  * User-facing copy never uses the word "destination": the UI says
  * "account". These schemas keep the internal name only where the

@@ -36,13 +36,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 /**
  * Instagram Schedule list + add routes.
  *
- * Membership rule (see lib/server/instagram-schedule): a destination
- * is in Schedule exactly when its `section` is 'schedule' and it is
- * not a removed stub (a disconnected copy whose scheduled flag was
- * cleared). The list therefore filters on the section column, never
- * on a separate table, and Add is an opt-in on an already-connected
- * Instagram account — it never auto-adds accounts and never connects
- * a new one.
+ * Membership rule (see lib/server/instagram-schedule, spec 174
+ * Phase 4): a destination is in Schedule exactly when its `section`
+ * is 'schedule' and it is not a removed stub (a disconnected copy
+ * without the paused marker). The old `metadata.scheduled` flag is
+ * no longer read anywhere. The list therefore filters on the section
+ * column, never on a separate table, and Add is an opt-in on an
+ * already-connected Instagram account — it never auto-adds accounts
+ * and never connects a new one.
  *
  * Retry safety for Add (no generic idempotency store is reused here,
  * to avoid touching shared queue code owned by other surfaces):
@@ -132,7 +133,7 @@ async function handleListSql(
   const conditions = [
     'd.workspace_id = $1',
     "d.platform = 'instagram'",
-    "d.section = 'schedule' AND (d.status <> 'disconnected' OR d.metadata->>'scheduled' = 'true')",
+    "d.section = 'schedule' AND (d.status <> 'disconnected' OR d.metadata->>'schedule_paused' = 'paused')",
   ];
   if (search) {
     const p = `$${params.length + 1}`;
@@ -395,8 +396,8 @@ interface AddContext {
     external_account_id?: string | null;
   };
   // The account's Schedule copy, any status — null when the account
-  // was never imported into Schedule. A removed stub (disconnected,
-  // flag cleared) is reactivated by the add; an active member 409s.
+  // was never imported into Schedule. A removed stub (disconnected)
+  // is reactivated by the add; an active member 409s.
   destination: InstagramScheduleDestinationRow | null;
   destinationIsMember: boolean;
 }
@@ -467,7 +468,7 @@ async function handleAddSql(
   const countRows = await dbClient.query<{ total?: unknown }>(
     `SELECT COUNT(*)::int AS total FROM destinations
      WHERE workspace_id = $1 AND platform = 'instagram' AND section = 'schedule'
-       AND (status <> 'disconnected' OR metadata->>'scheduled' = 'true')`,
+       AND (status <> 'disconnected' OR metadata->>'schedule_paused' = 'paused')`,
     [workspaceId]
   );
   const cap = checkScheduleCap(numericCount(countRows[0]?.total));
@@ -716,7 +717,7 @@ export async function handleAddInstagramSchedule(
       .eq('workspace_id', auth.workspaceId)
       .eq('platform', 'instagram')
       .eq('section', 'schedule')
-      .or('status.neq.disconnected,metadata->>scheduled.eq.true');
+      .or('status.neq.disconnected,metadata->>schedule_paused.eq.paused');
     if (countError) {
       logServerError('[instagram-schedule] add scheduled count failed', countError, {
         source: 'instagram-schedule-add',

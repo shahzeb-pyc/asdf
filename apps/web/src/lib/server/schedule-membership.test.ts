@@ -3,15 +3,18 @@ import { isScheduleListMember } from './instagram-schedule';
 import { isThreadsScheduleListMember } from './threads-schedule';
 
 /**
- * Spec 174 1B — list membership is the section column, with the
- * scheduled flag as the tiebreaker for disconnected rows.
- *
- * A removed stub (section 'schedule', disconnected, flag cleared)
- * is NOT a member: removal disconnects + strips it, and it must
- * vanish from the list. A connection-died row (disconnected, flag
- * still set) IS a member: it shows as disconnected with reconnect
- * guidance, exactly as before. A paused Threads row (disconnected
- * + paused marker) is a member too.
+ * Spec 174 Phase 4 — list membership is the section column alone.
+ * A removed stub (section 'schedule', status 'disconnected') is NOT
+ * a member: removal disconnects + strips it, and it must vanish from
+ * the list. A paused row (disconnected + paused marker) IS a member.
+ * The old membership flags (Instagram `scheduled`, Threads
+ * `threads_schedule_added_at`) are no longer read: a disconnected
+ * row without the paused marker is not a member whether or not the
+ * flag is set. Connection-died rows are status 'error' (expiry
+ * propagation), not 'disconnected', so they stay members through the
+ * status branch. Live data at build time confirms zero
+ * disconnected+flag-set schedule rows exist, so the flag-read
+ * removal changes no live list membership.
  */
 describe('isScheduleListMember (Instagram)', () => {
   it('an active schedule copy is a member', () => {
@@ -24,12 +27,32 @@ describe('isScheduleListMember (Instagram)', () => {
     ).toBe(true);
   });
 
-  it('a disconnected copy with the flag still set is a member (connection died)', () => {
+  it('a disconnected copy with the flag set but no paused marker is NOT a member (flag ignored)', () => {
     expect(
       isScheduleListMember({
         section: 'schedule',
         status: 'disconnected',
         metadata: { scheduled: true },
+      })
+    ).toBe(false);
+  });
+
+  it('a paused copy is a member (disconnected + paused marker)', () => {
+    expect(
+      isScheduleListMember({
+        section: 'schedule',
+        status: 'disconnected',
+        metadata: { schedule_paused: 'paused' },
+      })
+    ).toBe(true);
+  });
+
+  it('a paused copy is a member even with the flag set (paused wins)', () => {
+    expect(
+      isScheduleListMember({
+        section: 'schedule',
+        status: 'disconnected',
+        metadata: { scheduled: true, schedule_paused: 'paused' },
       })
     ).toBe(true);
   });
@@ -78,14 +101,14 @@ describe('isThreadsScheduleListMember', () => {
     ).toBe(true);
   });
 
-  it('a disconnected copy with the flag still set is a member (connection died)', () => {
+  it('a disconnected copy with the flag set but no paused marker is NOT a member (flag ignored)', () => {
     expect(
       isThreadsScheduleListMember({
         section: 'schedule',
         status: 'disconnected',
         metadata: { threads_schedule_added_at: '2026-11-12T00:00:00.000Z' },
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('a paused copy is a member (disconnected + paused marker)', () => {
@@ -97,6 +120,16 @@ describe('isThreadsScheduleListMember', () => {
           threads_schedule_added_at: '2026-11-12T00:00:00.000Z',
           threads_schedule_status: 'paused',
         },
+      })
+    ).toBe(true);
+  });
+
+  it('a paused copy is a member even without the flag (paused wins)', () => {
+    expect(
+      isThreadsScheduleListMember({
+        section: 'schedule',
+        status: 'disconnected',
+        metadata: { threads_schedule_status: 'paused' },
       })
     ).toBe(true);
   });
