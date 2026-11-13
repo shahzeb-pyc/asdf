@@ -32,6 +32,10 @@ import {
 } from '@/components/shared/ui/select';
 import { Textarea } from '@/components/shared/ui/textarea';
 import { StatusMark } from '@/components/shared/ui/status-mark';
+import { getAduStatusMarkKind, type AduStatusMarkKind } from '@/lib/adu-hub-helpers';
+
+// Re-exported: UI tests import the mark-kind helper from this page.
+export { getAduStatusMarkKind, type AduStatusMarkKind };
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
 import {
   DiscoverPagesResponseSchema,
@@ -322,40 +326,6 @@ function formatAduAddedDate(createdAt: string): string {
     month: 'short',
     year: 'numeric',
   }).format(date);
-}
-
-export type AduStatusMarkKind = 'operational' | 'queued' | 'critical';
-
-/**
- * Maps an ADU display status (the label `aduDisplayStatus` produces)
- * to a shared `StatusMark` kind, following page-card's kind
- * semantics: operational = healthy, queued = waiting, critical =
- * needs attention. Unknown labels map to critical — an unexpected
- * value must never read as healthy.
- *
- * - operational: 'Active posting' (active), 'All reels posted'
- *   (completed — a healthy terminal state, nothing wrong).
- * - queued: 'Scrape pending' (pending/browser_pending),
- *   'Scraping reels' (processing), 'Paused' (paused — paused, like
- *   page-card's paused → queued).
- * - critical: everything else — 'Source not found' (sync error),
- *   'Verification required', 'Invalid token', 'Rate limited',
- *   'Page not accessible', 'Source disabled', 'Creator suspended',
- *   'BM 2FA required', 'Check developer app', 'Account suspended',
- *   'Missing page access', 'Missing permission'.
- */
-export function getAduStatusMarkKind(displayStatus: string): AduStatusMarkKind {
-  if (displayStatus === 'Active posting' || displayStatus === 'All reels posted') {
-    return 'operational';
-  }
-  if (
-    displayStatus === 'Scrape pending' ||
-    displayStatus === 'Scraping reels' ||
-    displayStatus === 'Paused'
-  ) {
-    return 'queued';
-  }
-  return 'critical';
 }
 
 const ADU_RING_CLASSES: Record<AduStatusMarkKind, string> = {

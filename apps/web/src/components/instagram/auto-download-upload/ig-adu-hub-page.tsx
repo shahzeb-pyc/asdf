@@ -29,6 +29,10 @@ import { Textarea } from '@/components/shared/ui/textarea';
 import { buildTenantApiPath } from '@/lib/api/client';
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 import { StatusMark } from '@/components/shared/ui/status-mark';
+import { getAduStatusMarkKind, type AduStatusMarkKind } from '@/lib/adu-hub-helpers';
+
+// Re-exported: UI tests import the mark-kind helper from this page.
+export { getAduStatusMarkKind, type AduStatusMarkKind };
 
 const STATUS_OPTIONS = ADU_STATUS_FILTER_OPTIONS;
 const SORT_OPTIONS = ['Newest First', 'Most Followers', 'Least Followers'] as const;
@@ -59,28 +63,6 @@ interface AduConfigView {
   postsPerDay: number;
 }
 interface PickerPage { id: string; account_id: string; external_destination_id: string; name: string; avatar_url: string | null; status: string; metadata: Record<string, unknown> | null; }
-
-export type AduStatusMarkKind = 'operational' | 'queued' | 'critical';
-
-/**
- * Maps an ADU display status to a shared `StatusMark` kind — the same
- * mapping the Facebook hub cards use: operational = healthy, queued =
- * waiting, critical = needs attention. Unknown labels map to critical
- * — an unexpected value must never read as healthy.
- */
-export function getAduStatusMarkKind(displayStatus: string): AduStatusMarkKind {
-  if (displayStatus === 'Active posting' || displayStatus === 'All reels posted') {
-    return 'operational';
-  }
-  if (
-    displayStatus === 'Scrape pending' ||
-    displayStatus === 'Scraping reels' ||
-    displayStatus === 'Paused'
-  ) {
-    return 'queued';
-  }
-  return 'critical';
-}
 
 function pageAge(createdAt: string): string {
   const days = Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000));

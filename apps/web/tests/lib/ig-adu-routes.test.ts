@@ -3,11 +3,14 @@
  *
  * The Instagram hub must NEVER leak Facebook configs: the Facebook hub
  * RPCs (adu_hub_list / adu_hub_stats) have no platform filter, so the IG
- * hub route lists configs only for this workspace's Instagram
- * destinations. These tests prove that with a Facebook config sitting in
- * the same workspace: it never appears in the IG hub, and the IG detail
- * route refuses it with 404. Create paths prove a non-Instagram
- * destination is rejected with the plain Instagram-account error.
+ * hub route lists through its own instagram_adu_hub_list /
+ * instagram_adu_hub_stats RPCs (20261113130000), which filter to this
+ * workspace's Instagram destinations. These tests prove that with a
+ * Facebook config sitting in the same workspace: it never appears in
+ * the IG hub, and the IG detail route refuses it with 404. Create paths
+ * prove a non-Instagram destination is rejected with the plain
+ * Instagram-account error. The fake Supabase below emulates the two
+ * RPCs against the in-memory tables.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -268,60 +271,161 @@ function makeDb() {
 }
 
 let db: ReturnType<typeof makeDb>;
+
+/**
+ * In-memory emulation of the instagram_adu_hub_list /
+ * instagram_adu_hub_stats RPCs (20261113130000): same predicates as
+ * the SQL — workspace + Instagram ADU destination join, status
+ * filter, ILIKE search over source_username / destination name /
+ * external id, follower sorts, limit clamped 1–50, offset >= 0 —
+ * with total_count on every list row, and the stats sums over the
+ * same filtered set.
+ */
+function igHubFiltered(args: {
+  p_workspace_id: string;
+  p_search: string | null;
+  p_status: string | null;
+}): Row[] {
+  const destById = new Map(db.destinations.map((d) => [d.id as string, d]));
+  let rows = db.adu_configs.filter((c) => {
+    const d = destById.get(c.destination_id as string);
+    return (
+      c.workspace_id === args.p_workspace_id &&
+      d !== undefined &&
+      d.platform === 'instagram' &&
+      d.section === 'adu'
+    );
+  });
+  if (args.p_status) rows = rows.filter((c) => c.status === args.p_status);
+  if (args.p_search) {
+    const q = args.p_search.toLowerCase();
+    rows = rows.filter((c) => {
+      const d = destById.get(c.destination_id as string);
+      return (
+        String(c.source_username ?? '').toLowerCase().includes(q) ||
+        String(d?.name ?? '').toLowerCase().includes(q) ||
+        String(d?.external_destination_id ?? '').toLowerCase().includes(q)
+      );
+    });
+  }
+  return rows;
+}
+
+function igHubRpc(name: string, args: Record<string, unknown>) {
+  const filtered = igHubFiltered({
+    p_workspace_id: args['p_workspace_id'] as string,
+    p_search: (args['p_search'] as string | null) ?? null,
+    p_status: (args['p_status'] as string | null) ?? null,
+  });
+  if (name === 'instagram_adu_hub_stats') {
+    return {
+      data: [
+        {
+          total_count: filtered.length,
+          total_followers_sum: filtered.reduce(
+            (sum, r) => sum + Number(r.current_followers ?? 0),
+            0
+          ),
+          net_gained_sum: filtered.reduce(
+            (sum, r) =>
+              sum +
+              Math.max(
+                Number(r.current_followers ?? 0) - Number(r.starting_followers ?? 0),
+                0
+              ),
+            0
+          ),
+        },
+      ],
+      error: null,
+    };
+  }
+  const total = filtered.length;
+  const sorted = [...filtered].sort(
+    (a, b) =>
+      new Date(String(b.created_at ?? '')).getTime() -
+      new Date(String(a.created_at ?? '')).getTime()
+  );
+  const sort = args['p_sort'] as string | null;
+  if (sort === 'Most Followers' || sort === 'Least Followers') {
+    const dir = sort === 'Most Followers' ? -1 : 1;
+    sorted.sort(
+      (a, b) =>
+        dir * (Number(a.current_followers ?? 0) - Number(b.current_followers ?? 0)) ||
+        new Date(String(b.created_at ?? '')).getTime() -
+          new Date(String(a.created_at ?? '')).getTime()
+    );
+  }
+  const limit = Math.min(Math.max(Number(args['p_limit'] ?? 9) || 9, 1), 50);
+  const offset = Math.max(Number(args['p_offset'] ?? 0) || 0, 0);
+  return {
+    data: sorted
+      .slice(offset, offset + limit)
+      .map((row) => ({ ...row, total_count: total })),
+    error: null,
+  };
+}
+
 const fakeSupabase = {
   // The grouped-counts RPC (adu-opt-f1), answered from the same canned
   // rows the old count queries read. Fixtures here have no reels or
   // jobs, so every count is 0; the midnight rule is the same UTC /
-  // invalid-timezone fallback as the real function.
-  rpc: (name: string, params: { p_workspace_id: string; p_config_ids: string[] }) => {
-    if (name !== 'adu_config_counts') {
-      return Promise.resolve({ data: null, error: { code: '42883', message: 'not found' } });
+  // invalid-timezone fallback as the real function. The IG hub RPCs
+  // (instagram_adu_hub_list / instagram_adu_hub_stats) are answered by
+  // igHubRpc below; any other RPC name fails loud with 42883, as the
+  // real PostgREST does for a missing function.
+  rpc: (name: string, args: Record<string, unknown>) => {
+    if (name === 'adu_config_counts') {
+      const store = db as unknown as Record<string, Row[]>;
+      const data = ((args['p_config_ids'] as string[] | undefined) ?? []).map((id) => {
+        const timezone = String(
+          (store['adu_configs'] ?? []).find((c) => c.id === id)?.['timezone'] ?? 'UTC',
+        );
+        let midnight: string;
+        try {
+          const parts = new Intl.DateTimeFormat('en-CA', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            timeZone: timezone,
+          }).formatToParts(new Date());
+          const year = parts.find((x) => x.type === 'year')?.value ?? '1970';
+          const month = parts.find((x) => x.type === 'month')?.value ?? '01';
+          const day = parts.find((x) => x.type === 'day')?.value ?? '01';
+          midnight = new Date(`${year}-${month}-${day}T00:00:00.000Z`).toISOString();
+        } catch {
+          const now = new Date();
+          midnight = new Date(
+            Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+          ).toISOString();
+        }
+        const reels = (store['adu_reels'] ?? []).filter((r) => r['config_id'] === id);
+        const jobs = (store['adu_posting_jobs'] ?? []).filter((j) => j['config_id'] === id);
+        const pipeline = ['pending', 'processing', 'downloaded'];
+        const failedStatuses = ['failed_to_publish', 'publish_error', 'integrity_error'];
+        const inPipeline = reels.filter((r) => pipeline.includes(String(r['status']))).length;
+        const published = jobs.filter((j) => j['status'] === 'published');
+        const failed = jobs.filter((j) => failedStatuses.includes(String(j['status'])));
+        const failedInPipeline = failed.filter((j) => {
+          const reel = reels.find((r) => r['id'] === j['reel_id']);
+          return reel && pipeline.includes(String(reel['status']));
+        }).length;
+        return {
+          config_id: id,
+          in_pipeline: inPipeline,
+          published: published.length,
+          failed: failed.length,
+          failed_in_pipeline: failedInPipeline,
+          published_today: published.filter((j) => String(j['created_at']) >= midnight).length,
+          failed_today: failed.filter((j) => String(j['created_at']) >= midnight).length,
+        };
+      });
+      return Promise.resolve({ data, error: null });
     }
-    const store = db as unknown as Record<string, Row[]>;
-    const data = (params.p_config_ids ?? []).map((id) => {
-      const timezone = String(
-        (store['adu_configs'] ?? []).find((c) => c.id === id)?.['timezone'] ?? 'UTC',
-      );
-      let midnight: string;
-      try {
-        const parts = new Intl.DateTimeFormat('en-CA', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          timeZone: timezone,
-        }).formatToParts(new Date());
-        const year = parts.find((x) => x.type === 'year')?.value ?? '1970';
-        const month = parts.find((x) => x.type === 'month')?.value ?? '01';
-        const day = parts.find((x) => x.type === 'day')?.value ?? '01';
-        midnight = new Date(`${year}-${month}-${day}T00:00:00.000Z`).toISOString();
-      } catch {
-        const now = new Date();
-        midnight = new Date(
-          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-        ).toISOString();
-      }
-      const reels = (store['adu_reels'] ?? []).filter((r) => r['config_id'] === id);
-      const jobs = (store['adu_posting_jobs'] ?? []).filter((j) => j['config_id'] === id);
-      const pipeline = ['pending', 'processing', 'downloaded'];
-      const failedStatuses = ['failed_to_publish', 'publish_error', 'integrity_error'];
-      const inPipeline = reels.filter((r) => pipeline.includes(String(r['status']))).length;
-      const published = jobs.filter((j) => j['status'] === 'published');
-      const failed = jobs.filter((j) => failedStatuses.includes(String(j['status'])));
-      const failedInPipeline = failed.filter((j) => {
-        const reel = reels.find((r) => r['id'] === j['reel_id']);
-        return reel && pipeline.includes(String(reel['status']));
-      }).length;
-      return {
-        config_id: id,
-        in_pipeline: inPipeline,
-        published: published.length,
-        failed: failed.length,
-        failed_in_pipeline: failedInPipeline,
-        published_today: published.filter((j) => String(j['created_at']) >= midnight).length,
-        failed_today: failed.filter((j) => String(j['created_at']) >= midnight).length,
-      };
-    });
-    return Promise.resolve({ data, error: null });
+    if (name === 'instagram_adu_hub_list' || name === 'instagram_adu_hub_stats') {
+      return Promise.resolve(igHubRpc(name, args));
+    }
+    return Promise.resolve({ data: null, error: { code: '42883', message: 'not found' } });
   },
   from: (table: string) => new FakeBuilder(table, db as unknown as Record<string, Row[]>),
 };
