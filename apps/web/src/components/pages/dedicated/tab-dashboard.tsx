@@ -87,7 +87,7 @@ function formatItemBadge(item: PageQueueItemSummary): string {
 
 const cardClass = 'rounded-md border border-line bg-panel p-6 shadow-card';
 const metricLabelClass = 'text-body text-ink-sub';
-const metricValueClass = 'text-xxl font-bold text-ink';
+const metricValueClass = 'text-xxxl font-bold text-ink';
 
 export function PageTabDashboard({
   page,

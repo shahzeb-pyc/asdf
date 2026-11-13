@@ -353,7 +353,7 @@ describe('DashboardPanel behaviour', () => {
     expect(panel.textContent).toContain('3 posting times · Asia/Karachi');
     // Counts render as the big numbers: 7 queued, 12 posted, 2 failed.
     const bigNumbers = Array.from(
-      panel.querySelectorAll('p.text-xxl')
+      panel.querySelectorAll('p.text-xxxl')
     ).map((p) => p.textContent);
     expect(bigNumbers).toEqual(['7', '12', '2']);
     await waitFor(() =>
@@ -455,7 +455,7 @@ describe('InsightsPanel behaviour', () => {
       'Instagram insights are not connected yet'
     );
     const bigNumbers = Array.from(
-      panel.querySelectorAll('p.text-xxl')
+      panel.querySelectorAll('p.text-xxxl')
     ).map((p) => p.textContent);
     expect(bigNumbers).toEqual(['12', '2']);
     expect(

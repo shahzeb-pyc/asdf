@@ -475,7 +475,7 @@ export function PageCard({
       {/* Bottom queue-counts row: display only (plain spans, so a
           click here is the card's own navigation, like anywhere else
           on the card). Each stat is a centred column: a big number
-          on top (the dashboard metric token, text-xxl) with its
+          on top (the dashboard metric token, text-xxxl) with its
           label below it. Numbers use the design-system signal
           colours — queued gold, posted green, failed red — labels
           stay muted. Zeros are always shown; a missing queueCounts
@@ -495,7 +495,7 @@ export function PageCard({
         >
           <span
             data-testid="page-queued-count"
-            className="text-xxl font-bold tabular-nums text-signal-queued"
+            className="text-xxxl font-bold tabular-nums text-signal-queued"
           >
             {page.queueCountsError
               ? '—'
@@ -509,7 +509,7 @@ export function PageCard({
         >
           <span
             data-testid="page-posted-count"
-            className="text-xxl font-bold tabular-nums text-signal-operational"
+            className="text-xxxl font-bold tabular-nums text-signal-operational"
           >
             {page.queueCountsError
               ? '—'
@@ -523,7 +523,7 @@ export function PageCard({
         >
           <span
             data-testid="page-failed-count"
-            className="text-xxl font-bold tabular-nums text-signal-critical"
+            className="text-xxxl font-bold tabular-nums text-signal-critical"
           >
             {page.queueCountsError
               ? '—'

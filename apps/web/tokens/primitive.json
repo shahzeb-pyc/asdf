@@ -298,7 +298,7 @@
       "sans": {
         "$type": "fontFamily",
         "$value": "var(--font-manrope), system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif",
-        "$description": "Manrope (loaded via next/font/google in layout.tsx, variable --font-manrope) with the old system stack as fallback. Sizes, line-heights, tracking and weights are unchanged — see spec for why no size change is needed."
+        "$description": "Manrope (loaded via next/font/google in layout.tsx, variable --font-manrope) with the old system stack as fallback. Sizes and body line-height follow the Balanced scale (spec 178); tracking and weights are unchanged."
       }
     },
     "featureSettings": {
@@ -308,7 +308,7 @@
     "lineHeight": {
       "body": {
         "$type": "number",
-        "$value": 1.5
+        "$value": 1.55
       },
       "heading": {
         "$description": "Standard headings",
@@ -327,41 +327,41 @@
       }
     },
     "size": {
-      "$description": "Type scale — 1.25 modular ratio on a 13px product body (compact default density — Shahzeb, 2026-10-24; spec 129 OD-4 as amended). The 12px step is the named metadata step (body − 1px), not an accident.",
+      "$description": "Type scale — Balanced (spec 178): 14px product body. Lower steps scale proportionally from the 13px scale (×14/13); xxl/xxxl are pinned (25px page heading, 30px stat/display) rather than ratio-derived. The metadata step is the named metadata step, not an accident.",
       "body": {
-        "$description": "Product body size (1rem = 16px; body renders at 0.8125rem — the legacy app's de-facto size, now the specced compact default)",
+        "$description": "Product body size (1rem = 16px; body renders at 0.875rem — Balanced scale, spec 178)",
         "$type": "dimension",
-        "$value": "13px"
+        "$value": "14px"
       },
       "lg": {
-        "$description": "13 * 1.25 — lead text, h4",
+        "$description": "Lead text, h4 (16.25px × 14/13)",
         "$type": "dimension",
-        "$value": "16.25px"
+        "$value": "17.5px"
       },
       "metadata": {
-        "$description": "Named metadata step — dense tables, captions, secondary labels",
+        "$description": "Named metadata step — dense tables, captions, secondary labels (12px × 14/13)",
         "$type": "dimension",
-        "$value": "12px"
+        "$value": "12.92px"
       },
       "xl": {
-        "$description": "13 * 1.25^2 — h3",
+        "$description": "h3 (20.31px × 14/13)",
         "$type": "dimension",
-        "$value": "20.31px"
+        "$value": "21.87px"
       },
       "xs": {
-        "$description": "13 / 1.25 — fine print",
+        "$description": "Fine print (10.4px × 14/13)",
         "$type": "dimension",
-        "$value": "10.4px"
+        "$value": "11.2px"
       },
       "xxl": {
-        "$description": "13 * 1.25^3 — h2",
+        "$description": "Page heading — h2 (pinned 25px, spec 178)",
         "$type": "dimension",
-        "$value": "25.39px"
+        "$value": "25px"
       },
       "xxxl": {
-        "$description": "13 * 1.25^4 — h1 / display",
+        "$description": "Stat/display — h1 / display (pinned 30px, spec 178)",
         "$type": "dimension",
-        "$value": "31.74px"
+        "$value": "30px"
       }
     },
     "tabularNums": {

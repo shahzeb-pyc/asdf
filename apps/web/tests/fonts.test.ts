@@ -29,7 +29,15 @@ const generatedCss = readFileSync(
 const primitiveTokens = JSON.parse(
   readFileSync(path.resolve(process.cwd(), 'tokens/primitive.json'), 'utf8')
 ) as {
-  font: { family: { sans: { $value: string }; mono: { $value: string } } };
+  font: {
+    family: { sans: { $value: string }; mono: { $value: string } };
+    size: {
+      body: { $value: string };
+      xxl: { $value: string };
+      xxxl: { $value: string };
+    };
+    lineHeight: { body: { $value: number } };
+  };
 };
 const layoutSource = readFileSync(
   path.resolve(process.cwd(), 'src/app/layout.tsx'),
@@ -67,5 +75,21 @@ describe('font delivery (spec 137 §3.6.3)', () => {
     expect(layoutSource).toContain('Manrope({');
     expect(layoutSource).toContain(`variable: '${FONT_MANROPE_VARIABLE}'`);
     expect(layoutSource).toContain('manrope.variable');
+  });
+});
+
+describe('type scale (spec 178 — Balanced)', () => {
+  it('pins the Balanced sizes in the token source of truth', () => {
+    expect(primitiveTokens.font.size.body.$value).toBe('14px');
+    expect(primitiveTokens.font.size.xxl.$value).toBe('25px');
+    expect(primitiveTokens.font.size.xxxl.$value).toBe('30px');
+    expect(primitiveTokens.font.lineHeight.body.$value).toBe(1.55);
+  });
+
+  it('pins the Balanced sizes in the generated :root variables', () => {
+    expect(generatedCss).toContain('--font-size-body: 14px;');
+    expect(generatedCss).toContain('--font-size-xxl: 25px;');
+    expect(generatedCss).toContain('--font-size-xxxl: 30px;');
+    expect(generatedCss).toContain('--font-line-height-body: 1.55;');
   });
 });

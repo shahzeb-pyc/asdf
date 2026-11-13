@@ -315,7 +315,7 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
         >
           <span
             data-testid="tiktok-mirror-posted-count"
-            className="text-xxl font-bold tabular-nums text-signal-operational"
+            className="text-xxxl font-bold tabular-nums text-signal-operational"
           >
             {mirror.postCountsError ? '—' : mirror.postCounts.posted.toLocaleString('en-US')}
           </span>
@@ -327,7 +327,7 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
         >
           <span
             data-testid="tiktok-mirror-failed-count"
-            className="text-xxl font-bold tabular-nums text-signal-critical"
+            className="text-xxxl font-bold tabular-nums text-signal-critical"
           >
             {mirror.postCountsError ? '—' : mirror.postCounts.failed.toLocaleString('en-US')}
           </span>
