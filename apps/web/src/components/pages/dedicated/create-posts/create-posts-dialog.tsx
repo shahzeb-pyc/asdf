@@ -692,7 +692,7 @@ export function CreatePostsDialog({
     const slotsRequest = startTimedRequest();
     try {
       const slotsResponse = await api.get(
-        buildTenantApiPath(subdomain, `/inapp-schedule/${page.id}/slots`),
+        buildTenantApiPath(subdomain, `/pages/${page.id}/slots`),
         { schema: ListQueueSlotsResponseSchema, signal: slotsRequest.signal }
       );
       slotsRequest.done();
