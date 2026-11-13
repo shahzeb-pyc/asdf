@@ -20,6 +20,8 @@ import {
   aduMissingTable,
   aduRpcMissing,
   buildAduConfigViews,
+  parseAduHubListRows,
+  parseAduHubStatsRow,
   type AduHubConfigView,
   type AduDiscoveredGraphPage,
 } from '@/lib/server/adu';
@@ -39,20 +41,18 @@ function statsFromRows(statsRows: unknown): {
   totalPages: number;
   followersGained: number;
   totalFollowers: number;
-} {
+} | null {
   // RPC names match the old in-memory stats exactly: totalFollowers
   // is the sum of current_followers, followersGained is the sum of the
   // net growth (current_followers minus starting_followers, floored at 0).
   // totalPages here is the total config count (misnamed, kept).
-  const statsRow = (statsRows as Array<{
-    total_count?: number;
-    total_followers_sum?: number;
-    net_gained_sum?: number;
-  }> | null)?.[0];
+  // Null on a malformed row — the caller treats it as a stats failure.
+  const parsed = parseAduHubStatsRow(statsRows);
+  if (!parsed) return null;
   return {
-    totalPages: statsRow?.total_count ?? 0,
-    followersGained: statsRow?.net_gained_sum ?? 0,
-    totalFollowers: statsRow?.total_followers_sum ?? 0,
+    totalPages: parsed.total_count,
+    followersGained: parsed.net_gained_sum,
+    totalFollowers: parsed.total_followers_sum,
   };
 }
 
@@ -65,11 +65,13 @@ export async function GET(
   if ('errorResponse' in resolved) return resolved.errorResponse;
   const { workspaceId, supabase } = resolved.context;
   // Search/status/sort/page are applied in the database by the
-  // adu_hub_list / adu_hub_stats RPCs (20261030140000): the old code
-  // loaded every config for the workspace and sliced 9/page in memory,
-  // which silently truncated past PostgREST's 1,000-row limit. Only
-  // the 9 rows of the requested page are ever built into views, and
-  // totals/stats come from the database, not from a sliced array.
+  // unified adu_hub_list / adu_hub_stats RPCs (20261113170000, F21):
+  // one platform-parameterised pair for all three hubs, called here
+  // with p_platform 'facebook'. The old code loaded every config for
+  // the workspace and sliced 9/page in memory, which silently
+  // truncated past PostgREST's 1,000-row limit. Only the 9 rows of
+  // the requested page are ever built into views, and totals/stats
+  // come from the database, not from a sliced array.
   const search = request.nextUrl.searchParams.get('q')?.trim() ?? '';
   const statusFilter = request.nextUrl.searchParams.get('status') ?? 'All Statuses';
   const sort = request.nextUrl.searchParams.get('sort') ?? 'Newest First';
@@ -84,6 +86,7 @@ export async function GET(
   if (statsParam === 'only') {
     const { data: statsRows, error: statsError } = await supabase.rpc('adu_hub_stats', {
       p_workspace_id: workspaceId,
+      p_platform: 'facebook',
       p_search: search || null,
       p_status: statusValue,
     });
@@ -101,7 +104,12 @@ export async function GET(
       console.error(`ADU hub stats failed: code=${statsError.code ?? 'unknown'}`);
       return NextResponse.json({ error: 'Failed to load pages.' }, { status: 500 });
     }
-    return NextResponse.json({ stats: statsFromRows(statsRows) });
+    const stats = statsFromRows(statsRows);
+    if (!stats) {
+      console.error('ADU hub stats returned an invalid row');
+      return NextResponse.json({ error: 'Failed to load pages.' }, { status: 500 });
+    }
+    return NextResponse.json({ stats });
   }
   // F2 (adu-opt-a): list + stats run concurrently instead of
   // sequentially — the same filtered scan, one trip saved per load.
@@ -110,6 +118,7 @@ export async function GET(
   const [listResult, statsResult] = await Promise.all([
     supabase.rpc('adu_hub_list', {
       p_workspace_id: workspaceId,
+      p_platform: 'facebook',
       p_search: search || null,
       p_status: statusValue,
       p_sort: sort,
@@ -120,6 +129,7 @@ export async function GET(
       ? Promise.resolve({ data: null, error: null })
       : supabase.rpc('adu_hub_stats', {
           p_workspace_id: workspaceId,
+          p_platform: 'facebook',
           p_search: search || null,
           p_status: statusValue,
         }),
@@ -137,7 +147,13 @@ export async function GET(
     console.error(`ADU hub list failed: code=${error.code ?? 'unknown'}`);
     return NextResponse.json({ error: 'Failed to load pages.' }, { status: 500 });
   }
-  const listRows = (rows ?? []) as Array<Record<string, unknown> & { total_count?: number }>;
+  // List rows are validated against the contracts schema at this
+  // boundary (F21): a malformed row is a loud 500, never a wrong hub.
+  const listRows = parseAduHubListRows(rows);
+  if (!listRows) {
+    console.error('ADU hub list returned an invalid row');
+    return NextResponse.json({ error: 'Failed to load pages.' }, { status: 500 });
+  }
   const total = listRows[0]?.total_count ?? 0;
   const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
   // Hub views are slim (F7) and built in ONE batched call (F1): one
@@ -145,7 +161,7 @@ export async function GET(
   // instead of 7 trips per config. Order is preserved.
   const views: AduHubConfigView[] = await buildAduConfigViews(
     supabase,
-    listRows as never,
+    listRows,
     { hub: true },
   );
   if (statsParam === 'none') {
@@ -158,10 +174,15 @@ export async function GET(
   // A failed stats RPC reads as zeros (the pre-existing behaviour:
   // the RPC returns no rows on error, so the sums fall back to 0).
   // Ignore any rows that arrive alongside the error — the stats are
-  // untrusted once the call has failed.
-  const stats = statsError
-    ? { totalPages: total, followersGained: 0, totalFollowers: 0 }
-    : { ...statsFromRows(statsRows), totalPages: total };
+  // untrusted once the call has failed. A malformed stats row is
+  // treated the same way (logged, then zeros).
+  const parsedStats = statsError ? null : statsFromRows(statsRows);
+  if (!statsError && !parsedStats) {
+    console.error('ADU hub stats returned an invalid row');
+  }
+  const stats = parsedStats
+    ? { ...parsedStats, totalPages: total }
+    : { totalPages: total, followersGained: 0, totalFollowers: 0 };
   return NextResponse.json({
     configs: views,
     total,

@@ -1,16 +1,18 @@
 /**
  * Instagram Auto Download/Upload API routes — platform-filtering tests.
  *
- * The Instagram hub must NEVER leak Facebook configs: the Facebook hub
- * RPCs (adu_hub_list / adu_hub_stats) have no platform filter, so the IG
- * hub route lists through its own instagram_adu_hub_list /
- * instagram_adu_hub_stats RPCs (20261113130000), which filter to this
- * workspace's Instagram destinations. These tests prove that with a
- * Facebook config sitting in the same workspace: it never appears in
- * the IG hub, and the IG detail route refuses it with 404. Create paths
+ * The Instagram hub must NEVER leak Facebook configs: the hub lists
+ * through the unified adu_hub_list / adu_hub_stats RPCs (20261113170000,
+ * F21), called with p_platform 'instagram', which filter to this
+ * workspace's Instagram destinations. (Before F21 the IG hub had its
+ * own instagram_adu_hub_* pair because the Facebook pair had no
+ * platform filter at all.) These tests prove that with a Facebook
+ * config sitting in the same workspace: it never appears in the IG
+ * hub, and the IG detail route refuses it with 404. Create paths
  * prove a non-Instagram destination is rejected with the plain
  * Instagram-account error. The fake Supabase below emulates the two
- * RPCs against the in-memory tables.
+ * unified RPCs against the in-memory tables, keyed on p_platform —
+ * so a route that forgot the literal would list nothing at all.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -245,6 +247,8 @@ function makeDb() {
         starting_followers: 1000,
         current_followers: 1250,
         created_at: '2026-10-20T00:00:00.000Z',
+        updated_at: '2026-10-20T00:00:00.000Z',
+        followers_updated_at: null,
         display_name: null,
       },
       {
@@ -262,6 +266,8 @@ function makeDb() {
         starting_followers: 2000,
         current_followers: 2600,
         created_at: '2026-10-21T00:00:00.000Z',
+        updated_at: '2026-10-21T00:00:00.000Z',
+        followers_updated_at: null,
         display_name: null,
       },
     ] as Row[],
@@ -273,17 +279,18 @@ function makeDb() {
 let db: ReturnType<typeof makeDb>;
 
 /**
- * In-memory emulation of the instagram_adu_hub_list /
- * instagram_adu_hub_stats RPCs (20261113130000, hide predicate from
- * 20261113150000): same predicates as the SQL — workspace + Instagram
- * ADU destination join, disconnected destinations excluded except
- * paused ones (the Pages rule), status filter, ILIKE search over
- * source_username / destination name / external id, follower sorts,
- * limit clamped 1–50, offset >= 0 — with total_count on every list
- * row, and the stats sums over the same filtered set.
+ * In-memory emulation of the unified adu_hub_list / adu_hub_stats
+ * RPCs (20261113170000, F21 — hide predicate from 20261113150000):
+ * same predicates as the SQL — workspace + p_platform destination
+ * join, disconnected destinations excluded except paused ones (the
+ * Pages rule), status filter, ILIKE search over source_username /
+ * destination name / external id, follower sorts, limit clamped
+ * 1–50, offset >= 0 — with total_count on every list row, and the
+ * stats sums over the same filtered set.
  */
 function igHubFiltered(args: {
   p_workspace_id: string;
+  p_platform: string;
   p_search: string | null;
   p_status: string | null;
 }): Row[] {
@@ -294,7 +301,7 @@ function igHubFiltered(args: {
     return (
       c.workspace_id === args.p_workspace_id &&
       d !== undefined &&
-      d.platform === 'instagram' &&
+      d.platform === args.p_platform &&
       d.section === 'adu' &&
       // Hide-disconnected rule (20261113150000, the Pages rule):
       // disconnected destinations are excluded, except paused ones.
@@ -319,10 +326,11 @@ function igHubFiltered(args: {
 function igHubRpc(name: string, args: Record<string, unknown>) {
   const filtered = igHubFiltered({
     p_workspace_id: args['p_workspace_id'] as string,
+    p_platform: args['p_platform'] as string,
     p_search: (args['p_search'] as string | null) ?? null,
     p_status: (args['p_status'] as string | null) ?? null,
   });
-  if (name === 'instagram_adu_hub_stats') {
+  if (name === 'adu_hub_stats') {
     return {
       data: [
         {
@@ -375,10 +383,10 @@ const fakeSupabase = {
   // The grouped-counts RPC (adu-opt-f1), answered from the same canned
   // rows the old count queries read. Fixtures here have no reels or
   // jobs, so every count is 0; the midnight rule is the same UTC /
-  // invalid-timezone fallback as the real function. The IG hub RPCs
-  // (instagram_adu_hub_list / instagram_adu_hub_stats) are answered by
-  // igHubRpc below; any other RPC name fails loud with 42883, as the
-  // real PostgREST does for a missing function.
+  // invalid-timezone fallback as the real function. The unified hub
+  // RPCs (adu_hub_list / adu_hub_stats) are answered by igHubRpc
+  // below; any other RPC name fails loud with 42883, as the real
+  // PostgREST does for a missing function.
   rpc: (name: string, args: Record<string, unknown>) => {
     if (name === 'adu_config_counts') {
       const store = db as unknown as Record<string, Row[]>;
@@ -427,7 +435,7 @@ const fakeSupabase = {
       });
       return Promise.resolve({ data, error: null });
     }
-    if (name === 'instagram_adu_hub_list' || name === 'instagram_adu_hub_stats') {
+    if (name === 'adu_hub_list' || name === 'adu_hub_stats') {
       return Promise.resolve(igHubRpc(name, args));
     }
     return Promise.resolve({ data: null, error: { code: '42883', message: 'not found' } });
@@ -524,6 +532,8 @@ describe('Instagram ADU hub route', () => {
       starting_followers: 100,
       current_followers: 100,
       created_at: '2026-10-22T00:00:00.000Z',
+      updated_at: '2026-10-22T00:00:00.000Z',
+      followers_updated_at: null,
       display_name: null,
     });
     const res = await hubGET(hubRequest(''), { params: Promise.resolve({ subdomain: 'acme' }) } as never);
@@ -572,6 +582,8 @@ describe('Instagram ADU hub route', () => {
       starting_followers: 200,
       current_followers: 300,
       created_at: '2026-10-22T00:00:00.000Z',
+      updated_at: '2026-10-22T00:00:00.000Z',
+      followers_updated_at: null,
       display_name: null,
     });
     const res = await hubGET(hubRequest(''), { params: Promise.resolve({ subdomain: 'acme' }) } as never);
@@ -611,6 +623,8 @@ describe('Instagram ADU hub route', () => {
       starting_followers: 50,
       current_followers: 40,
       created_at: '2026-10-22T00:00:00.000Z',
+      updated_at: '2026-10-22T00:00:00.000Z',
+      followers_updated_at: null,
       display_name: null,
     });
     const res = await hubGET(hubRequest(''), { params: Promise.resolve({ subdomain: 'acme' }) } as never);

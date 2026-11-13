@@ -14,8 +14,10 @@
  *       intentionally global for the service-side claim loop, so no
  *       in-function ownership check is asserted — the control is the
  *       execution scope (see 20261030140000 header comment).
- *   (b) The hub list/stats RPCs from 20261030140000 exist, are plain
- *       (NOT security definer), and carry the same grant closure.
+ *   (b) The hub list/stats RPCs — the unified pair from
+ *       20261113170000 (F21), one platform-parameterised pair for
+ *       all three hubs — exist, are plain (NOT security definer),
+ *       and carry the same grant closure.
  *   (c) Hub list/stats behaviour on seeded data: paging (limit +
  *       total_count window), status filter, search across source
  *       username / destination name / external id, Most/Least
@@ -26,13 +28,20 @@
  *       round-trips through the RPC and an unstamped config reads
  *       null, so the Facebook hub route can hand the value to
  *       buildAduConfigView instead of it being null forever.
+ *       Plus F21 platform isolation: the unified function called
+ *       with p_platform 'facebook' returns only Facebook configs,
+ *       'instagram' only Instagram configs, 'threads' only Threads
+ *       configs, and an unknown platform returns zero rows — the
+ *       Facebook-direction leak (an Instagram/Threads config on an
+ *       adu-section destination appearing in the Facebook hub) is
+ *       closed by the platform predicate.
  *   (d) The hub RPC definitions are idempotent: re-applying the
- *       20261111010000 (spec 162) hub-RPC block exits clean and the
- *       grants above still hold. The 20261030140000 hardening file
- *       itself is no longer re-appliable as a whole: its hub
- *       CREATE OR REPLACE statements carry the pre-rename return
- *       type, which PostgreSQL rejects (42P13) once the rename
- *       landed — the rename, not the grants, broke that check.
+ *       20261113170000 (F21) migration exits clean and the grants
+ *       above still hold. The 20261111010000 (spec 162) hub-RPC
+ *       block is no longer re-appliable: its CREATE OR REPLACE
+ *       statements define the old 6-arg/3-arg signatures, which
+ *       would resurrect the old functions as overloads alongside
+ *       the unified pair instead of replacing them.
  *
  * Usage:
  *   ADU_RPC_GRANTS_PG_URL=postgres://postgres@/adu_rpc?host=<socket>&port=5432 \
@@ -54,6 +63,8 @@ const ACCT_ID = '22222222-2222-4222-a222-222222222222';
 const DEST_A = '33333333-3333-4333-a333-333333333333';
 const DEST_B = '44444444-4444-4333-a444-444444444444';
 const DEST_C = '55555555-5555-4333-a555-555555555555';
+const DEST_D = '66666666-6666-4333-a666-666666666666';
+const DEST_E = '77777777-7777-4333-a777-777777777777';
 
 const CLAIM_FUNCTIONS = [
   'get_next_pending_adu_config',
@@ -184,18 +195,23 @@ async function seed(pool: Pool): Promise<void> {
      VALUES ($1, $2, 'facebook', 'acct-ext-1', 'Rig Account', 'x')`,
     [ACCT_ID, WS_ID],
   );
-  const dests: Array<[string, string, string]> = [
-    [DEST_A, 'Alpha Page', 'alpha-ext'],
-    [DEST_B, 'Beta Page', 'beta-ext'],
-    [DEST_C, 'Gamma Page', 'gamma-ext'],
+  const dests: Array<[string, string, string, string]> = [
+    [DEST_A, 'Alpha Page', 'alpha-ext', 'facebook'],
+    [DEST_B, 'Beta Page', 'beta-ext', 'facebook'],
+    [DEST_C, 'Gamma Page', 'gamma-ext', 'facebook'],
+    // F21 platform isolation: one Instagram and one Threads
+    // destination in the same workspace, so the unified function
+    // called with p_platform 'facebook' must not return their configs.
+    [DEST_D, 'Delta IG', 'delta-ig', 'instagram'],
+    [DEST_E, 'Epsilon Threads', 'epsilon-th', 'threads'],
   ];
-  for (const [id, name, ext] of dests) {
+  for (const [id, name, ext, platform] of dests) {
     await pool.query(
       // Spec 174 1B: the hub RPCs only return `adu` rows, so the
       // seeded destinations must carry the section the rig asserts on.
       `INSERT INTO public.destinations (id, workspace_id, account_id, platform, external_destination_id, name, section)
-       VALUES ($1, $2, $3, 'facebook', $4, $5, 'adu')`,
-      [id, WS_ID, ACCT_ID, ext, name],
+       VALUES ($1, $2, $3, $4, $5, $6, 'adu')`,
+      [id, WS_ID, ACCT_ID, platform, ext, name],
     );
   }
   // Three configs: A active/150 gained on 100 starting (net 50),
@@ -204,14 +220,19 @@ async function seed(pool: Pool): Promise<void> {
   // off is Pause now), so the third config is seeded 'paused'.
   // A carries a stamped followers_updated_at (spec 162 round 2):
   // the hub list must return the column and the stamp must round-trip.
+  // D (Instagram) and E (Threads) exist only for the F21 platform
+  // isolation assertions below — they must never appear in the
+  // Facebook hub, and their stats must not leak into its sums.
   await pool.query(
     `INSERT INTO public.adu_configs (id, workspace_id, destination_id, source_platform, source_username,
        timezone, posts_per_day, schedule_type, posting_times, status, sync_status, starting_followers, current_followers, followers_updated_at)
      VALUES
        ('a0000000-0000-4000-8000-000000000001', $1, $2, 'instagram', 'alpha_source', 'UTC', 1, 'dailyrandom', '{}', 'active', 'synced', 100, 150, '2026-11-10T22:00:00.000Z'),
        ('a0000000-0000-4000-8000-000000000002', $1, $3, 'tiktok', 'beta_source', 'UTC', 2, 'dailyrandom', '{}', 'active', 'synced', 300, 300, NULL),
-       ('a0000000-0000-4000-8000-000000000003', $1, $4, 'youtube', 'gamma_source', 'UTC', 1, 'dailyrandom', '{}', 'paused', 'synced', 0, 50, NULL)`,
-    [WS_ID, DEST_A, DEST_B, DEST_C],
+       ('a0000000-0000-4000-8000-000000000003', $1, $4, 'youtube', 'gamma_source', 'UTC', 1, 'dailyrandom', '{}', 'paused', 'synced', 0, 50, NULL),
+       ('a0000000-0000-4000-8000-000000000004', $1, $5, 'instagram', 'delta_source', 'UTC', 1, 'dailyrandom', '{}', 'active', 'synced', 0, 400, NULL),
+       ('a0000000-0000-4000-8000-000000000005', $1, $6, 'youtube', 'epsilon_source', 'UTC', 1, 'dailyrandom', '{}', 'active', 'synced', 0, 500, NULL)`,
+    [WS_ID, DEST_A, DEST_B, DEST_C, DEST_D, DEST_E],
   );
 }
 
@@ -292,7 +313,7 @@ async function main(): Promise<void> {
     check(reelAfter.rows[0]?.status === 'processing', 'claimed reel moves to processing');
     check(Number(reelAfter.rows[0]?.download_retries) === 1, 'claimed reel retry count increments to 1');
     const listPage1 = await attempt(pool, 'service_role',
-      'SELECT * FROM public.adu_hub_list($1, NULL, NULL, NULL, 2, 0)', [WS_ID]);
+      'SELECT * FROM public.adu_hub_list($1, $2, NULL, NULL, NULL, 2, 0)', [WS_ID, 'facebook']);
     check(listPage1.ok && listPage1.rows.length === 2, 'hub list page 1 returns 2 rows', String(listPage1.rows.length));
     check(
       listPage1.rows[0]?.total_count === 3 || listPage1.rows[0]?.total_count === '3',
@@ -300,16 +321,16 @@ async function main(): Promise<void> {
       String(listPage1.rows[0]?.total_count),
     );
     const listSearch = await attempt(pool, 'service_role',
-      'SELECT * FROM public.adu_hub_list($1, $2, NULL, NULL, 9, 0)', [WS_ID, 'Alpha']);
+      'SELECT * FROM public.adu_hub_list($1, $2, $3, NULL, NULL, 9, 0)', [WS_ID, 'facebook', 'Alpha']);
     check(listSearch.rows.length === 1, 'hub list search by destination name finds 1 row', String(listSearch.rows.length));
     const listSearchSource = await attempt(pool, 'service_role',
-      'SELECT * FROM public.adu_hub_list($1, $2, NULL, NULL, 9, 0)', [WS_ID, 'beta_source']);
+      'SELECT * FROM public.adu_hub_list($1, $2, $3, NULL, NULL, 9, 0)', [WS_ID, 'facebook', 'beta_source']);
     check(listSearchSource.rows.length === 1, 'hub list search by source username finds 1 row');
     const listPaused = await attempt(pool, 'service_role',
-      'SELECT * FROM public.adu_hub_list($1, NULL, $2, NULL, 9, 0)', [WS_ID, 'paused']);
+      'SELECT * FROM public.adu_hub_list($1, $2, NULL, $3, NULL, 9, 0)', [WS_ID, 'facebook', 'paused']);
     check(listPaused.rows.length === 1, 'hub list status filter finds 1 paused row');
     const listMost = await attempt(pool, 'service_role',
-      'SELECT * FROM public.adu_hub_list($1, NULL, NULL, $2, 9, 0)', [WS_ID, 'Most Followers']);
+      'SELECT * FROM public.adu_hub_list($1, $2, NULL, NULL, $3, 9, 0)', [WS_ID, 'facebook', 'Most Followers']);
     check(
       Number(listMost.rows[0]?.current_followers) === 300,
       'hub list Most Followers sorts by current_followers desc',
@@ -321,7 +342,7 @@ async function main(): Promise<void> {
     // stamped config's value must round-trip; unstamped configs read
     // null, never a faked time.
     const listAll = await attempt(pool, 'service_role',
-      'SELECT * FROM public.adu_hub_list($1, NULL, NULL, NULL, 9, 0)', [WS_ID]);
+      'SELECT * FROM public.adu_hub_list($1, $2, NULL, NULL, NULL, 9, 0)', [WS_ID, 'facebook']);
     check(listAll.ok && listAll.rows.length === 3, 'hub list returns all 3 rows for timestamp check', String(listAll.rows.length));
     check(
       listAll.rows.every((r) => 'followers_updated_at' in r),
@@ -340,7 +361,7 @@ async function main(): Promise<void> {
       'hub list returns null followers_updated_at for unstamped configs',
     );
     const stats = await attempt(pool, 'service_role',
-      'SELECT * FROM public.adu_hub_stats($1, NULL, NULL)', [WS_ID]);
+      'SELECT * FROM public.adu_hub_stats($1, $2, NULL, NULL)', [WS_ID, 'facebook']);
     check(stats.rows.length === 1, 'hub stats returns 1 row');
     check(Number(stats.rows[0]?.total_count) === 3, 'hub stats total is 3', String(stats.rows[0]?.total_count));
     check(
@@ -354,31 +375,57 @@ async function main(): Promise<void> {
       String(stats.rows[0]?.net_gained_sum),
     );
     const emptyList = await attempt(pool, 'service_role',
-      'SELECT * FROM public.adu_hub_list($1, NULL, NULL, NULL, 9, 0)', ['99999999-9999-4999-8999-999999999999']);
+      'SELECT * FROM public.adu_hub_list($1, $2, NULL, NULL, NULL, 9, 0)', ['99999999-9999-4999-8999-999999999999', 'facebook']);
     check(emptyList.ok && emptyList.rows.length === 0, 'hub list for unknown workspace returns 0 rows');
 
-    console.log('(d) hub RPC definition idempotency (spec 162)');
-    // The 20261030140000 hardening file is no longer re-appliable as
-    // a whole: its hub CREATE OR REPLACE statements carry the
-    // pre-rename return type (followers_count/followers_gained),
-    // which PostgreSQL rejects with 42P13 once the spec 162 rename
-    // landed. The re-appliable unit now is the CURRENT hub-RPC
-    // block — the tail of 20261111010000 (DROP + CREATE + grant
-    // closure for all four hub RPCs). Re-applying it must exit
-    // clean and leave the grant closure intact.
-    const spec162 = readFileSync(
-      join(migrationsDir, '20261111010000_insights_worker_daily_followers.sql'),
+    // F21 platform isolation: the same seeded rows through the other
+    // platforms' literals, and an unknown platform. The Instagram and
+    // Threads configs must never appear in the Facebook hub (the
+    // pre-F21 leak), and each platform's stats must count only its
+    // own configs.
+    const listIg = await attempt(pool, 'service_role',
+      'SELECT * FROM public.adu_hub_list($1, $2, NULL, NULL, NULL, 9, 0)', [WS_ID, 'instagram']);
+    check(listIg.ok && listIg.rows.length === 1, 'hub list instagram returns 1 row', String(listIg.rows.length));
+    check(
+      listIg.rows[0]?.source_username === 'delta_source',
+      'hub list instagram returns the Instagram config',
+      String(listIg.rows[0]?.source_username),
+    );
+    const listTh = await attempt(pool, 'service_role',
+      'SELECT * FROM public.adu_hub_list($1, $2, NULL, NULL, NULL, 9, 0)', [WS_ID, 'threads']);
+    check(listTh.ok && listTh.rows.length === 1, 'hub list threads returns 1 row', String(listTh.rows.length));
+    check(
+      listTh.rows[0]?.source_username === 'epsilon_source',
+      'hub list threads returns the Threads config',
+      String(listTh.rows[0]?.source_username),
+    );
+    const listBogus = await attempt(pool, 'service_role',
+      'SELECT * FROM public.adu_hub_list($1, $2, NULL, NULL, NULL, 9, 0)', [WS_ID, 'bogus']);
+    check(listBogus.ok && listBogus.rows.length === 0, 'hub list unknown platform returns 0 rows');
+    const statsIg = await attempt(pool, 'service_role',
+      'SELECT * FROM public.adu_hub_stats($1, $2, NULL, NULL)', [WS_ID, 'instagram']);
+    check(Number(statsIg.rows[0]?.total_count) === 1, 'hub stats instagram total is 1', String(statsIg.rows[0]?.total_count));
+    check(Number(statsIg.rows[0]?.total_followers_sum) === 400, 'hub stats instagram followers = 400', String(statsIg.rows[0]?.total_followers_sum));
+    const statsTh = await attempt(pool, 'service_role',
+      'SELECT * FROM public.adu_hub_stats($1, $2, NULL, NULL)', [WS_ID, 'threads']);
+    check(Number(statsTh.rows[0]?.total_count) === 1, 'hub stats threads total is 1', String(statsTh.rows[0]?.total_count));
+    check(Number(statsTh.rows[0]?.total_followers_sum) === 500, 'hub stats threads followers = 500', String(statsTh.rows[0]?.total_followers_sum));
+
+    console.log('(d) hub RPC definition idempotency (F21)');
+    // The re-appliable unit now is the CURRENT hub-RPC block — the
+    // 20261113170000 (F21) migration itself (DROP the six old
+    // functions + CREATE the unified pair + grant closure). It is
+    // self-contained, so the whole file re-applies. Re-applying it
+    // must exit clean and leave the grant closure intact. The
+    // spec-162 block is NOT re-applied: its old-signature CREATE OR
+    // REPLACE statements would resurrect the six old functions as
+    // overloads alongside the unified pair.
+    const f21 = readFileSync(
+      join(migrationsDir, '20261113170000_adu_hub_platform.sql'),
       'utf8',
     );
-    const marker = '-- --- Facebook hub RPCs';
-    const at = spec162.indexOf(marker);
-    if (at < 0) throw new Error('spec 162 migration hub-RPC marker not found');
-    await pool.query(spec162.slice(at));
-    for (const fn of [
-      ...HUB_FUNCTIONS,
-      'threads_adu_hub_list',
-      'threads_adu_hub_stats',
-    ] as const) {
+    await pool.query(f21);
+    for (const fn of HUB_FUNCTIONS) {
       const g = await catalogGrants(pool, fn);
       check(g.exists, `${fn}() still exists after re-apply`);
       check(g.secdef === false, `${fn}() still NOT security definer after re-apply`);
@@ -386,6 +433,17 @@ async function main(): Promise<void> {
         g.pub === false && g.anon_ === false && g.auth_ === false && g.svc === true,
         `${fn}() grant closure still holds after re-apply`,
       );
+    }
+    // The old per-platform pairs are gone for good: re-applying the
+    // F21 migration must not resurrect them.
+    for (const fn of [
+      'threads_adu_hub_list',
+      'threads_adu_hub_stats',
+      'instagram_adu_hub_list',
+      'instagram_adu_hub_stats',
+    ] as const) {
+      const g = await catalogGrants(pool, fn);
+      check(g.exists === false, `${fn}() stays dropped after re-apply`);
     }
     const g2 = await catalogGrants(pool, 'claim_adu_buffer_downloads');
     check(g2.pub === false && g2.svc === true, 'claim grants still hold after re-applying the hub RPC definitions');

@@ -149,6 +149,8 @@ class FakeQuery {
 }
 
 interface RouteFakeOptions {
+  listRows?: Row[];
+  statsRows?: Row[];
   listError?: { message: string; code?: string } | null;
   statsError?: { message: string; code?: string } | null;
   gateRpcs?: boolean;
@@ -156,8 +158,9 @@ interface RouteFakeOptions {
 
 function makeRouteFake(options: RouteFakeOptions = {}) {
   const rpcCalls: string[] = [];
-  const listRows = [configRow('c1', 100), configRow('c2', 300)];
-  const statsRows = [{ total_count: 2, total_followers_sum: 400, net_gained_sum: 380 }];
+  const rpcArgs: Array<{ name: string; args: unknown }> = [];
+  const listRows = options.listRows ?? [configRow('c1', 100), configRow('c2', 300)];
+  const statsRows = options.statsRows ?? [{ total_count: 2, total_followers_sum: 400, net_gained_sum: 380 }];
   const counts = { pipeline: 2, published: 1, failed: 0 };
   let gate: Promise<void> | null = null;
   let poll: ReturnType<typeof setInterval> | null = null;
@@ -175,8 +178,10 @@ function makeRouteFake(options: RouteFakeOptions = {}) {
   }
   const db = {
     rpcCalls,
+    rpcArgs,
     rpc: (name: string, args: unknown) => {
       rpcCalls.push(name);
+      rpcArgs.push({ name, args });
       const result =
         name === 'adu_hub_list'
           ? { data: listRows, error: options.listError ?? null }
@@ -206,6 +211,7 @@ function makeRouteFake(options: RouteFakeOptions = {}) {
   };
   return db as unknown as SupabaseClient & {
     rpcCalls: string[];
+    rpcArgs: Array<{ name: string; args: unknown }>;
     _stopGate: () => void;
   };
 }
@@ -257,6 +263,60 @@ describe('ADU hub list GET (adu-opt-a F2/F6/F7)', () => {
       expect(body.configs[0]).not.toHaveProperty(key);
     }
     expect(db.rpcCalls).toEqual(['adu_hub_list', 'adu_hub_stats', 'adu_config_counts']);
+  });
+
+  it('passes p_platform facebook to both hub RPCs (F21 unified pair)', async () => {
+    const db = makeRouteFake();
+    mocks.aduContext.mockResolvedValue({
+      context: { workspaceId: 'ws-1', supabase: db },
+    });
+    const res = await GET(
+      getRequest('http://localhost/api/tenant/ws1/auto-download-upload'),
+      getParams(),
+    );
+    expect(res.status).toBe(200);
+    // The platform literal is the leak fix: without it the unified
+    // function would need a default, and the Facebook hub would see
+    // every platform's configs again.
+    expect(db.rpcArgs.find((c) => c.name === 'adu_hub_list')?.args).toMatchObject({
+      p_workspace_id: 'ws-1',
+      p_platform: 'facebook',
+    });
+    expect(db.rpcArgs.find((c) => c.name === 'adu_hub_stats')?.args).toMatchObject({
+      p_workspace_id: 'ws-1',
+      p_platform: 'facebook',
+    });
+  });
+
+  it('a malformed list row fails loud (F21 boundary validation)', async () => {
+    const { total_count: _dropped, ...badRow } = configRow('c1', 100);
+    const db = makeRouteFake({ listRows: [badRow, configRow('c2', 300)] });
+    mocks.aduContext.mockResolvedValue({
+      context: { workspaceId: 'ws-1', supabase: db },
+    });
+    const res = await GET(
+      getRequest('http://localhost/api/tenant/ws1/auto-download-upload'),
+      getParams(),
+    );
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Failed to load pages.' });
+  });
+
+  it('a malformed stats row reads as zeros on the default path (F21 boundary validation)', async () => {
+    const db = makeRouteFake({
+      statsRows: [{ total_count: 2, total_followers_sum: '400', net_gained_sum: 380 }],
+    });
+    mocks.aduContext.mockResolvedValue({
+      context: { workspaceId: 'ws-1', supabase: db },
+    });
+    const res = await GET(
+      getRequest('http://localhost/api/tenant/ws1/auto-download-upload'),
+      getParams(),
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.configs).toHaveLength(2);
+    expect(body.stats).toEqual({ totalPages: 2, followersGained: 0, totalFollowers: 0 });
   });
 
   it('stats=only: stats alone, no list RPC, no configs key', async () => {

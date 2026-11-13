@@ -5,7 +5,8 @@
  * new status values: `Paused` → `paused`, `Missing Page Access` →
  * `missing_page_access`, `Missing Permission` → `missing_permission`.
  * The retired `Inactive` label must map to no filter. Both IG and
- * Threads pass `p_status` to their hub RPCs, like Facebook.
+ * Threads pass `p_status` (and their `p_platform` literal) to the
+ * unified hub RPCs (F21), like Facebook.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -60,20 +61,20 @@ describe('IG ADU hub list GET (status filter mapping)', () => {
   ])('maps ?status=%s to p_status=%s on both RPCs', async (filter, value) => {
     const rpc = await getWithStatus(filter);
     expect(rpc).toHaveBeenCalledWith(
-      'instagram_adu_hub_list',
-      expect.objectContaining({ p_status: value })
+      'adu_hub_list',
+      expect.objectContaining({ p_status: value, p_platform: 'instagram' })
     );
     expect(rpc).toHaveBeenCalledWith(
-      'instagram_adu_hub_stats',
-      expect.objectContaining({ p_status: value })
+      'adu_hub_stats',
+      expect.objectContaining({ p_status: value, p_platform: 'instagram' })
     );
   });
 
   it('no longer maps the retired Inactive label — it behaves as no filter', async () => {
     const rpc = await getWithStatus('Inactive');
     expect(rpc).toHaveBeenCalledWith(
-      'instagram_adu_hub_list',
-      expect.objectContaining({ p_status: null })
+      'adu_hub_list',
+      expect.objectContaining({ p_status: null, p_platform: 'instagram' })
     );
   });
 });
@@ -106,20 +107,20 @@ describe('Threads ADU hub list GET (status filter mapping)', () => {
   ])('maps ?status=%s to p_status=%s on both RPCs', async (filter, value) => {
     const rpc = await getWithStatus(filter);
     expect(rpc).toHaveBeenCalledWith(
-      'threads_adu_hub_list',
-      expect.objectContaining({ p_status: value })
+      'adu_hub_list',
+      expect.objectContaining({ p_status: value, p_platform: 'threads' })
     );
     expect(rpc).toHaveBeenCalledWith(
-      'threads_adu_hub_stats',
-      expect.objectContaining({ p_status: value })
+      'adu_hub_stats',
+      expect.objectContaining({ p_status: value, p_platform: 'threads' })
     );
   });
 
   it('no longer maps the retired Inactive label — it behaves as no filter', async () => {
     const rpc = await getWithStatus('Inactive');
     expect(rpc).toHaveBeenCalledWith(
-      'threads_adu_hub_list',
-      expect.objectContaining({ p_status: null })
+      'adu_hub_list',
+      expect.objectContaining({ p_status: null, p_platform: 'threads' })
     );
   });
 });

@@ -13,7 +13,7 @@ import {
   threadsAduContext,
   threadsAduMissingTable,
 } from '@/lib/server/threads-adu';
-import { aduAccountKeysForCap, ensureAduDestinationCopy, registerAduConfigUsage, type AduConfigView } from '@/lib/server/adu';
+import { aduAccountKeysForCap, ensureAduDestinationCopy, registerAduConfigUsage, parseAduHubListRows, parseAduHubStatsRow, type AduConfigView } from '@/lib/server/adu';
 import { statusFilterToValue } from '@/lib/adu-hub-helpers';
 import {
   assertFeatureAddWithinCap,
@@ -34,10 +34,11 @@ export async function GET(
   if ('errorResponse' in resolved) return resolved.errorResponse;
   const { workspaceId, supabase } = resolved.context;
   // Search/status/sort/page are applied in the database by the
-  // threads_adu_hub_list / threads_adu_hub_stats RPCs (20261030140000): the old code
-  // loaded every config for the workspace and sliced 9/page in memory,
-  // which silently truncated past PostgREST's 1,000-row limit. Only
-  // the 9 rows of the requested page are ever built into views, and
+  // unified adu_hub_list / adu_hub_stats RPCs (20261113170000, F21),
+  // called here with p_platform 'threads'. The old code loaded every
+  // config for the workspace and sliced 9/page in memory, which
+  // silently truncated past PostgREST's 1,000-row limit. Only the 9
+  // rows of the requested page are ever built into views, and
   // totals/stats come from the database, not from a sliced array.
   const search = request.nextUrl.searchParams.get('q')?.trim() ?? '';
   const statusFilter = request.nextUrl.searchParams.get('status') ?? 'All Statuses';
@@ -45,8 +46,9 @@ export async function GET(
   const page = Math.max(1, Number(request.nextUrl.searchParams.get('page') ?? '1') || 1);
   const pageSize = 9;
   const statusValue = statusFilterToValue(statusFilter);
-  const { data: rows, error } = await supabase.rpc('threads_adu_hub_list', {
+  const { data: rows, error } = await supabase.rpc('adu_hub_list', {
     p_workspace_id: workspaceId,
+    p_platform: 'threads',
     p_search: search || null,
     p_status: statusValue,
     p_sort: sort,
@@ -62,15 +64,22 @@ export async function GET(
     console.error(`ADU hub list failed: code=${error.code ?? 'unknown'}`);
     return NextResponse.json({ error: 'Failed to load accounts.' }, { status: 500 });
   }
-  const listRows = (rows ?? []) as Array<Record<string, unknown> & { total_count?: number }>;
+  // List rows are validated against the contracts schema at this
+  // boundary (F21): a malformed row is a loud 500, never a wrong hub.
+  const listRows = parseAduHubListRows(rows);
+  if (!listRows) {
+    console.error('ADU hub list returned an invalid row');
+    return NextResponse.json({ error: 'Failed to load accounts.' }, { status: 500 });
+  }
   const total = listRows[0]?.total_count ?? 0;
   const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
   const views: AduConfigView[] = [];
   for (const row of listRows) {
     views.push((await loadThreadsAduConfigView(supabase, workspaceId, (row as { id: string }).id))!);
   }
-  const { data: statsRows, error: statsError } = await supabase.rpc('threads_adu_hub_stats', {
+  const { data: statsRows, error: statsError } = await supabase.rpc('adu_hub_stats', {
     p_workspace_id: workspaceId,
+    p_platform: 'threads',
     p_search: search || null,
     p_status: statusValue,
   });
@@ -80,11 +89,12 @@ export async function GET(
   // RPC names match the old in-memory stats exactly: totalFollowers
   // is the sum of current_followers, followersGained is the sum of the
   // net growth (current_followers minus starting_followers, floored at 0).
-  const statsRow = (statsRows as Array<{
-    total_count?: number;
-    total_followers_sum?: number;
-    net_gained_sum?: number;
-  }> | null)?.[0];
+  // A failed stats RPC reads as zeros (the pre-existing behaviour);
+  // a malformed stats row is treated the same way (logged, then zeros).
+  const parsedStats = statsError ? null : parseAduHubStatsRow(statsRows);
+  if (!statsError && !parsedStats) {
+    console.error('ADU hub stats returned an invalid row');
+  }
   return NextResponse.json({
     configs: views,
     total,
@@ -92,8 +102,8 @@ export async function GET(
     totalPages,
     stats: {
       totalPages: total,
-      followersGained: statsRow?.net_gained_sum ?? 0,
-      totalFollowers: statsRow?.total_followers_sum ?? 0,
+      followersGained: parsedStats?.net_gained_sum ?? 0,
+      totalFollowers: parsedStats?.total_followers_sum ?? 0,
     },
   });
 }

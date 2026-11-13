@@ -6,7 +6,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * One home for the helpers that were copied verbatim into all three
  * hub list routes (`statusFilterToValue`) and all three hub pages
  * (`getAduStatusMarkKind`), plus the one paged options loader the
- * Instagram and Threads options routes share (`loadAduOptionsListsForPlatform`).
+ * three options routes share (`loadAduOptionsListsForPlatform` —
+ * F21 collapsed Facebook's `loadAduOptionsLists` into it; this file
+ * is the single copy of the range pager now).
  *
  * This file is deliberately framework-neutral and imports nothing
  * from `@/lib/server/adu`: the hub pages are client components, and
@@ -91,10 +93,11 @@ interface PageResult<T> {
  * PostgREST silently truncates an unbounded select at 1,000 rows, so a
  * picker that loads "all" accounts/pages/configs drops rows past 1,000
  * with no error. Range pages (deterministic order, 1,000/page) keep
- * every row reachable at any workspace size. Same pattern as
- * `loadAduOptionsLists` in `@/lib/server/adu` — duplicated here
- * (not imported) because this file must stay importable from client
- * components; F1 owns the collapse of the two loaders.
+ * every row reachable at any workspace size. This is the single copy
+ * of the pager (F21 deleted the duplicate in `@/lib/server/adu` when
+ * Facebook's loader was collapsed into `loadAduOptionsListsForPlatform`
+ * below); this file must stay importable from client components, so it
+ * imports nothing from `@/lib/server/adu`.
  */
 async function selectAllPages<T>(
   page: (from: number, to: number) => PromiseLike<PageResult<T>>,
@@ -116,21 +119,40 @@ function isMissingTable(error: { code?: string } | null | undefined): boolean {
 
 /**
  * Accounts + destinations + already-configured ADU rows for one
- * platform's Add picker (Instagram or Threads). Throws on any fatal
- * load failure (the route turns it into a 500) — a transient database
- * error must never render as an empty picker that invites duplicate
- * adds. A missing adu_configs table is NOT fatal: the picker still
- * shows accounts and destinations, flagged with migrationMissing, so
- * the UI can say why adding is unavailable instead of failing the
- * whole picker. Same contract as FB's `loadAduOptionsLists`, except
- * the destinations select carries no section filter: the routes
- * dedupe across sections, preferring the adu copy.
+ * platform's Add picker. Throws on any fatal load failure (the route
+ * turns it into a 500) — a transient database error must never render
+ * as an empty picker that invites duplicate adds. A missing
+ * adu_configs table is NOT fatal: the picker still shows accounts and
+ * destinations, flagged with migrationMissing, so the UI can say why
+ * adding is unavailable instead of failing the whole picker.
+ *
+ * Platform contract: Instagram/Threads return destinations from every
+ * section and the routes dedupe across sections, preferring the adu
+ * copy. Facebook keeps its old contract — only adu-section pages
+ * (the old `loadAduOptionsLists` filtered section='adu'), returned
+ * under `destinations` (the Facebook options route maps it to `pages`
+ * for its response). Error messages are per-platform: the Facebook
+ * options route surfaces the loader's message in its 500 body, so
+ * Facebook keeps its exact old wording; Instagram/Threads routes
+ * swallow it for a generic message.
  */
 export async function loadAduOptionsListsForPlatform(
   supabase: SupabaseClient,
   workspaceId: string,
-  platform: 'instagram' | 'threads',
+  platform: 'instagram' | 'threads' | 'facebook',
 ): Promise<AduOptionsLists> {
+  const messages =
+    platform === 'facebook'
+      ? {
+          accounts: 'Could not load Facebook accounts.',
+          destinations: 'Could not load Facebook pages.',
+          configured: 'Could not load configured pages.',
+        }
+      : {
+          accounts: 'Could not load accounts.',
+          destinations: 'Could not load destinations.',
+          configured: 'Could not load configured accounts.',
+        };
   // The three selects are independent — run them concurrently.
   // Error precedence is accounts first, then destinations, then
   // configured.
@@ -144,15 +166,18 @@ export async function loadAduOptionsListsForPlatform(
         .order('display_name')
         .range(from, to),
     ),
-    selectAllPages<Record<string, unknown>>((from, to) =>
-      supabase
+    selectAllPages<Record<string, unknown>>((from, to) => {
+      // Facebook only: the picker lists adu-section copies (the old
+      // loader's contract). Instagram/Threads return every section
+      // and dedupe in the route.
+      const query = supabase
         .from('destinations')
         .select('id, account_id, external_destination_id, name, avatar_url, status, metadata, section')
         .eq('workspace_id', workspaceId)
-        .eq('platform', platform)
-        .order('name')
-        .range(from, to),
-    ),
+        .eq('platform', platform);
+      const filtered = platform === 'facebook' ? query.eq('section', 'adu') : query;
+      return filtered.order('name').range(from, to);
+    }),
     selectAllPages<Record<string, unknown>>((from, to) =>
       supabase
         .from('adu_configs')
@@ -163,10 +188,10 @@ export async function loadAduOptionsListsForPlatform(
     ),
   ]);
   if (accounts.error) {
-    throw new Error(accounts.error.message ?? 'Could not load accounts.');
+    throw new Error(accounts.error.message ?? messages.accounts);
   }
   if (destinations.error) {
-    throw new Error(destinations.error.message ?? 'Could not load destinations.');
+    throw new Error(destinations.error.message ?? messages.destinations);
   }
   if (configured.error) {
     if (isMissingTable(configured.error)) {
@@ -177,7 +202,7 @@ export async function loadAduOptionsListsForPlatform(
         migrationMissing: true,
       };
     }
-    throw new Error(configured.error.message ?? 'Could not load configured accounts.');
+    throw new Error(configured.error.message ?? messages.configured);
   }
   return {
     accounts: accounts.rows,

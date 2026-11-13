@@ -1,11 +1,11 @@
 /**
  * Instagram ADU hub list GET (Stream D, F20).
  *
- * The route lists through the instagram_adu_hub_list /
- * instagram_adu_hub_stats RPCs (20261113130000): search, status,
- * sort and page are all applied in the database. The old direct-query
- * list is gone — the search path used to load every matching config
- * into memory and filter/sort/paginate in JS.
+ * The route lists through the unified adu_hub_list / adu_hub_stats
+ * RPCs (20261113170000, F21), called with p_platform 'instagram':
+ * search, status, sort and page are all applied in the database.
+ * The old direct-query list is gone — the search path used to load
+ * every matching config into memory and filter/sort/paginate in JS.
  *
  * - Default: the combined response — views, totals, stats — with
  *   list + stats RPCs issued concurrently.
@@ -193,7 +193,7 @@ function makeRouteFake(options: RouteFakeOptions = {}) {
         });
       }
       const result =
-        name === 'instagram_adu_hub_list'
+        name === 'adu_hub_list'
           ? { data: listRows, error: options.listError ?? null }
           : { data: statsRows, error: options.statsError ?? null };
       return Promise.resolve(result);
@@ -244,19 +244,38 @@ describe('IG ADU hub list GET (stream D F20)', () => {
     // List + stats run concurrently; the view builder then issues one
     // grouped-counts RPC per config row (two rows in this fixture).
     expect(db.rpcCalls.map((c) => c.name)).toEqual([
-      'instagram_adu_hub_list',
-      'instagram_adu_hub_stats',
+      'adu_hub_list',
+      'adu_hub_stats',
       'adu_config_counts',
       'adu_config_counts',
     ]);
     expect(db.rpcCalls[0].args).toMatchObject({
       p_workspace_id: 'ws-1',
+      p_platform: 'instagram',
       p_search: null,
       p_status: null,
       p_sort: 'Newest First',
       p_limit: 9,
       p_offset: 0,
     });
+    expect(db.rpcCalls[1].args).toMatchObject({
+      p_workspace_id: 'ws-1',
+      p_platform: 'instagram',
+    });
+  });
+
+  it('a malformed list row fails loud (F21 boundary validation)', async () => {
+    const { total_count: _dropped, ...badRow } = configRow('c1', 100);
+    const db = makeRouteFake({ listRows: [badRow, configRow('c2', 300)] });
+    mocks.aduContext.mockResolvedValue({
+      context: { workspaceId: 'ws-1', supabase: db },
+    });
+    const res = await GET(
+      getRequest('http://localhost/api/tenant/ws1/instagram/auto-download-upload'),
+      getParams(),
+    );
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Failed to load accounts.' });
   });
 
   it('page 2: offset 9 with a 25-row total from the database', async () => {
