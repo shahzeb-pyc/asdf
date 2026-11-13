@@ -57,6 +57,11 @@ class FakeBuilder {
     return this;
   }
 
+  in(col: string, vals: unknown[]): this {
+    this.filters.push((r) => vals.includes(r[col]));
+    return this;
+  }
+
   order(column: string, opts?: { ascending?: boolean }): this {
     this.orderColumn = column;
     this.orderAscending = opts?.ascending ?? true;
