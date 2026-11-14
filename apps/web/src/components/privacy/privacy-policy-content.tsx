@@ -16,19 +16,21 @@ import * as React from 'react';
 export interface PrivacyPolicyContentProps {
   /** Display date for the "Last updated" line (e.g. "25 October 2026"). */
   lastUpdated: string;
+  /** Brand name shown in the copy (spec 191 — defaults to FBUploadPro). */
+  brandName?: string;
 }
 
-export function PrivacyPolicyContent({ lastUpdated }: PrivacyPolicyContentProps) {
+export function PrivacyPolicyContent({ lastUpdated, brandName = 'FBUploadPro' }: PrivacyPolicyContentProps) {
   return (
     <article className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
       <h1 className="text-2xl font-semibold text-ink">Privacy Policy</h1>
       <p className="mt-2 text-body text-ink-sub">
-        FBUploadPro · Last updated: {lastUpdated}
+        {brandName} · Last updated: {lastUpdated}
       </p>
 
-      <h2 className="mt-8 text-lg font-semibold text-ink">What FBUploadPro does</h2>
+      <h2 className="mt-8 text-lg font-semibold text-ink">What {brandName} does</h2>
       <p className="mt-2 text-body leading-relaxed text-ink-sub">
-        FBUploadPro helps you schedule and publish content to your own social media
+        {brandName} helps you schedule and publish content to your own social media
         accounts — Facebook, Instagram, Threads, YouTube, X, and TikTok — from one
         dashboard. You connect your accounts, create posts, and we publish them at
         the times you choose.
@@ -66,7 +68,7 @@ export function PrivacyPolicyContent({ lastUpdated }: PrivacyPolicyContentProps)
 
       <h2 className="mt-8 text-lg font-semibold text-ink">Who else sees it</h2>
       <p className="mt-2 text-body leading-relaxed text-ink-sub">
-        Only the platforms you publish to, and the providers that host FBUploadPro (hosting, database, and storage). No other third party receives your data.
+        Only the platforms you publish to, and the providers that host {brandName} (hosting, database, and storage). No other third party receives your data.
       </p>
 
       <h2 className="mt-8 text-lg font-semibold text-ink">How long we keep it</h2>

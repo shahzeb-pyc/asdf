@@ -14,8 +14,10 @@
  * form sits on (default: left).
  */
 
+'use client';
+
 import React from 'react';
-import { BrandMark } from '@/components/brand';
+import { BrandMark, useBrandConfig } from '@/components/brand';
 import { AuthShowcasePanel } from '@/components/auth/login-showcase-panel';
 import { cn } from '@/lib/utils';
 
@@ -43,10 +45,12 @@ export function AuthSplitLayout({
   showcase,
 }: Readonly<AuthSplitLayoutProps>) {
   const isFormLeft = formPosition === 'left';
+  // Spec 191: the brand name and mark follow the request's brand.
+  const brandConfig = useBrandConfig();
 
   const showcaseNode = (
     <section
-      aria-label="FBUploadPro Showcase"
+      aria-label={`${brandConfig.shortName} Showcase`}
       className={cn(
         'relative hidden w-9/20 overflow-hidden border-line bg-canvas lg:block',
         isFormLeft ? 'border-l' : 'border-r'
@@ -67,8 +71,12 @@ export function AuthSplitLayout({
       <div className="flex w-full max-w-md flex-col">
         {/* Mobile brand header (rendered when the showcase is hidden). */}
         <div className="mb-6 flex items-center justify-center gap-2.5 lg:hidden">
-          <BrandLogo />
-          <span className="text-lg font-bold tracking-h3">FBUploadPro</span>
+          {brandConfig.brand === 'nextrise' ? (
+            <BrandMark size={32} brand="nextrise" className="rounded-xs" />
+          ) : (
+            <BrandLogo />
+          )}
+          <span className="text-lg font-bold tracking-h3">{brandConfig.shortName}</span>
         </div>
 
         {/* Auth card */}

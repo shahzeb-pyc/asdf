@@ -6,6 +6,7 @@ import {
 } from '@fbuploadpro/contracts';
 // Side effect: registers the X connect config (spec 127).
 import '@/lib/connect/platforms/x';
+import { getRequestBrandRoot } from '@/lib/brand';
 // Side effect: registers the Threads connect config (spec 124).
 import '@/lib/connect/platforms/threads';
 import {
@@ -297,7 +298,7 @@ export async function handleConnectCallback(
   platformParam: string,
   dbClient?: ConnectDbClient
 ): Promise<NextResponse> {
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || '';
+  const rootDomain = getRequestBrandRoot(request);
   const sessionSecret = getSessionSecret();
   const params = request.nextUrl.searchParams;
   const errorParam = params.get('error');

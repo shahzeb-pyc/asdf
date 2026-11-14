@@ -6,6 +6,7 @@ import { useSearchParams, type ReadonlyURLSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 import { ConnectStatusLayout } from '@/components/accounts/connect-status-layout';
+import { useBrandConfig } from '@/components/brand';
 import { Button } from '@/components/shared/ui/button';
 
 export interface ConnectSuccessParams {
@@ -22,7 +23,7 @@ export interface ConnectSuccessParams {
  * is never reported as a plain success, and every variant names the
  * account. Confirmation copy is name + connected only — never pages.
  */
-export function getConnectSuccessCopy(params: ConnectSuccessParams): {
+export function getConnectSuccessCopy(params: ConnectSuccessParams, brandName = 'FBUploadPro'): {
   variant: 'success' | 'error';
   title: string;
   description: string;
@@ -36,7 +37,7 @@ export function getConnectSuccessCopy(params: ConnectSuccessParams): {
       // needed: the expected account is not reconnected yet.
       variant: 'error',
       title: `${params.newAccountName || 'another account'} is now connected as a separate account.`,
-      description: `${expected} still needs to be reconnected. Open your FBUploadPro dashboard, go to Facebook Accounts, and use Reconnect on ${expected}.`,
+      description: `${expected} still needs to be reconnected. Open your ${brandName} dashboard, go to Facebook Accounts, and use Reconnect on ${expected}.`,
     };
   }
   if (params.alreadyConnected) {
@@ -45,7 +46,7 @@ export function getConnectSuccessCopy(params: ConnectSuccessParams): {
       variant: 'success',
       title: `${name} already connected — session refreshed`,
       description:
-        "You're all set! You can close this tab and return to your FBUploadPro dashboard.",
+        `You're all set! You can close this tab and return to your ${brandName} dashboard.`,
     };
   }
   const name = params.accountName;
@@ -53,14 +54,16 @@ export function getConnectSuccessCopy(params: ConnectSuccessParams): {
     variant: 'success',
     title: name ? `${name} connected` : 'Facebook account connected',
     description:
-      "You're all set! You can close this tab and return to your FBUploadPro dashboard.",
+      `You're all set! You can close this tab and return to your ${brandName} dashboard.`,
   };
 }
 
 export function ConnectSuccessView({
   params,
 }: Readonly<{ params: ConnectSuccessParams }>) {
-  const { variant, title, description } = getConnectSuccessCopy(params);
+  // Spec 191: the dashboard name follows the request's brand.
+  const brandConfig = useBrandConfig();
+  const { variant, title, description } = getConnectSuccessCopy(params, brandConfig.shortName);
   return (
     <ConnectStatusLayout
       testId="magic-connect-success"
@@ -69,7 +72,7 @@ export function ConnectSuccessView({
       description={description}
     >
       <div className="rounded-sm bg-subtle px-3.5 py-2.5 text-metadata text-ink-dim">
-        Linked to FBUploadPro via Facebook.
+        Linked to {brandConfig.shortName} via Facebook.
       </div>
       {/* Audit UX1: if the original tab was closed, "close this tab
           and return" leaves the user to navigate manually — offer
@@ -78,7 +81,7 @@ export function ConnectSuccessView({
       {!params.reconnectedMismatch ? (
         <Button asChild variant="outline" className="mt-4">
           <Link href="/" data-testid="magic-success-dashboard-link">
-            Back to FBUploadPro dashboard
+            Back to {brandConfig.shortName} dashboard
           </Link>
         </Button>
       ) : null}
@@ -89,7 +92,7 @@ export function ConnectSuccessView({
         // fake a reconnect action here.
         <Button asChild variant="outline" className="mt-4">
           <Link href="/" data-testid="magic-mismatch-dashboard-link">
-            Back to FBUploadPro dashboard
+            Back to {brandConfig.shortName} dashboard
           </Link>
         </Button>
       ) : null}

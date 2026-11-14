@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { buildTenantUrl, getSessionSecret } from '@fbuploadpro/contracts';
 import { verifyConnectState } from '@/lib/connect/state';
+import { getRequestBrandRoot } from '@/lib/brand';
 import type { ConnectNoticeCode } from '@/lib/connect/errors';
 import {
   createPostForMeConnectClient,
@@ -23,7 +24,7 @@ export async function handleTikTokAuthorize(
   request: NextRequest,
   client: PostForMeConnectClient = createPostForMeConnectClient()
 ): Promise<NextResponse> {
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || '';
+  const rootDomain = getRequestBrandRoot(request);
   const state = request.nextUrl.searchParams.get('state');
 
   if (!state) {

@@ -22,6 +22,7 @@ import {
   UpgradeCard,
 } from '@/components/home/home-sections';
 import { buildTenantHref, shouldUseCleanTenantPaths } from '@/lib/tenant-href';
+import { getRequestBrandFromHost } from '@/lib/brand';
 
 import { getWorkspaceDisplayName } from './workspace-display-name';
 
@@ -72,6 +73,9 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
   }
   const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com';
   const useCleanPaths = shouldUseCleanTenantPaths(hostHeader, subdomain, rootDomain);
+  // Spec 191: the old-users banner is our brand's notice — it never
+  // shows on the white-label brand.
+  const brand = getRequestBrandFromHost(hostHeader);
   const href = (path: string) => buildTenantHref(subdomain, path, useCleanPaths);
 
   // Admins never land on Home: a direct load that reaches this page
@@ -110,7 +114,7 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
         }
         promptsHref={promptsHref}
       />
-      <HomeOldUsersBanner />
+      {brand !== 'nextrise' && <HomeOldUsersBanner />}
 
       {data.kind === 'error' ? <HomeErrorCard message={data.message} /> : null}
 

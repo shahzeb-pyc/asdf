@@ -17,6 +17,7 @@ import {
   type Database,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import { getRequestBrandRoot } from '@/lib/brand';
 import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { enforceIpRateLimit } from '@/lib/request-body';
@@ -473,7 +474,7 @@ function getCallbackEnvConfig() {
   const sessionSecret = getSessionSecret();
   const encryptionKey = getTokenEncryptionKey();
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || '';
+  const rootDomain = getRequestBrandRoot(request);
   const redirectUri = `${appUrl}/api/auth/facebook/callback`;
 
   return {

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import { getRequestBrandRoot } from '@/lib/brand';
 import { clearSessionCookiesBestEffort } from '@/lib/auth/session';
 import { buildCentralAppUrl } from '@fbuploadpro/contracts';
 import { logServerError } from '@/lib/server-analytics';
@@ -38,7 +39,7 @@ function buildLogoutRedirectUrl(request: NextRequest | undefined): string {
   try {
     const host = request?.headers.get('host');
     const requestUrl = request?.url || (host ? `https://${host}` : undefined);
-    const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';
+    const rootDomain = getRequestBrandRoot(request, 'localhost:3000');
     return buildCentralAppUrl('/login?logout=success', requestUrl, rootDomain).toString();
   } catch {
     return '/login?logout=success';

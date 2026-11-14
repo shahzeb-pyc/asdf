@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
 import { ConnectStatusLayout } from '@/components/accounts/connect-status-layout';
+import { useBrandConfig } from '@/components/brand';
 import { Button } from '@/components/shared/ui/button';
 import {
   buildScopeRejectionMessage,
@@ -25,7 +26,8 @@ import {
  */
 export function getConnectErrorCopy(
   reason?: string | null,
-  missing?: string | null
+  missing?: string | null,
+  brandName = 'FBUploadPro'
 ): {
   title: string;
   description: string;
@@ -61,7 +63,7 @@ export function getConnectErrorCopy(
     return {
       title: "Couldn't Save Your Facebook Account",
       description:
-        'Facebook approved the connection, but we couldn\u2019t save the account. Nothing was connected. Please try connecting again from your FBUploadPro dashboard.',
+        `Facebook approved the connection, but we couldn\u2019t save the account. Nothing was connected. Please try connecting again from your ${brandName} dashboard.`,
     };
   }
   if (reason === 'app_not_configured' || reason === 'credentials_required') {
@@ -82,7 +84,7 @@ export function getConnectErrorCopy(
     return {
       title: 'Connection Link Invalid',
       description:
-        'This link is missing its authorization token and can’t be used. Please generate a fresh link from your FBUploadPro dashboard.',
+        `This link is missing its authorization token and can’t be used. Please generate a fresh link from your ${brandName} dashboard.`,
     };
   }
   return {
@@ -99,7 +101,9 @@ export function ConnectErrorView({
   reason?: string | null | undefined;
   missing?: string | null | undefined;
 }>) {
-  const { title, description } = getConnectErrorCopy(reason, missing);
+  // Spec 191: the dashboard name follows the request's brand.
+  const brandConfig = useBrandConfig();
+  const { title, description } = getConnectErrorCopy(reason, missing, brandConfig.shortName);
 
   return (
     <ConnectStatusLayout
@@ -116,7 +120,7 @@ export function ConnectErrorView({
         // Accounts (BL1 established this pattern for save failures).
         <Button asChild data-testid="magic-connect-error-back">
           <Link href={process.env.NEXT_PUBLIC_APP_URL || '/'}>
-            Back to FBUploadPro
+            Back to {brandConfig.shortName}
           </Link>
         </Button>
       )}

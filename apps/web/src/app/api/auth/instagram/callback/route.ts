@@ -11,6 +11,7 @@ import {
   type OAuthStatePayload,
 } from '@fbuploadpro/contracts';
 import { logServerError, trackServerEvent } from '@/lib/server-analytics';
+import { getRequestBrandRoot } from '@/lib/brand';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
@@ -283,7 +284,7 @@ function buildPostConnectRedirect(
 function getCallbackEnvConfig() {
   const sessionSecret = getSessionSecret();
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || '';
+  const rootDomain = getRequestBrandRoot(request);
   const redirectUri = `${appUrl}/api/auth/instagram/callback`;
 
   return {
