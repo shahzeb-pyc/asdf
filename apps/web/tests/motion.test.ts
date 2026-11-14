@@ -234,4 +234,27 @@ describe('surface wiring (spec 185)', () => {
       '--animate-page-enter: page-enter 380ms var(--motion-easing-enter) backwards;'
     );
   });
+
+  it('aliases durations in the --transition-duration-* namespace', () => {
+    // Tailwind v4's `duration-*` utility resolves ONLY the
+    // `--transition-duration-*` namespace. The old `--duration-*`
+    // aliases generated NO utility rules (verified in the built CSS:
+    // no `.duration-fast` rule existed), so every `duration-*` class
+    // silently fell back to Tailwind's 150ms default and the motion
+    // tokens never drove a single transition. This pins the namespace
+    // so the alias can never silently fork back.
+    const source = readFileSync(
+      path.resolve(process.cwd(), 'src/app/globals.css'),
+      'utf8'
+    );
+    for (const step of ['fast', 'base', 'slow', 'slower']) {
+      expect(source).toContain(
+        `--transition-duration-${step}: var(--motion-duration-${step});`
+      );
+    }
+    expect(source).not.toContain('--duration-fast:');
+    expect(source).not.toContain('--duration-base:');
+    expect(source).not.toContain('--duration-slow:');
+    expect(source).not.toContain('--duration-slower:');
+  });
 });

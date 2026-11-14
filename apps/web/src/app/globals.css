@@ -198,11 +198,19 @@
      same change (the one sanctioned exception to no-copied-values, forced by
      the media-query limitation). */
 
-  /* Motion */
-  --duration-fast: var(--motion-duration-fast);
-  --duration-base: var(--motion-duration-base);
-  --duration-slow: var(--motion-duration-slow);
-  --duration-slower: var(--motion-duration-slower);
+  /* Motion — durations live in the `--transition-duration-*` namespace:
+     that is the namespace Tailwind v4's `duration-*` utility resolves
+     (`--duration-*` generates NOTHING — verified in the built CSS: no
+     `.duration-fast` rule existed, so every `duration-*` class in the
+     app silently fell back to Tailwind's 150ms default and the motion
+     tokens never drove a single transition. Same failure class as the
+     spacing SEND BACK on PR #255: a token-only change that moves
+     nothing the user sees. Renaming the four aliases here is the fix;
+     the `duration-*` classes in the components are unchanged. */
+  --transition-duration-fast: var(--motion-duration-fast);
+  --transition-duration-base: var(--motion-duration-base);
+  --transition-duration-slow: var(--motion-duration-slow);
+  --transition-duration-slower: var(--motion-duration-slower);
   --ease-standard: var(--motion-easing-standard);
   --ease-enter: var(--motion-easing-enter);
   --ease-exit: var(--motion-easing-exit);
