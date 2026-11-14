@@ -149,6 +149,11 @@ test.describe('sidebar polish at desktop width (spec 187)', () => {
     expect(await branding.evaluate((el) => getComputedStyle(el).borderBottomWidth)).toBe(
       '1px'
     );
+    // Nav element under the spec 186 ladder: rounded-xs is 12px
+    // (the mockup's 6px no longer exists as a token step).
+    expect(await branding.evaluate((el) => getComputedStyle(el).borderRadius)).toBe(
+      '12px'
+    );
 
     // Labels: "Platforms" (not "Platform") and the static "Billing".
     await expect(sidebar.getByText('Platforms', { exact: true })).toBeVisible();
@@ -188,7 +193,9 @@ test.describe('sidebar polish at desktop width (spec 187)', () => {
     const triggerBox = await trigger.boundingBox();
     expect(triggerBox?.height).toBe(56);
     expect(await trigger.evaluate((el) => getComputedStyle(el).borderTopWidth)).toBe('1px');
-    expect(await trigger.evaluate((el) => getComputedStyle(el).borderRadius)).toBe('6px');
+    // Card surface under the spec 186 ladder: rounded-sm is 20px now
+    // (the mockup's 6px was the old rounded-sm value).
+    expect(await trigger.evaluate((el) => getComputedStyle(el).borderRadius)).toBe('20px');
 
     await sidebar.screenshot({ path: test.info().outputPath('desktop-sidebar.png') });
   });

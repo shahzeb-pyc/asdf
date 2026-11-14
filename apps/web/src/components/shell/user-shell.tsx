@@ -120,7 +120,11 @@ export function UserShell({
           // past the header's p-2, and -mb-2 drops it onto the
           // header's bottom edge (the negative bottom margin shrinks
           // the header by the same 8px the border fills).
-          brandingClassName="flex items-center gap-2 rounded-sm border-b border-line -mx-2 -mb-2 px-2 py-1 outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-link"
+          // Radius (rebase onto spec 186): the branding link is a
+          // nav element, so it takes rounded-xs (12px) under the
+          // 12/20/28 ladder — the mockup's 6px (old rounded-sm)
+          // no longer exists as a token step.
+          brandingClassName="flex items-center gap-2 rounded-xs border-b border-line -mx-2 -mb-2 px-2 py-1 outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-link"
           footer={(navigate) => (
             // Spec 187 footer hairline + 12px padding, user shell
             // only: the wrapper bleeds edge to edge (-mx-2) and
