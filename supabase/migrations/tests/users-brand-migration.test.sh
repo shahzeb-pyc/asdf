@@ -54,39 +54,58 @@ su postgres -c "$PG_BIN/initdb -D '$WORKDIR/data' -U postgres --auth=trust" >/de
 su postgres -c "$PG_BIN/pg_ctl -D '$WORKDIR/data' -o '-k $SOCK -p $PORT -c listen_addresses=' -l '$WORKDIR/log' start" >/dev/null
 sleep 1
 
-PSQL="su postgres -c \"$PG_BIN/psql -h $SOCK -p $PORT -d postgres -v ON_ERROR_STOP=1 -q -t -A\""
+PSQLQ() {
+  su postgres -c "$PG_BIN/psql -h '$SOCK' -p $PORT -d postgres -v ON_ERROR_STOP=1 -q -t -A"
+}
 
 # Minimal users table, as the initial migration creates it.
-$PSQL -c "create table public.users (id uuid primary key, email text not null, name text, subdomain text, role text not null default 'user', status text not null default 'active', created_at timestamptz not null default now(), updated_at timestamptz not null default now());" >/dev/null
-$PSQL -c "insert into public.users (id, email, subdomain) values ('11111111-1111-1111-1111-111111111111', 'owner@example.com', 'owner');" >/dev/null
+PSQLQ <<'SQL' >/dev/null
+create table public.users (id uuid primary key, email text not null, name text, subdomain text, role text not null default 'user', status text not null default 'active', created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+insert into public.users (id, email, subdomain) values ('11111111-1111-1111-1111-111111111111', 'owner@example.com', 'owner');
+SQL
 
 # Forward migration.
-su postgres -c "$PG_BIN/psql -h $SOCK -p $PORT -d postgres -v ON_ERROR_STOP=1 -q -f '$STAGE/forward.sql'" >/dev/null
+su postgres -c "$PG_BIN/psql -h '$SOCK' -p $PORT -d postgres -v ON_ERROR_STOP=1 -q -f '$STAGE/forward.sql'" >/dev/null
 
 # 1. The column exists, NOT NULL, default 'fbuploadpro'.
-DEF=$($PSQL -c "select column_default || '|' || is_nullable from information_schema.columns where table_schema='public' and table_name='users' and column_name='brand';")
+DEF=$(PSQLQ <<'SQL'
+select column_default || '|' || is_nullable from information_schema.columns where table_schema='public' and table_name='users' and column_name='brand';
+SQL
+)
 [ "$DEF" = "'fbuploadpro'::text|NO" ] || { echo "FAIL: brand column default/nullable = $DEF"; exit 1; }
 
 # 2. The existing row got the default.
-GOT=$($PSQL -c "select brand from public.users where email='owner@example.com';")
+GOT=$(PSQLQ <<'SQL'
+select brand from public.users where email='owner@example.com';
+SQL
+)
 [ "$GOT" = "fbuploadpro" ] || { echo "FAIL: existing row brand = $GOT, want fbuploadpro"; exit 1; }
 
 # 3. 'nextrise' inserts cleanly; anything else is rejected.
-$PSQL -c "insert into public.users (id, email, subdomain, brand) values ('22222222-2222-2222-2222-222222222222', 'student@example.com', 'student1', 'nextrise');" >/dev/null
-if $PSQL -c "insert into public.users (id, email, subdomain, brand) values ('33333333-3333-3333-3333-333333333333', 'bad@example.com', 'bad', 'acme');" >/dev/null 2>&1; then
+PSQLQ <<'SQL' >/dev/null
+insert into public.users (id, email, subdomain, brand) values ('22222222-2222-2222-2222-222222222222', 'student@example.com', 'student1', 'nextrise');
+SQL
+if PSQLQ <<'SQL' >/dev/null 2>&1; then
+insert into public.users (id, email, subdomain, brand) values ('33333333-3333-3333-3333-333333333333', 'bad@example.com', 'bad', 'acme');
+SQL
   echo "FAIL: CHECK accepted brand 'acme'"
   exit 1
 fi
-if $PSQL -c "update public.users set brand = null where email='owner@example.com';" >/dev/null 2>&1; then
+if PSQLQ <<'SQL' >/dev/null 2>&1; then
+update public.users set brand = null where email='owner@example.com';
+SQL
   echo "FAIL: NOT NULL accepted a NULL brand"
   exit 1
 fi
 
 # Reverse migration.
-su postgres -c "$PG_BIN/psql -h $SOCK -p $PORT -d postgres -v ON_ERROR_STOP=1 -q -f '$STAGE/reverse.sql'" >/dev/null
+su postgres -c "$PG_BIN/psql -h '$SOCK' -p $PORT -d postgres -v ON_ERROR_STOP=1 -q -f '$STAGE/reverse.sql'" >/dev/null
 
 # 4. The column is gone.
-COUNT=$($PSQL -c "select count(*) from information_schema.columns where table_schema='public' and table_name='users' and column_name='brand';")
+COUNT=$(PSQLQ <<'SQL'
+select count(*) from information_schema.columns where table_schema='public' and table_name='users' and column_name='brand';
+SQL
+)
 [ "$COUNT" = "0" ] || { echo "FAIL: brand column still present after reverse"; exit 1; }
 
 echo "users-brand migration test: PASS"

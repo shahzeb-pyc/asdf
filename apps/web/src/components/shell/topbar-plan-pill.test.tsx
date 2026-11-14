@@ -214,3 +214,49 @@ describe('calendarDaysLeft', () => {
     expect(calendarDaysLeft(new Date(2026, 10, 1, 23, 59).toISOString(), today)).toBe(-1);
   });
 });
+
+describe('TopbarPlanPill white-label brand (spec 191)', () => {
+  beforeEach(() => {
+    entitlementState.value = null;
+  });
+
+  function renderPillBrand(brand: 'fbuploadpro' | 'nextrise') {
+    render(<TopbarPlanPill subdomain="creatorstack" useCleanPaths={false} brand={brand} />);
+  }
+
+  it('shows the Paid count as plain text on nextrise — no link, no My Plan', () => {
+    entitlementState.value = entitlement({
+      active: true,
+      periodEndsAt: addDays(new Date(), 12).toISOString(),
+    });
+    renderPillBrand('nextrise');
+    const pill = screen.getByTestId('topbar-plan-pill');
+    expect(pill).toHaveTextContent('12 days left');
+    expect(pill.tagName).toBe('SPAN');
+    expect(pill).not.toHaveAttribute('href');
+    expect(pill).toHaveAttribute('aria-label', 'Paid plan, 12 days left');
+  });
+
+  it('shows Expired as plain text on nextrise — no link', () => {
+    entitlementState.value = entitlement({ plan: 'expired', active: false, hasPriorPeriod: true });
+    renderPillBrand('nextrise');
+    const pill = screen.getByTestId('topbar-plan-pill');
+    expect(pill).toHaveTextContent('Expired');
+    expect(pill.tagName).toBe('SPAN');
+    expect(pill).not.toHaveAttribute('href');
+  });
+
+  it('renders nothing for a Free account on nextrise — never an Upgrade link', () => {
+    entitlementState.value = entitlement({ plan: 'free', active: false, hasPriorPeriod: false });
+    renderPillBrand('nextrise');
+    expect(screen.queryByTestId('topbar-plan-pill')).toBeNull();
+  });
+
+  it('negative control: Free on our brand still shows the Upgrade link', () => {
+    entitlementState.value = entitlement({ plan: 'free', active: false, hasPriorPeriod: false });
+    renderPillBrand('fbuploadpro');
+    const pill = screen.getByTestId('topbar-plan-pill');
+    expect(pill).toHaveTextContent('Upgrade');
+    expect(pill).toHaveAttribute('href', '/tenant/creatorstack/purchase');
+  });
+});

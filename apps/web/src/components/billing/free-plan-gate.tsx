@@ -49,6 +49,7 @@
 
 import * as React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import type { Brand } from '@fbuploadpro/contracts';
 import { buildTenantHref, normalizeTenantPath } from '@/lib/tenant-href';
 import { Button } from '@/components/shared/ui/button';
 import {
@@ -64,6 +65,8 @@ export interface FreePlanGateProps {
   subdomain: string;
   useCleanPaths: boolean;
   isAdmin: boolean;
+  /** White-label brand (spec 191): no Upgrade exit there — billing does not exist. */
+  brand?: Brand;
   children: React.ReactNode;
 }
 
@@ -84,6 +87,7 @@ export function FreePlanGate({
   subdomain,
   useCleanPaths,
   isAdmin,
+  brand = 'fbuploadpro',
   children,
 }: Readonly<FreePlanGateProps>) {
   const pathname = usePathname();
@@ -175,9 +179,11 @@ export function FreePlanGate({
           >
             Back to Home
           </Button>
-          <Button data-testid="free-plan-upgrade-btn" onClick={() => router.push(upgradeHref)}>
-            Upgrade
-          </Button>
+          {brand !== 'nextrise' ? (
+            <Button data-testid="free-plan-upgrade-btn" onClick={() => router.push(upgradeHref)}>
+              Upgrade
+            </Button>
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>

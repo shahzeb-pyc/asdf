@@ -48,6 +48,7 @@ import {
   useSidebar,
 } from '@/components/shared/ui/sidebar';
 import { cn } from '@/lib/utils';
+import { NEXTRISE_SHORT_NAME, type Brand } from '@fbuploadpro/contracts';
 import { BrandMark } from '@/components/brand';
 import type {
   SidebarSections,
@@ -79,6 +80,8 @@ export interface AppSidebarProps {
    * Cyber Yellow value is not in the token system, and literals are banned.
    */
   showGoldActiveBar?: boolean | undefined;
+  /** White-label brand (spec 191): brand name and logo in the header. */
+  brand?: Brand | undefined;
 }
 
 function ChevronIcon({ open }: Readonly<{ open: boolean }>) {
@@ -124,6 +127,7 @@ function AppSidebarContent({
   collapsible = 'offcanvas',
   normalizePath = (path: string) => path,
   showGoldActiveBar = false,
+  brand = 'fbuploadpro',
 }: Readonly<AppSidebarProps>) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -307,21 +311,29 @@ function AppSidebarContent({
           onClick={() => handleLeafClick(brandingHref)}
           data-slot="sidebar-header-branding"
           data-testid="sidebar-branding-link"
-          aria-label="FBUploadPro Studio"
+          aria-label={`${brand === 'nextrise' ? NEXTRISE_SHORT_NAME : 'FBUploadPro'} Studio`}
           className={cn(
             brandingClassName ??
               'flex items-center gap-2 rounded-sm px-nav py-nav outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-link',
             isCollapsed && 'justify-center px-0'
           )}
         >
-          {showBrandMark && (
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-xs border border-line bg-canvas">
-              <BrandMark size={20} />
-            </div>
-          )}
+          {showBrandMark &&
+            // Spec 191: the white-label logo is a self-contained mark
+            // (navy rounded square), so it renders at tile size with
+            // no bordered wrapper; our mark keeps the tile.
+            (brand === 'nextrise' ? (
+              <BrandMark size={32} brand={brand} className="rounded-xs" />
+            ) : (
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-xs border border-line bg-canvas">
+                <BrandMark size={20} />
+              </div>
+            ))}
           {!isCollapsed && (
             <div className="flex min-w-0 flex-col">
-              <span className="text-body font-bold tracking-caption text-ink">FBUploadPro</span>
+              <span className="text-body font-bold tracking-caption text-ink">
+                {brand === 'nextrise' ? NEXTRISE_SHORT_NAME : 'FBUploadPro'}
+              </span>
               <span className="text-metadata text-ink-dim">{headerWord}</span>
             </div>
           )}

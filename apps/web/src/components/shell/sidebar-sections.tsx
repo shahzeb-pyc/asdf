@@ -27,6 +27,7 @@
  */
 
 import React from 'react';
+import type { Brand } from '@fbuploadpro/contracts';
 import { buildTenantHref } from '@/lib/tenant-href';
 import { UPCOMING_PLATFORMS, TESTING_PLACEHOLDER_TEXT } from '@/components/workspace/platform-nav-config';
 
@@ -197,9 +198,35 @@ const DASHBOARD_ICON = svgIcon(
  * User sections for one workspace. Hrefs resolve through
  * buildTenantHref exactly as the old workspace sidebar did (clean
  * paths on the tenant's own host, /tenant/<sub> paths elsewhere).
+ *
+ * Spec 191: the white-label brand drops the Billing section and the
+ * Muse leaf entirely (both are hidden server-side too).
  */
-export function getUserSections(subdomain: string, useCleanPaths = false): SidebarSections {
+export function getUserSections(
+  subdomain: string,
+  useCleanPaths = false,
+  brand: Brand = 'fbuploadpro'
+): SidebarSections {
   const href = (path: string) => buildTenantHref(subdomain, path, useCleanPaths);
+
+  const primaryItems: SidebarSections[number]['items'] = [
+    { kind: 'leaf', label: 'Home', href: href('/'), icon: HOME_ICON, match: 'exact' },
+    ...(brand === 'nextrise'
+      ? []
+      : [
+          {
+            kind: 'leaf' as const,
+            label: 'Muse Assistant',
+            href: href('/muse'),
+            icon: MUSE_ICON,
+            match: 'prefix' as const,
+          },
+        ]),
+    { kind: 'leaf', label: 'Media Library', href: href('/media'), icon: MEDIA_ICON, match: 'prefix' },
+    { kind: 'leaf', label: 'Fdola Studio', href: href('/fdola-studio'), icon: FDOLA_ICON, match: 'prefix' },
+    { kind: 'leaf', label: 'Prompt Library', href: href('/prompts'), icon: PROMPTS_ICON, match: 'prefix' },
+    { kind: 'leaf', label: 'Creator Finder', href: href('/creator-finder'), icon: CREATOR_FINDER_ICON, match: 'prefix' },
+  ];
 
   const platformGroups: SidebarCollapsibleGroup[] = UPCOMING_PLATFORMS.map((platform) => {
     const platformAccountsHref = href(`/${platform.routeSlug}/accounts`);
@@ -250,14 +277,7 @@ export function getUserSections(subdomain: string, useCleanPaths = false): Sideb
   return [
     {
       key: 'primary',
-      items: [
-        { kind: 'leaf', label: 'Home', href: href('/'), icon: HOME_ICON, match: 'exact' },
-        { kind: 'leaf', label: 'Muse Assistant', href: href('/muse'), icon: MUSE_ICON, match: 'prefix' },
-        { kind: 'leaf', label: 'Media Library', href: href('/media'), icon: MEDIA_ICON, match: 'prefix' },
-        { kind: 'leaf', label: 'Fdola Studio', href: href('/fdola-studio'), icon: FDOLA_ICON, match: 'prefix' },
-        { kind: 'leaf', label: 'Prompt Library', href: href('/prompts'), icon: PROMPTS_ICON, match: 'prefix' },
-        { kind: 'leaf', label: 'Creator Finder', href: href('/creator-finder'), icon: CREATOR_FINDER_ICON, match: 'prefix' },
-      ],
+      items: primaryItems,
     },
     {
       key: 'platform',
@@ -282,25 +302,30 @@ export function getUserSections(subdomain: string, useCleanPaths = false): Sideb
         ...platformGroups,
       ],
     },
-    {
-      key: 'billing',
-      // Static label only — NOT a collapsible group (owner decision
-      // 2026-11-02; PR 120 send-back fix B1): the four leaves below
-      // stay separate top-level items on their own routes.
-      label: 'Billing',
-      items: [
-        // Separate sections, not a Billing group (owner decision
-        // 2026-11-02; PR 120 send-back fix B1): each leaf is a
-        // top-level sidebar item on its own route, prefix-matched.
-        // There is deliberately no collapsible Billing parent and
-        // no ?view= leaf — the old /billing?view= routes are
-        // deleted, so any surviving group would 404.
-        { kind: 'leaf', label: 'My Plan', href: href('/my-plan'), icon: BILLING_ICON, match: 'prefix' },
-        { kind: 'leaf', label: 'Purchase', href: href('/purchase'), icon: PURCHASE_ICON, match: 'prefix' },
-        { kind: 'leaf', label: 'Payments', href: href('/payments'), icon: PAYMENTS_ICON, match: 'prefix' },
-        { kind: 'leaf', label: 'Refund', href: href('/refund'), icon: REFUND_ICON, match: 'prefix' },
-      ],
-    },
+    // Spec 191: no Billing section on the white-label brand.
+    ...(brand === 'nextrise'
+      ? []
+      : [
+          {
+            key: 'billing' as const,
+            // Static label only — NOT a collapsible group (owner decision
+            // 2026-11-02; PR 120 send-back fix B1): the four leaves below
+            // stay separate top-level items on their own routes.
+            label: 'Billing',
+            items: [
+              // Separate sections, not a Billing group (owner decision
+              // 2026-11-02; PR 120 send-back fix B1): each leaf is a
+              // top-level sidebar item on its own route, prefix-matched.
+              // There is deliberately no collapsible Billing parent and
+              // no ?view= leaf — the old /billing?view= routes are
+              // deleted, so any surviving group would 404.
+              { kind: 'leaf' as const, label: 'My Plan', href: href('/my-plan'), icon: BILLING_ICON, match: 'prefix' as const },
+              { kind: 'leaf' as const, label: 'Purchase', href: href('/purchase'), icon: PURCHASE_ICON, match: 'prefix' as const },
+              { kind: 'leaf' as const, label: 'Payments', href: href('/payments'), icon: PAYMENTS_ICON, match: 'prefix' as const },
+              { kind: 'leaf' as const, label: 'Refund', href: href('/refund'), icon: REFUND_ICON, match: 'prefix' as const },
+            ],
+          },
+        ]),
   ];
 }
 
