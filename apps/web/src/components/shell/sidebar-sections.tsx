@@ -65,7 +65,7 @@ export type SidebarItem = SidebarLeaf | SidebarCollapsibleGroup;
 
 export interface SidebarSection {
   key: string;
-  /** Rendered as the section's group label (Platform only). */
+  /** Rendered as the section's group label (Platforms and Billing). */
   label?: string | undefined;
   items: SidebarItem[];
 }
@@ -143,6 +143,33 @@ const BILLING_ICON = svgIcon(
   <>
     <rect width="20" height="14" x="2" y="5" rx="2" />
     <line x1="2" x2="22" y1="10" y2="10" />
+  </>
+);
+
+// Spec 187: the three billing leaves that lacked icons. Same svgIcon()
+// 16px stroke style as every other icon in this file; My Plan keeps
+// BILLING_ICON above, so every billing label starts at the same x.
+const PURCHASE_ICON = svgIcon(
+  <>
+    <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
+    <path d="M3 6h18" />
+    <path d="M16 10a4 4 0 0 1-8 0" />
+  </>
+);
+
+const PAYMENTS_ICON = svgIcon(
+  <>
+    <path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z" />
+    <path d="M8 7h8" />
+    <path d="M8 11h8" />
+    <path d="M8 15h5" />
+  </>
+);
+
+const REFUND_ICON = svgIcon(
+  <>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5 5.5 5.5 0 0 1-5.5 5.5H11" />
   </>
 );
 
@@ -234,7 +261,7 @@ export function getUserSections(subdomain: string, useCleanPaths = false): Sideb
     },
     {
       key: 'platform',
-      label: 'Platform',
+      label: 'Platforms',
       items: [
         {
           kind: 'group',
@@ -257,6 +284,10 @@ export function getUserSections(subdomain: string, useCleanPaths = false): Sideb
     },
     {
       key: 'billing',
+      // Static label only — NOT a collapsible group (owner decision
+      // 2026-11-02; PR 120 send-back fix B1): the four leaves below
+      // stay separate top-level items on their own routes.
+      label: 'Billing',
       items: [
         // Separate sections, not a Billing group (owner decision
         // 2026-11-02; PR 120 send-back fix B1): each leaf is a
@@ -265,9 +296,9 @@ export function getUserSections(subdomain: string, useCleanPaths = false): Sideb
         // no ?view= leaf — the old /billing?view= routes are
         // deleted, so any surviving group would 404.
         { kind: 'leaf', label: 'My Plan', href: href('/my-plan'), icon: BILLING_ICON, match: 'prefix' },
-        { kind: 'leaf', label: 'Purchase', href: href('/purchase'), match: 'prefix' },
-        { kind: 'leaf', label: 'Payments', href: href('/payments'), match: 'prefix' },
-        { kind: 'leaf', label: 'Refund', href: href('/refund'), match: 'prefix' },
+        { kind: 'leaf', label: 'Purchase', href: href('/purchase'), icon: PURCHASE_ICON, match: 'prefix' },
+        { kind: 'leaf', label: 'Payments', href: href('/payments'), icon: PAYMENTS_ICON, match: 'prefix' },
+        { kind: 'leaf', label: 'Refund', href: href('/refund'), icon: REFUND_ICON, match: 'prefix' },
       ],
     },
   ];

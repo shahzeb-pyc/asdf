@@ -311,7 +311,13 @@ export function WorkspaceStudioFooter({
                   ? { tooltip: `${activeWorkspace.name} (${displayEmail})` }
                   : {})}
                 className={
-                  isCollapsed ? 'h-12 w-full justify-center p-0' : 'h-12 w-full px-2 py-1'
+                  isCollapsed
+                    ? 'h-12 w-full justify-center p-0'
+                    : // Spec 187 footer account card (user only): bordered
+                      // white card, 6px radius (rounded-sm), faint shadow,
+                      // 56px tall, 10px/8px inner padding. The collapsed
+                      // avatar-only trigger is unchanged.
+                      'h-14 w-full rounded-sm border border-line bg-canvas px-2.5 py-2 shadow-sm'
                 }
               >
                 <div
