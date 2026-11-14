@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@fontsource/manrope": "^5.3.0",
     "astro": "^7.4.8"
   },
   "description": "FBUploadPro standalone marketing landing page for Cloudflare Pages. Static only: no backend, no database, no sign-in code.",
