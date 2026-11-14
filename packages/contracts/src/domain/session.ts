@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SubdomainSchema, UserRoleSchema, UserStatusSchema } from './user.js';
+import { BrandSchema } from './brand.js';
 import { GmailSchema } from './auth.js';
 import { DomainError, DomainErrorCode } from '../errors/domain-error.js';
 
@@ -22,6 +23,11 @@ export const SessionPayloadSchema = z.object({
   allowedSubdomains: z.array(SubdomainSchema).optional(),
   role: UserRoleSchema,
   status: UserStatusSchema,
+  /**
+   * White-label brand the session belongs to (spec 191). Optional so
+   * pre-191 tokens (no claim) keep verifying — they mean our brand.
+   */
+  brand: BrandSchema.optional(),
   iat: z.number().int().positive(),
   exp: z.number().int().positive(),
 });
@@ -100,6 +106,7 @@ export async function signSessionToken(
     ...(payload.allowedSubdomains ? { allowedSubdomains: payload.allowedSubdomains } : {}),
     role: payload.role,
     status: payload.status,
+    ...(payload.brand ? { brand: payload.brand } : {}),
     iat: payload.iat ?? now,
     exp: payload.exp ?? now + expiresInSeconds,
   };
