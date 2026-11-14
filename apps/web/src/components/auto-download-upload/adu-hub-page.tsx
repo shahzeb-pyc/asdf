@@ -624,7 +624,7 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
           divider is its own border-top (1px), not a standalone
           divider group — the group stacked 12px of padding on top
           of this line's margin and grew every card 13px (SEND BACK
-          on #262). The gap above the text is the same 12px the
+          on PR 262). The gap above the text is the same 12px the
           undivided line had (mt-px 1px + 1px border + pt-2.5 10px),
           so the card keeps its baseline height. */}
       <p

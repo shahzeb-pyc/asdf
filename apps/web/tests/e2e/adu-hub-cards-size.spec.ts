@@ -19,7 +19,7 @@
  * branch — the widths and column counts must match, and the three
  * cards must share one box height (identical fixture structure).
  *
- * Fix round (SEND BACK on #262): the first version asserted only
+ * Fix round (SEND BACK on PR 262): the first version asserted only
  * within-branch uniformity, so it passed while every card had grown
  * 13px — the Today divider group stacked on the line's margin. The
  * baseline box heights are now encoded as constants below, so a
