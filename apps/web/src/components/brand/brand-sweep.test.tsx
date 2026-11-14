@@ -175,7 +175,7 @@ describe('brand sweep (spec 191)', () => {
         <MuseConnectDialog subdomain="student1" open onOpenChange={() => {}} />
       </BrandProvider>
     );
-    const text = document.body.textContent ?? '';
+    const text = document.body.textContent;
     expect(text).toContain('Connect to my NextRise Digital account');
     expect(text).toContain('https://app.nextrisehq.com/muse_guide.md');
     expect(text).toContain('your NextRise Digital sign-in');
@@ -189,7 +189,7 @@ describe('brand sweep (spec 191)', () => {
         <MuseConnectDialog subdomain="student1" open onOpenChange={() => {}} />
       </BrandProvider>
     );
-    const text = document.body.textContent ?? '';
+    const text = document.body.textContent;
     expect(text).toContain('Connect to my FBUploadPro account');
     expect(text).toContain('https://app.fbuploadpro.com/muse_guide.md');
   });

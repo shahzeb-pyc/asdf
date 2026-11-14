@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildMuseConnectPrompt, MUSE_CONNECT_PROMPT } from './muse';
+import { buildMuseConnectPrompt, MUSE_CONNECT_PROMPT } from './muse.js';
 
 /**
  * Brand-gated Connect Muse prompt (spec 191, owner reversal

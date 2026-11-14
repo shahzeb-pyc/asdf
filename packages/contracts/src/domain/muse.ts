@@ -3,7 +3,7 @@ import {
   getBrandGatewayHost,
   NEXTRISE_DISPLAY_NAME,
   type Brand,
-} from './brand';
+} from './brand.js';
 
 /**
  * Muse agent keys — Media Library only.

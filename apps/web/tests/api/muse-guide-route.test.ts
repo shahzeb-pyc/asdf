@@ -9,11 +9,23 @@
  * which still needs a live check.
  */
 import { describe, expect, it } from 'vitest';
+import { NextRequest } from 'next/server';
 import { GET } from '../../src/app/muse_guide.md/route';
+
+/** A guide request on a host — the route brands the guide from it. */
+function guideRequest(host = 'app.fbuploadpro.com'): NextRequest {
+  // In vitest, NextRequest does not populate the Host header from the
+  // URL (headers.get('host') is null), but the route brands from that
+  // header — set it explicitly after construction, which the Headers
+  // object allows. Production requests always carry a Host header.
+  const request = new NextRequest(`https://${host}/muse_guide.md`);
+  request.headers.set('host', host);
+  return request;
+}
 
 describe('muse_guide.md route', () => {
   it('serves the guide publicly as markdown, with the acting rules', async () => {
-    const res = await GET();
+    const res = await GET(guideRequest());
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toContain('text/markdown');
     const text = await res.text();
@@ -30,7 +42,7 @@ describe('muse_guide.md route', () => {
   });
 
   it('covers every sidebar section, workspaces, Settings/BYOC, and billing leaves in full detail', async () => {
-    const res = await GET();
+    const res = await GET(guideRequest());
     const text = await res.text();
     // Two jobs: operate in your own browser AND explain FBUploadPro.
     expect(text).toContain('Answering questions about FBUploadPro');
@@ -71,7 +83,7 @@ describe('muse_guide.md route', () => {
   });
 
   it('rewrites Workspaces accurately: manage properly, multiple owned workspaces, test-user BYOC workaround, no single-workspace framing', async () => {
-    const res = await GET();
+    const res = await GET(guideRequest());
     const text = await res.text();
     // Purpose, in the owner's logic.
     expect(text).toContain('manage more properly');
@@ -114,7 +126,7 @@ describe('muse_guide.md route', () => {
   });
 
   it('states Muse works in its own browser, and that Facebook In-App Schedule is the in-app schedule', async () => {
-    const res = await GET();
+    const res = await GET(guideRequest());
     const text = await res.text();
     // Own-browser correction: never the user's/device browser.
     expect(text).toContain('in your own browser');
@@ -132,5 +144,29 @@ describe('muse_guide.md route', () => {
     // app's Home link to Facebook In-App Schedule, not Facebook Pages).
     expect(text).toContain('Facebook Accounts, Facebook In-App Schedule, Billing');
     expect(text).not.toContain('Facebook Accounts, Facebook Pages, Billing');
+  });
+
+  // Owner reversal 2026-11-15: the white-label brand gets the same
+  // guide with its own name and guide address, and no billing parts.
+  it('serves the NextRise guide on the white-label host, with no billing sections or prices', async () => {
+    const res = await GET(guideRequest('app.nextrisehq.com'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toContain('text/markdown');
+    const text = await res.text();
+    expect(text).toContain('NextRise Digital — Muse guide');
+    expect(text).toContain('https://app.nextrisehq.com/muse_guide.md');
+    expect(text).not.toContain('FBUploadPro');
+    expect(text).not.toContain('app.fbuploadpro.com');
+    expect(text).toContain('There is no billing section in this app');
+    expect(text).not.toContain('## My Plan');
+    expect(text).not.toContain('## Purchase');
+    expect(text).not.toContain('## Payments');
+    expect(text).not.toContain('## Refund');
+    expect(text).not.toContain('70 PKR');
+    expect(text).not.toContain('Easypaisa');
+    // The non-billing sections are still there.
+    expect(text).toContain('## Muse Assistant');
+    expect(text).toContain('## Media Library');
+    expect(text).toContain('## Home');
   });
 });
