@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
   getSessionSecret,
+  resolveBrandFromHost,
   verifySessionToken,
   canAccessTenant,
   type DatabaseClient,
@@ -91,6 +92,18 @@ export async function authenticateTenantRoute(
   // failure therefore cannot surface as a 401 from this helper at
   // all: there is no lookup left to fail.
   if (session.status !== 'active') {
+    return {
+      errorResponse: NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      ),
+    };
+  }
+
+  // Spec 191: a session belongs to one brand. A token minted for the
+  // other brand is not a session on this host.
+  const requestBrand = resolveBrandFromHost(request.headers.get('host'));
+  if ((session.brand ?? 'fbuploadpro') !== requestBrand) {
     return {
       errorResponse: NextResponse.json(
         { error: 'Unauthorized' },

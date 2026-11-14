@@ -78,3 +78,38 @@ describe('getCookieDomain (login-cookie-loop fix)', () => {
     expect(getCookieDomain('fbuploadpro-git-branch-velocta.vercel.app')).toBeUndefined();
   });
 });
+
+// Spec 191: the cookie domain follows the request's brand, not the
+// configured root — and a COOKIE_DOMAIN set for our brand must never
+// apply to the white-label brand.
+describe('getCookieDomain white-label brand (spec 191)', () => {
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', 'fbuploadpro.com');
+    vi.stubEnv('COOKIE_DOMAIN', '.fbuploadpro.com');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('returns .app.nextrisehq.com for white-label hosts, ignoring COOKIE_DOMAIN', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    expect(getCookieDomain('app.nextrisehq.com')).toBe('.app.nextrisehq.com');
+    expect(getCookieDomain('student1.app.nextrisehq.com')).toBe('.app.nextrisehq.com');
+  });
+
+  it('keeps our brand on .fbuploadpro.com when both brands are configured', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    expect(getCookieDomain('app.fbuploadpro.com')).toBe('.fbuploadpro.com');
+    expect(getCookieDomain('app.nextrisehq.com')).toBe('.app.nextrisehq.com');
+  });
+
+  it('does not throw for a white-label host whose root does not match', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', 'example.com');
+    // The white-label root does not come from the configured root at
+    // all, so a mismatched configured root must not fail the login.
+    expect(getCookieDomain('app.nextrisehq.com')).toBe('.app.nextrisehq.com');
+  });
+});

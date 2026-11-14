@@ -7,6 +7,7 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { getBrandTenantRoot, resolveBrandFromHost } from '@fbuploadpro/contracts';
 
 let mockSupabaseClientForTesting: SupabaseClient | null = null;
 let mockSupabaseServiceClientForTesting: SupabaseClient | null = null;
@@ -234,12 +235,20 @@ export function getSupabaseAuthClient(): SupabaseClient | null {
 
 export function getCookieDomain(requestHost?: string | null): string | undefined {
   const rawRoot = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';
-  const cleanRoot = rawRoot
+  const configuredRoot = rawRoot
     .trim()
     .toLowerCase()
     .replace(/^https?:\/\//, '')
     .split('/')[0]
     ?.split(':')[0] || 'localhost';
+  // Spec 191: the cookie domain follows the request's brand, not the
+  // configured root. Our brand keeps the configured root; the
+  // white-label brand's shared domain is .app.nextrisehq.com, and a
+  // COOKIE_DOMAIN set for our brand must never apply to it.
+  const brand = resolveBrandFromHost(requestHost);
+  const cleanRoot = getBrandTenantRoot(brand, configuredRoot);
+  const cookieDomainOverride =
+    brand === 'nextrise' ? undefined : process.env.COOKIE_DOMAIN?.trim() || undefined;
 
   if (requestHost) {
     const cleanHost = requestHost.trim().toLowerCase().split(':')[0] || '';
@@ -259,7 +268,7 @@ export function getCookieDomain(requestHost?: string | null): string | undefined
     // so a host-only cookie works there, and non-production callers
     // keep the old silent fallback.
     if (process.env.NODE_ENV === 'production' && !isLocalHost && !isVercelHost) {
-      const cookieDomain = process.env.COOKIE_DOMAIN?.trim();
+      const cookieDomain = cookieDomainOverride;
       const effectiveBase = (cookieDomain ? cookieDomain.replace(/^\./, '') : cleanRoot)
         .toLowerCase();
       const effectiveIsUsable =
@@ -301,5 +310,5 @@ export function getCookieDomain(requestHost?: string | null): string | undefined
     return undefined;
   }
 
-  return process.env.COOKIE_DOMAIN?.trim() || `.${cleanRoot}`;
+  return cookieDomainOverride || `.${cleanRoot}`;
 }

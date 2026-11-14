@@ -7,7 +7,8 @@
  */
 
 import type { NextResponse } from 'next/server';
-import type { SessionPayload } from '@fbuploadpro/contracts';
+import type { Brand, SessionPayload } from '@fbuploadpro/contracts';
+import { getBrandTenantRoot, resolveBrandFromHost } from '@fbuploadpro/contracts';
 import { getCookieDomain } from './clients';
 import { findUserByEmailDetailed } from './users';
 import { logServerError } from '@/lib/server-analytics';
@@ -40,13 +41,22 @@ export async function validateSessionActive(session: SessionPayload): Promise<bo
  */
 export type SessionVerdict = 'active' | 'dead' | 'error';
 
-export async function validateSessionDetailed(session: SessionPayload): Promise<SessionVerdict> {
+export async function validateSessionDetailed(
+  session: SessionPayload,
+  requestBrand?: Brand
+): Promise<SessionVerdict> {
   if (session.status !== 'active') return 'dead';
   const result = await findUserByEmailDetailed(session.email);
   if (result.kind === 'error') return 'error';
   if (result.kind === 'absent') return 'dead';
   const user = result.user;
   if (user.status !== 'active') return 'dead';
+  // Spec 191: the session's brand must be the account's brand, and
+  // the request's brand when one is given. A brand that changed — or
+  // a token minted for the other brand — is dead, never downgraded.
+  const sessionBrand = session.brand ?? 'fbuploadpro';
+  if (sessionBrand !== user.brand) return 'dead';
+  if (requestBrand && sessionBrand !== requestBrand) return 'dead';
   if (user.passwordUpdatedAt && session.iat <= user.passwordUpdatedAt) return 'dead';
   return 'active';
 }
@@ -116,14 +126,20 @@ export function clearSessionCookiesBestEffort(
   // clear anyway — emitting it would be noise, not coverage. With
   // no host information at all, emit best-effort.
   try {
-    const cookieDomain = process.env.COOKIE_DOMAIN?.trim();
+    const brand = resolveBrandFromHost(requestHost);
     const rawRoot = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';
-    const cleanRoot = rawRoot
+    const configuredRoot = rawRoot
       .trim()
       .toLowerCase()
       .replace(/^https?:\/\//, '')
       .split('/')[0]
       ?.split(':')[0] || 'localhost';
+    // Spec 191: the shared-domain clear follows the request's brand.
+    // A COOKIE_DOMAIN set for our brand must never clear a
+    // white-label cookie.
+    const cleanRoot = getBrandTenantRoot(brand, configuredRoot);
+    const cookieDomain =
+      brand === 'nextrise' ? undefined : process.env.COOKIE_DOMAIN?.trim() || undefined;
     const rootIsUsable =
       !cleanRoot.includes('localhost') &&
       !cleanRoot.includes('127.0.0.1') &&

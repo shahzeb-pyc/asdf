@@ -8,6 +8,7 @@
 
 import {
   deriveSubdomainFromEmail,
+  type Brand,
   type UserRole,
   type UserStatus,
 } from '@fbuploadpro/contracts';
@@ -31,6 +32,8 @@ export interface AuthUser {
   subdomain: string;
   role: UserRole;
   status: UserStatus;
+  /** White-label brand the account belongs to (spec 191). */
+  brand: Brand;
   passwordUpdatedAt?: number | undefined;
 }
 
@@ -80,7 +83,7 @@ async function querySupabaseUser(
     const quoted = escapePostgrestFilterValue(canonicalEmail);
     const { data, error } = await supabase
       .from('users')
-      .select('id, email, name, phone, role, status, password_updated_at')
+      .select('id, email, name, phone, role, status, brand, password_updated_at')
       .or(`normalized_email.eq.${quoted},email.ilike.${quoted}`)
       .maybeSingle();
 
@@ -95,9 +98,14 @@ async function querySupabaseUser(
     const passwordUpdatedAt = rawPasswordUpdatedAt
       ? Math.floor(new Date(rawPasswordUpdatedAt).getTime() / 1000)
       : undefined;
+    // The brand column defaults to our brand in the database; a row
+    // without it (pre-migration read) is ours too. Only the literal
+    // 'nextrise' means the white-label brand.
+    const brand: Brand =
+      (data as { brand?: string | null }).brand === 'nextrise' ? 'nextrise' : 'fbuploadpro';
     return {
       kind: 'found',
-      user: { ...(data as object), subdomain, passwordUpdatedAt } as AuthUser,
+      user: { ...(data as object), subdomain, passwordUpdatedAt, brand } as AuthUser,
     };
   } catch (err) {
     logServerError('[Supabase PostgREST] findUserByEmail exception', err, { email: canonicalEmail });

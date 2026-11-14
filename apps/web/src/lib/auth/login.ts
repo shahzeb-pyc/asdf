@@ -8,9 +8,12 @@
 
 import {
   asWorkspaceIdClaim,
+  brandLoginMismatchMessage,
   canonicalizeGmailAddress,
   deriveSubdomainFromEmail,
+  getBrandTenantRoot,
   getSessionSecret,
+  resolveBrandFromHost,
   signSessionToken,
 } from '@fbuploadpro/contracts';
 import { resolveAdminLoginRedirect, sanitizeAuthRedirectUrl } from '@/lib/auth-redirect';
@@ -75,6 +78,7 @@ export async function loginTenantUser(params: {
         subdomain,
         role: 'user',
         status: 'active',
+        brand: 'fbuploadpro',
       };
       try {
         await supabase.from('users').upsert(
@@ -117,6 +121,16 @@ export async function loginTenantUser(params: {
     const error = new Error('Account is suspended');
     (error as unknown as { code: string }).code = 'ACCOUNT_SUSPENDED';
     throw error;
+  }
+
+  // Spec 191: symmetric login separation. The account belongs to one
+  // brand; on the other brand's host it cannot log in. The check sits
+  // AFTER the password check above, so a wrong password still reads
+  // as a wrong password, never as a brand hint. The rejection names
+  // where to log in, nothing else.
+  const requestBrand = resolveBrandFromHost(params.requestHost);
+  if (user.brand !== requestBrand) {
+    throw new Error(brandLoginMismatchMessage(user.brand));
   }
 
   let allowedSubdomains: string[] = [user.subdomain];
@@ -179,6 +193,7 @@ export async function loginTenantUser(params: {
       subdomain: user.subdomain,
       role: user.role,
       status: user.status,
+      brand: user.brand,
       iat: minIat,
       ...(workspaceId ? { workspaceId } : {}),
       allowedSubdomains,
@@ -187,7 +202,10 @@ export async function loginTenantUser(params: {
     86400 * 30 // 30 days matching fbup_session cookie maxAge
   );
 
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';
+  const rootDomain = getBrandTenantRoot(
+    requestBrand,
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000'
+  );
   // Sellers have no workspace: they always land on /seller, never
   // on a workspace URL (their session subdomain is only an
   // email-derived fallback). Any returnUrl is ignored for them.

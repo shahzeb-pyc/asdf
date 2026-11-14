@@ -214,6 +214,7 @@ export async function signUpTenantUser(params: {
       subdomain,
       role: 'user',
       status: 'active',
+      brand: 'fbuploadpro',
     };
 
     // Profile + workspace creation goes through the validated
@@ -266,6 +267,7 @@ export async function signUpTenantUser(params: {
         subdomain: createdRow.subdomain || subdomain,
         role: 'user',
         status: 'active',
+        brand: 'fbuploadpro',
       };
     } catch (insertErr) {
       logServerError('[Supabase PostgREST] User insert exception', insertErr);
@@ -291,6 +293,7 @@ export async function signUpTenantUser(params: {
       subdomain,
       role: 'user',
       status: 'active',
+      brand: 'fbuploadpro',
     };
     localUserStore.set(canonicalEmail, userRecord);
     if (hashedPassword) {
@@ -371,6 +374,7 @@ export async function verifySignupOtpViaSupabase(params: {
         subdomain: metaSubdomain || deriveSubdomainFromEmail(canonicalEmail),
         role: 'user',
         status: 'active',
+        brand: 'fbuploadpro',
       };
     }
     if (userRecord?.status === 'suspended') {
@@ -394,6 +398,7 @@ export async function verifySignupOtpViaSupabase(params: {
         subdomain: rawSubdomain,
         role: 'user',
         status: 'active',
+        brand: 'fbuploadpro',
       };
       localUserStore.set(canonicalEmail, userRecord);
     } else {

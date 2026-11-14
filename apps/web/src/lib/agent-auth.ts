@@ -5,6 +5,7 @@ import {
   getSessionSecret,
   isMuseKeyFormat,
   museKeyPrefix,
+  resolveBrandFromHost,
   verifySessionToken,
   type SessionPayload,
 } from '@fbuploadpro/contracts';
@@ -75,6 +76,7 @@ interface UserRow {
   email: string;
   role: string;
   status: string;
+  brand?: string | null;
 }
 
 async function resolveAgentSession(
@@ -101,7 +103,7 @@ async function resolveAgentSession(
 
   const { data: userRow, error: userError } = await supabase
     .from('users')
-    .select('id, email, role, status')
+    .select('id, email, role, status, brand')
     .eq('id', key.user_id)
     .maybeSingle();
   if (userError || !userRow) return { error: 'unauthorized' };
@@ -134,6 +136,8 @@ async function resolveAgentSession(
     allowedSubdomains: [subdomain.toLowerCase()],
     role: user.role as SessionPayload['role'],
     status: 'active',
+    // Spec 191: an agent key session carries the key owner's brand.
+    brand: user.brand === 'nextrise' ? 'nextrise' : 'fbuploadpro',
     iat: now,
     exp: now + 3600,
   };
@@ -193,6 +197,17 @@ export async function resolveTenantSession(
           ),
         };
       }
+      // Spec 191: a session belongs to one brand. A token minted for
+      // the other brand is not a session on this host.
+      const requestBrand = resolveBrandFromHost(request.headers.get('host'));
+      if ((session.brand ?? 'fbuploadpro') !== requestBrand) {
+        return {
+          errorResponse: NextResponse.json(
+            { error: 'Unauthorized' },
+            { status: 401 }
+          ),
+        };
+      }
       const access = canAccessTenant(session, subdomain);
       if (!access.allowed) {
         return {
@@ -225,7 +240,21 @@ export async function resolveTenantSession(
         subdomain,
         options.dbClient
       );
-      if ('session' in resolved) return resolved;
+      if ('session' in resolved) {
+        // Spec 191: an agent key belongs to the key owner's brand —
+        // a NextRise key cannot open a route on our host, or the
+        // reverse.
+        const requestBrand = resolveBrandFromHost(request.headers.get('host'));
+        if ((resolved.session.brand ?? 'fbuploadpro') !== requestBrand) {
+          return {
+            errorResponse: NextResponse.json(
+              { error: 'Unauthorized' },
+              { status: 401 }
+            ),
+          };
+        }
+        return resolved;
+      }
       if (resolved.error === 'forbidden') {
         return {
           errorResponse: NextResponse.json(
