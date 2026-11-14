@@ -99,7 +99,11 @@ function allLabels(sections: SidebarSections): string[] {
 
 function renderSidebar(
   sections: SidebarSections,
-  opts: { defaultOpen?: boolean; collapsible?: 'offcanvas' | 'icon' | 'none' } = {}
+  opts: {
+    defaultOpen?: boolean;
+    collapsible?: 'offcanvas' | 'icon' | 'none';
+    showGoldActiveBar?: boolean;
+  } = {}
 ) {
   return render(
     <SidebarProvider defaultOpen={opts.defaultOpen ?? true}>
@@ -108,6 +112,7 @@ function renderSidebar(
         headerWord="Studio"
         brandingHref="/seller"
         collapsible={opts.collapsible ?? 'offcanvas'}
+        showGoldActiveBar={opts.showGoldActiveBar}
         footer={<div>footer</div>}
       />
     </SidebarProvider>
@@ -295,6 +300,96 @@ describe('AppSidebar rendering (separation matrix)', () => {
     expect(screen.getByRole('link', { name: 'Refund' }).getAttribute('data-active')).not.toBe(
       'true'
     );
+  });
+});
+
+describe('spec 187 sidebar polish', () => {
+  beforeEach(() => {
+    mockPathname = '/tenant/acme';
+    mockSearch = new URLSearchParams();
+    mockPush.mockClear();
+    mockPrefetch.mockClear();
+    recordedLinkProps.length = 0;
+  });
+
+  it('every billing leaf carries an icon (config and rendered)', () => {
+    const sections = getUserSections('acme', false);
+    const billing = sections.find((s) => s.key === 'billing');
+    expect(billing?.items).toHaveLength(4);
+    for (const item of billing?.items ?? []) {
+      expect(item.kind).toBe('leaf');
+      if (item.kind === 'leaf') expect(item.icon).toBeTruthy();
+    }
+    renderSidebar(sections);
+    for (const label of ['My Plan', 'Purchase', 'Payments', 'Refund']) {
+      const link = screen.getByRole('link', { name: label });
+      expect(link.querySelector('svg')).not.toBeNull();
+    }
+  });
+
+  it('renders the "Billing" group label and "Platforms", never "Platform"', () => {
+    renderSidebar(getUserSections('acme', false));
+    expect(screen.getByText('Billing')).toBeTruthy();
+    expect(screen.getByText('Platforms')).toBeTruthy();
+    expect(screen.queryByText('Platform')).toBeNull();
+    // The Billing label is a static group label, not a collapsible
+    // group button (PR #120 B1 stands).
+    expect(screen.queryByRole('button', { name: /Billing/ })).toBeNull();
+  });
+
+  it('gold active bar renders on the active top-level leaf with the prop on', () => {
+    // Home exact-matches only at its own href (trailing slash);
+    // the real shell normalises the tenant prefix away, so the
+    // test sets the pathname the leaf actually carries.
+    mockPathname = '/tenant/acme/';
+    renderSidebar(getUserSections('acme', false), { showGoldActiveBar: true });
+    const bars = screen.getAllByTestId('sidebar-active-bar');
+    expect(bars).toHaveLength(1);
+    const home = screen.getByRole('link', { name: 'Home' });
+    expect(home).toContainElement(bars[0] as HTMLElement);
+    expect(bars[0]?.className).toContain('bg-brand-gold');
+  });
+
+  it('no gold bar without the prop, and none in seller/admin shells', () => {
+    const first = renderSidebar(getUserSections('acme', false));
+    expect(screen.queryByTestId('sidebar-active-bar')).toBeNull();
+    first.unmount();
+    const second = renderSidebar(SELLER_SECTIONS, { showGoldActiveBar: false });
+    expect(screen.queryByTestId('sidebar-active-bar')).toBeNull();
+    second.unmount();
+    renderSidebar(ADMIN_SECTIONS);
+    expect(screen.queryByTestId('sidebar-active-bar')).toBeNull();
+  });
+
+  it('top-level rows are 40px with medium labels (active semibold) with the prop on', () => {
+    renderSidebar(getUserSections('acme', false), { showGoldActiveBar: true });
+    const home = screen.getByRole('link', { name: 'Home' });
+    expect(home.getAttribute('data-size')).toBe('lg');
+    expect(home.className).toContain('font-medium');
+    expect(home.className).toContain('data-[active=true]:font-semibold');
+    const media = screen.getByRole('link', { name: 'Media Library' });
+    expect(media.getAttribute('data-size')).toBe('lg');
+    expect(media.className).toContain('font-medium');
+    // Group sub-leaves stay 32px: the Facebook Accounts sub-leaf
+    // renders through SidebarMenuSubButton (data-size md).
+    const accounts = screen.getByRole('link', { name: 'Accounts' });
+    expect(accounts.getAttribute('data-size')).toBe('md');
+  });
+
+  it('seller/admin rows stay default-sized and unstyled without the prop', () => {
+    // Token-exact check: the primitive always carries the
+    // data-[active=true]:font-medium variant, so a substring check
+    // would false-positive — only a bare `font-medium` token counts.
+    const hasBaseFontMedium = (el: Element) => el.className.split(/\s+/).includes('font-medium');
+    const { unmount } = renderSidebar(SELLER_SECTIONS);
+    const dashboard = screen.getByRole('link', { name: 'Dashboard' });
+    expect(dashboard.getAttribute('data-size')).toBe('default');
+    expect(hasBaseFontMedium(dashboard)).toBe(false);
+    unmount();
+    renderSidebar(ADMIN_SECTIONS);
+    const approvals = screen.getByRole('link', { name: 'Subscriptions approval' });
+    expect(approvals.getAttribute('data-size')).toBe('default');
+    expect(hasBaseFontMedium(approvals)).toBe(false);
   });
 });
 

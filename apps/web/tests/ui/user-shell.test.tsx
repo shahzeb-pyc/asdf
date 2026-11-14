@@ -129,4 +129,31 @@ describe('UserShell frame', () => {
     expect(screen.queryByRole('link', { name: 'Sellers' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Dashboard' })).toBeNull();
   });
+
+  it('spec 187: UserShell opts into the sidebar polish (gold bar, labels, footer card)', async () => {
+    renderShell();
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: 'Home' })).toBeTruthy();
+    });
+
+    // Home is the active leaf on /tenant/acme: the gold bar renders
+    // in the user shell (the prop is on here, off everywhere else).
+    expect(screen.getByTestId('sidebar-active-bar')).toBeTruthy();
+
+    // Section labels: "Billing" (static, not a group) and "Platforms".
+    expect(screen.getByText('Billing')).toBeTruthy();
+    expect(screen.getByText('Platforms')).toBeTruthy();
+    expect(screen.queryByText('Platform')).toBeNull();
+
+    // Header branding carries the hairline + 57px composition class.
+    const branding = screen.getByTestId('sidebar-branding-link');
+    expect(branding.className).toContain('border-b');
+    expect(branding.className).toContain('py-1');
+
+    // Footer trigger is the bordered 56px account card.
+    const trigger = screen.getByTestId('workspace-switcher-trigger');
+    expect(trigger.className).toContain('h-14');
+    expect(trigger.className).toContain('border');
+    expect(trigger.className).toContain('bg-canvas');
+  });
 });

@@ -69,6 +69,16 @@ export interface AppSidebarProps {
   collapsible?: 'offcanvas' | 'icon' | 'none' | undefined;
   /** Path normalizer for active-state comparison (tenant paths). */
   normalizePath?: ((path: string) => string) | undefined;
+  /**
+   * Spec 187 user-shell-only polish switch (default off). UserShell
+   * passes it on; seller/admin shells do not, so they stay
+   * pixel-identical. When on, top-level rows render 40px
+   * (size="lg") with medium labels (semibold + 3px brand-gold bar
+   * on the left edge when active), and group sub-leaves stay 32px.
+   * The bar is the design-system brand-gold token; the old
+   * Cyber Yellow value is not in the token system, and literals are banned.
+   */
+  showGoldActiveBar?: boolean | undefined;
 }
 
 function ChevronIcon({ open }: Readonly<{ open: boolean }>) {
@@ -113,6 +123,7 @@ function AppSidebarContent({
   footer,
   collapsible = 'offcanvas',
   normalizePath = (path: string) => path,
+  showGoldActiveBar = false,
 }: Readonly<AppSidebarProps>) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -192,10 +203,33 @@ function AppSidebarContent({
         </SidebarMenuSubItem>
       );
     }
+    // Top-level leaf (spec 187, user shell only): 40px rows with
+    // medium labels; the active one is semibold with the brand-gold
+    // bar on its left edge. The bar is an absolute child of the
+    // link, so the button needs `relative`; the active row's extra
+    // left padding clears the bar, as in the mockup.
+    const active = leafActive(leaf);
     return (
       <SidebarMenuItem key={leaf.label}>
-        <SidebarMenuButton asChild isActive={leafActive(leaf)} tooltip={leaf.label}>
+        <SidebarMenuButton
+          asChild
+          isActive={active}
+          tooltip={leaf.label}
+          size={showGoldActiveBar ? 'lg' : undefined}
+          className={
+            showGoldActiveBar
+              ? 'relative font-medium data-[active=true]:font-semibold data-[active=true]:pl-3'
+              : undefined
+          }
+        >
           <Link href={leaf.href} onClick={() => handleLeafClick(leaf.href)}>
+            {showGoldActiveBar && active && (
+              <span
+                aria-hidden="true"
+                data-testid="sidebar-active-bar"
+                className="absolute top-1.5 bottom-1.5 left-0 w-0.75 rounded-full bg-brand-gold"
+              />
+            )}
             {leaf.icon}
             <span>{leaf.label}</span>
           </Link>
@@ -213,6 +247,12 @@ function AppSidebarContent({
           tooltip={group.tooltip ?? group.label}
           isActive={isCollapsed && active}
           aria-expanded={isCollapsed ? undefined : open}
+          size={showGoldActiveBar ? 'lg' : undefined}
+          className={
+            showGoldActiveBar
+              ? 'relative font-medium data-[active=true]:font-semibold data-[active=true]:pl-3'
+              : undefined
+          }
           onClick={() => {
             if (isCollapsed && group.parentHref) {
               handleNavigate(group.parentHref);
@@ -224,6 +264,17 @@ function AppSidebarContent({
             if (group.parentHref) handlePrefetch(group.parentHref);
           }}
         >
+          {/* Spec 187: the bar marks the active section on the parent
+              row too — the sub-leaf below carries bg-active, the
+              parent itself only highlights in icon-collapsed mode,
+              as before. */}
+          {showGoldActiveBar && active && (
+            <span
+              aria-hidden="true"
+              data-testid="sidebar-active-bar"
+              className="absolute top-1.5 bottom-1.5 left-0 w-0.75 rounded-full bg-brand-gold"
+            />
+          )}
           {group.icon}
           <span className="flex-1 truncate">{group.label}</span>
           <ChevronIcon open={open} />

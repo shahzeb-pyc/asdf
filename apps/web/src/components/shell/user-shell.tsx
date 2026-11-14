@@ -111,14 +111,35 @@ export function UserShell({
           brandingHref={buildTenantHref(subdomain, '/', useCleanPaths)}
           collapsible="icon"
           normalizePath={(path: string) => normalizeTenantPath(path, subdomain)}
+          showGoldActiveBar
+          // Spec 187 header (57px + hairline, user shell only): the
+          // default branding class with py-1.5 → py-1 — the brand
+          // text column is ~40px, so 8px header padding + 41px link
+          // (40px text + 1px border) lands the header at ~57px.
+          // border-b is the hairline; -mx-2 bleeds it edge to edge
+          // past the header's p-2, and -mb-2 drops it onto the
+          // header's bottom edge (the negative bottom margin shrinks
+          // the header by the same 8px the border fills).
+          // Radius (rebase onto spec 186): the branding link is a
+          // nav element, so it takes rounded-xs (12px) under the
+          // 12/20/28 ladder — the mockup's 6px (old rounded-sm)
+          // no longer exists as a token step.
+          brandingClassName="flex items-center gap-2 rounded-xs border-b border-line -mx-2 -mb-2 px-2 py-1 outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-link"
           footer={(navigate) => (
-            <WorkspaceStudioFooter
-              subdomain={subdomain}
-              useCleanPaths={useCleanPaths}
-              user={user}
-              workspaceName={workspaceName}
-              onNavigate={navigate}
-            />
+            // Spec 187 footer hairline + 12px padding, user shell
+            // only: the wrapper bleeds edge to edge (-mx-2) and
+            // pulls up over the footer's p-2 (-mt-2) so the border-t
+            // sits on the footer's top edge; pt-3 + pb-1 then put
+            // 12px above and below the 56px card, as in the mockup.
+            <div className="-mx-2 -mt-2 border-t border-line px-2 pt-3 pb-1">
+              <WorkspaceStudioFooter
+                subdomain={subdomain}
+                useCleanPaths={useCleanPaths}
+                user={user}
+                workspaceName={workspaceName}
+                onNavigate={navigate}
+              />
+            </div>
           )}
         />
         <SidebarInset id="tenant-content" tabIndex={-1} className="scroll-mt-11">
