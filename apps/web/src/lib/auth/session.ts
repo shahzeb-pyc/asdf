@@ -54,8 +54,12 @@ export async function validateSessionDetailed(
   // Spec 191: the session's brand must be the account's brand, and
   // the request's brand when one is given. A brand that changed — or
   // a token minted for the other brand — is dead, never downgraded.
+  // A missing brand on either side means our brand (the column is
+  // NOT NULL DEFAULT 'fbuploadpro' and querySupabaseUser normalises
+  // the same way) — never a mismatch on its own.
   const sessionBrand = session.brand ?? 'fbuploadpro';
-  if (sessionBrand !== user.brand) return 'dead';
+  const accountBrand = user.brand ?? 'fbuploadpro';
+  if (sessionBrand !== accountBrand) return 'dead';
   if (requestBrand && sessionBrand !== requestBrand) return 'dead';
   if (user.passwordUpdatedAt && session.iat <= user.passwordUpdatedAt) return 'dead';
   return 'active';
