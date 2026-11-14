@@ -30,16 +30,17 @@ function labels(sections: ReturnType<typeof getUserSections>): string[] {
 }
 
 describe('getUserSections white-label brand (spec 191)', () => {
-  it('drops the Billing section and the Muse leaf on nextrise', () => {
+  it('drops the Billing section on nextrise — but keeps the Muse leaf', () => {
     const sections = getUserSections('student1', true, 'nextrise');
     const sectionLabels = sections.map((s) => s.label ?? s.key);
     expect(sectionLabels).not.toContain('Billing');
-    expect(labels(sections)).not.toContain('Muse Assistant');
+    // Owner reversal 2026-11-15: NextRise students use Muse.
+    expect(labels(sections)).toContain('Muse Assistant');
+    expect(hrefs(sections).some((h) => h.includes('/muse'))).toBe(true);
     expect(labels(sections)).not.toContain('My Plan');
     expect(labels(sections)).not.toContain('Purchase');
     expect(labels(sections)).not.toContain('Payments');
     expect(labels(sections)).not.toContain('Refund');
-    expect(hrefs(sections).some((h) => h.includes('/muse'))).toBe(false);
     expect(hrefs(sections).some((h) => h.includes('/my-plan'))).toBe(false);
     expect(hrefs(sections).some((h) => h.includes('/purchase'))).toBe(false);
   });

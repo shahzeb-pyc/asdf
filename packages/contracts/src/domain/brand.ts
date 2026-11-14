@@ -92,7 +92,8 @@ export function getBrandFlags(brand: Brand): BrandFlags {
       allowSignup: false,
       showBilling: false,
       allowPasswordReset: false,
-      showMuse: false,
+      // Owner reversal 2026-11-15: NextRise students CAN use Muse.
+      showMuse: true,
       showTopbarDaysPill: true,
     };
   }
@@ -157,7 +158,6 @@ const BLOCKED_TENANT_SEGMENTS = new Set([
   'purchase',
   'payments',
   'refund',
-  'muse',
 ]);
 
 /** Remove the leading `/tenant/<subdomain>` prefix from a tenant-form path, if present. */
@@ -193,9 +193,8 @@ export function isWhiteLabelBlockedApiPath(brand: Brand, pathname: string): bool
     return true;
   }
   if (/^\/api\/tenant\/[^/]+\/billing(\/.*)?$/.test(lower)) return true;
-  // The Muse API (keys + activity) must be blocked exactly like billing:
-  // the menu and page are hidden, but without this a white-label student
-  // with a session could still mint a working Muse key by direct call.
-  if (/^\/api\/tenant\/[^/]+\/muse(\/.*)?$/.test(lower)) return true;
+  // Owner reversal 2026-11-15: the Muse API is NOT blocked on the
+  // white-label brand — NextRise students use Muse, keys included.
+  // Billing stays blocked above; signup / password reset above too.
   return false;
 }

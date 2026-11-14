@@ -199,8 +199,9 @@ const DASHBOARD_ICON = svgIcon(
  * buildTenantHref exactly as the old workspace sidebar did (clean
  * paths on the tenant's own host, /tenant/<sub> paths elsewhere).
  *
- * Spec 191: the white-label brand drops the Billing section and the
- * Muse leaf entirely (both are hidden server-side too).
+ * Spec 191: the white-label brand drops the Billing section entirely
+ * (hidden server-side too). Muse stays visible on every brand —
+ * owner reversal 2026-11-15: NextRise students use Muse.
  */
 export function getUserSections(
   subdomain: string,
@@ -211,17 +212,13 @@ export function getUserSections(
 
   const primaryItems: SidebarSections[number]['items'] = [
     { kind: 'leaf', label: 'Home', href: href('/'), icon: HOME_ICON, match: 'exact' },
-    ...(brand === 'nextrise'
-      ? []
-      : [
-          {
-            kind: 'leaf' as const,
-            label: 'Muse Assistant',
-            href: href('/muse'),
-            icon: MUSE_ICON,
-            match: 'prefix' as const,
-          },
-        ]),
+    {
+      kind: 'leaf',
+      label: 'Muse Assistant',
+      href: href('/muse'),
+      icon: MUSE_ICON,
+      match: 'prefix',
+    },
     { kind: 'leaf', label: 'Media Library', href: href('/media'), icon: MEDIA_ICON, match: 'prefix' },
     { kind: 'leaf', label: 'Fdola Studio', href: href('/fdola-studio'), icon: FDOLA_ICON, match: 'prefix' },
     { kind: 'leaf', label: 'Prompt Library', href: href('/prompts'), icon: PROMPTS_ICON, match: 'prefix' },

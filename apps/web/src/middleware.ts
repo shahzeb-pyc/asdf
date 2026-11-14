@@ -491,17 +491,12 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     if (subdomain === 'app' || isApex) {
       const session = await resolveSession(request, sessionSecret, brand);
       // Spec 191: no registration or password reset on the
-      // white-label brand, and the Muse guide does not exist there.
-      // Blocked entry paths go to the login page; the guide 404s.
+      // white-label brand. Blocked entry paths go to the login page.
+      // The Muse guide is served on every brand (owner reversal
+      // 2026-11-15: NextRise students use Muse).
       if (brand === 'nextrise' && isWhiteLabelBlockedAuthPath(brand, pathname)) {
         return applyCspHeaders(
           NextResponse.redirect(new URL('/login', request.url), 307),
-          nonce
-        );
-      }
-      if (brand === 'nextrise' && pathname === '/muse_guide.md') {
-        return applyCspHeaders(
-          NextResponse.rewrite(new URL('/_not-found', request.url)),
           nonce
         );
       }

@@ -71,12 +71,13 @@ describe('getBrandTenantRoot / getBrandGatewayHost', () => {
 });
 
 describe('getBrandFlags', () => {
-  it('hides signup, billing, password reset and Muse on the white-label brand', () => {
+  it('hides signup, billing and password reset on the white-label brand — but Muse stays', () => {
     expect(getBrandFlags('nextrise')).toEqual({
       allowSignup: false,
       showBilling: false,
       allowPasswordReset: false,
-      showMuse: false,
+      // Owner reversal 2026-11-15: NextRise students use Muse.
+      showMuse: true,
       showTopbarDaysPill: true,
     });
   });
@@ -118,16 +119,21 @@ describe('brandLoginMismatchMessage', () => {
 });
 
 describe('isWhiteLabelBlockedTenantPath', () => {
-  it.each(['/billing', '/my-plan', '/purchase', '/payments', '/refund', '/muse'])(
+  it.each(['/billing', '/my-plan', '/purchase', '/payments', '/refund'])(
     'blocks %s on nextrise',
     (path) => {
       expect(isWhiteLabelBlockedTenantPath('nextrise', path)).toBe(true);
     }
   );
 
+  // Owner reversal 2026-11-15: Muse is enabled on the white-label brand.
+  it('does not block /muse on nextrise', () => {
+    expect(isWhiteLabelBlockedTenantPath('nextrise', '/muse')).toBe(false);
+    expect(isWhiteLabelBlockedTenantPath('nextrise', '/tenant/student1/muse')).toBe(false);
+  });
+
   it('blocks the /tenant/<subdomain>/… form too', () => {
     expect(isWhiteLabelBlockedTenantPath('nextrise', '/tenant/student1/billing')).toBe(true);
-    expect(isWhiteLabelBlockedTenantPath('nextrise', '/tenant/student1/muse')).toBe(true);
   });
 
   it('does not block ordinary sections', () => {
@@ -174,15 +180,17 @@ describe('isWhiteLabelBlockedApiPath', () => {
     ).toBe(true);
   });
 
-  it('blocks tenant Muse APIs on nextrise (keys + activity)', () => {
+  // Owner reversal 2026-11-15: the Muse API is open on the
+  // white-label brand, exactly like on ours — students use Muse.
+  it('does not block tenant Muse APIs on nextrise (keys + activity)', () => {
     expect(isWhiteLabelBlockedApiPath('nextrise', '/api/tenant/student1/muse/keys')).toBe(
-      true
+      false
     );
     expect(
       isWhiteLabelBlockedApiPath('nextrise', '/api/tenant/student1/muse/keys/abc-123')
-    ).toBe(true);
+    ).toBe(false);
     expect(isWhiteLabelBlockedApiPath('nextrise', '/api/tenant/student1/muse/activity')).toBe(
-      true
+      false
     );
   });
 

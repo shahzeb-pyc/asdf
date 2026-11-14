@@ -278,16 +278,19 @@ describe('middleware white-label brand (spec 191)', () => {
     }
   });
 
-  it('the Muse guide 404s on the white-label gateway', async () => {
+  // Owner reversal 2026-11-15: the Muse guide is served on the
+  // white-label brand too — students use Muse there.
+  it('the Muse guide serves on the white-label gateway', async () => {
     const response = await middleware(
       requestWithCookie('https://app.nextrisehq.com/muse_guide.md', null)
     );
-    expect(rewriteTarget(response)).toBe('https://app.nextrisehq.com/_not-found');
+    expect(response.status).toBe(200);
+    expect(rewriteTarget(response)).toBeNull();
   });
 
-  it('billing and Muse pages 404 on a white-label tenant host, even authenticated', async () => {
+  it('billing pages 404 on a white-label tenant host, even authenticated', async () => {
     const token = await brandToken('nextrise');
-    for (const path of ['/billing', '/my-plan', '/purchase', '/payments', '/refund', '/muse']) {
+    for (const path of ['/billing', '/my-plan', '/purchase', '/payments', '/refund']) {
       const response = await middleware(
         requestWithCookie(`https://student1.app.nextrisehq.com${path}`, token)
       );
@@ -295,6 +298,16 @@ describe('middleware white-label brand (spec 191)', () => {
         `https://student1.app.nextrisehq.com/_not-found`
       );
     }
+  });
+
+  it('the Muse page passes through on a white-label tenant host, even authenticated', async () => {
+    const token = await brandToken('nextrise');
+    const response = await middleware(
+      requestWithCookie('https://student1.app.nextrisehq.com/muse', token)
+    );
+    expect(rewriteTarget(response)).toBe(
+      'https://student1.app.nextrisehq.com/tenant/student1/muse'
+    );
   });
 
   it('billing 404s on the white-label gateway in tenant form too', async () => {
@@ -315,7 +328,7 @@ describe('middleware white-label brand (spec 191)', () => {
     );
   });
 
-  it('signup, password-reset, billing and Muse APIs 404 on the white-label brand', async () => {
+  it('signup, password-reset and billing APIs 404 on the white-label brand', async () => {
     for (const path of [
       '/api/auth/signup',
       '/api/auth/signup/verify-otp',
@@ -323,6 +336,19 @@ describe('middleware white-label brand (spec 191)', () => {
       '/api/auth/reset-password',
       '/api/tenant/student1/billing',
       '/api/tenant/student1/billing/payments',
+    ]) {
+      const response = await middleware(
+        requestWithCookie(`https://app.nextrisehq.com${path}`, null)
+      );
+      expect(response.status).toBe(404);
+    }
+  });
+
+  // Owner reversal 2026-11-15: the Muse API is open on the
+  // white-label brand — a 404 here would mean students cannot
+  // mint keys, which is exactly the old (reversed) behaviour.
+  it('Muse APIs pass through on the white-label brand', async () => {
+    for (const path of [
       '/api/tenant/student1/muse/keys',
       '/api/tenant/student1/muse/keys/abc-123',
       '/api/tenant/student1/muse/activity',
@@ -330,7 +356,7 @@ describe('middleware white-label brand (spec 191)', () => {
       const response = await middleware(
         requestWithCookie(`https://app.nextrisehq.com${path}`, null)
       );
-      expect(response.status).toBe(404);
+      expect(response.status).not.toBe(404);
     }
   });
 

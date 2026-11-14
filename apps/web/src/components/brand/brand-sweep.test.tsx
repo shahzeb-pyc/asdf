@@ -10,6 +10,8 @@ import { AuthSplitLayout } from '@/components/auth/auth-split-layout';
 import { LoginShowcasePanel } from '@/components/auth/login-showcase-panel';
 import { TopbarPlanPill } from '@/components/shell/topbar-plan-pill';
 import { getUserSections } from '@/components/shell/sidebar-sections';
+import { MusePage } from '@/components/muse/muse-page';
+import { MuseConnectDialog } from '@/components/muse/muse-connect-dialog';
 import { PrivacyPolicyContent } from '@/components/privacy/privacy-policy-content';
 import { getConnectSuccessCopy } from '@/app/connect/facebook/success/page';
 import { getInstagramConnectSuccessCopy } from '@/app/connect/instagram/success/page';
@@ -144,5 +146,51 @@ describe('brand sweep (spec 191)', () => {
   it('negative control: connect copy still names FBUploadPro with the default brand', () => {
     const fb = getConnectSuccessCopy({ accountName: 'Amina' });
     expect(fb.description).toContain('FBUploadPro dashboard');
+  });
+
+  it('Muse page renders NextRise, never FBUploadPro, on nextrise', () => {
+    const { container } = render(
+      <BrandProvider brand="nextrise">
+        <MusePage subdomain="student1" />
+      </BrandProvider>
+    );
+    expect(container.textContent).toContain('NextRise Digital');
+    expect(container.textContent).toContain('Sign in to NextRise Digital in my browser');
+    expect(container.textContent).not.toContain('FBUploadPro');
+  });
+
+  it('negative control: Muse page renders FBUploadPro on our brand', () => {
+    const { container } = render(
+      <BrandProvider brand="fbuploadpro">
+        <MusePage subdomain="student1" />
+      </BrandProvider>
+    );
+    expect(container.textContent).toContain('FBUploadPro');
+    expect(container.textContent).toContain('Sign in to FBUploadPro in my browser');
+  });
+
+  it('Connect Muse dialogue names NextRise with its guide address, never FBUploadPro, on nextrise', () => {
+    render(
+      <BrandProvider brand="nextrise">
+        <MuseConnectDialog subdomain="student1" open onOpenChange={() => {}} />
+      </BrandProvider>
+    );
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('Connect to my NextRise Digital account');
+    expect(text).toContain('https://app.nextrisehq.com/muse_guide.md');
+    expect(text).toContain('your NextRise Digital sign-in');
+    expect(text).not.toContain('FBUploadPro');
+    expect(text).not.toContain('app.fbuploadpro.com');
+  });
+
+  it('negative control: Connect Muse dialogue names FBUploadPro on our brand', () => {
+    render(
+      <BrandProvider brand="fbuploadpro">
+        <MuseConnectDialog subdomain="student1" open onOpenChange={() => {}} />
+      </BrandProvider>
+    );
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('Connect to my FBUploadPro account');
+    expect(text).toContain('https://app.fbuploadpro.com/muse_guide.md');
   });
 });
