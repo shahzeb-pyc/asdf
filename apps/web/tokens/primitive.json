@@ -536,7 +536,7 @@
         "$type": "duration",
         "$value": {
           "unit": "ms",
-          "value": 150
+          "value": 300
         }
       },
       "fast": {
@@ -544,7 +544,7 @@
         "$type": "duration",
         "$value": {
           "unit": "ms",
-          "value": 100
+          "value": 200
         }
       },
       "slow": {
@@ -552,7 +552,7 @@
         "$type": "duration",
         "$value": {
           "unit": "ms",
-          "value": 200
+          "value": 420
         }
       },
       "slower": {
@@ -560,7 +560,7 @@
         "$type": "duration",
         "$value": {
           "unit": "ms",
-          "value": 300
+          "value": 520
         }
       }
     },
@@ -569,9 +569,9 @@
         "$description": "Decelerate — entrances",
         "$type": "cubicBezier",
         "$value": [
-          0,
-          0,
-          0.2,
+          0.34,
+          1.4,
+          0.64,
           1
         ]
       },
@@ -597,9 +597,9 @@
       "standard": {
         "$type": "cubicBezier",
         "$value": [
-          0.4,
-          0,
-          0.2,
+          0.34,
+          1.4,
+          0.64,
           1
         ]
       }
