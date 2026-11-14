@@ -133,6 +133,45 @@ describe('TikTok list', () => {
     expect(screen.queryByText('Queued')).toBeNull();
   });
 
+  it('renders the 56px avatar and title-scale name (spec 189)', async () => {
+    apiGetMock.mockResolvedValue({
+      mirrors: [mirrorView({ targetAvatarUrl: 'https://example.com/avatar.jpg' })],
+      total: 1,
+      page: 1,
+      limit: 30,
+      totalPages: 1,
+    });
+    renderWithQuery(<TikTokShell subdomain="acme" />);
+    expect(await screen.findByTestId('tiktok-mirrors-grid')).toBeTruthy();
+    const img = screen.getByTestId('tiktok-mirror-page-avatar-img');
+    expect(img.getAttribute('width')).toBe('56');
+    expect(img.getAttribute('height')).toBe('56');
+    expect(img.className).toContain('size-14');
+    const name = screen.getByTestId('tiktok-mirror-page-name');
+    expect(name.className).toContain('text-lg');
+    expect(name.className).toContain('font-bold');
+    expect(name.className).toContain('leading-heading');
+    // The top row vertically centres the identity against the
+    // bigger avatar (name's grandparent is the top-row flex).
+    expect(name.parentElement?.parentElement?.className).toContain('items-center');
+  });
+
+  it('renders 56px initials at title scale when the page has no avatar (spec 189)', async () => {
+    apiGetMock.mockResolvedValue({
+      mirrors: [mirrorView()],
+      total: 1,
+      page: 1,
+      limit: 30,
+      totalPages: 1,
+    });
+    renderWithQuery(<TikTokShell subdomain="acme" />);
+    expect(await screen.findByTestId('tiktok-mirrors-grid')).toBeTruthy();
+    const initials = screen.getByTestId('tiktok-mirror-page-avatar-initials');
+    expect(initials.className).toContain('size-14');
+    expect(initials.className).toContain('text-xl');
+    expect(screen.queryByTestId('tiktok-mirror-page-avatar-img')).toBeNull();
+  });
+
   it('renders the empty state when there are no mirrors', async () => {
     apiGetMock.mockResolvedValue({
       mirrors: [],
