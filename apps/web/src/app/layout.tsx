@@ -6,7 +6,7 @@ import { NEXTRISE_DISPLAY_NAME, NEXTRISE_LOGO_PATH } from '@fbuploadpro/contract
 import { DesktopTitleBar } from '@/components/desktop';
 import { DeferredWhatsAppSupportButton } from '@/components/support/deferred-whatsapp-support-button';
 import { BrandProvider } from '@/components/brand';
-import { getRequestBrand } from '@/lib/brand';
+import { getRequestBrand } from '@/lib/brand-server';
 import { Analytics } from '@vercel/analytics/next';
 import { PostHogProvider } from '@/components/posthog-provider';
 import { fontSansClassName } from './fonts';

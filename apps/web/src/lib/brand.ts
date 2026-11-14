@@ -1,4 +1,3 @@
-import { headers } from 'next/headers';
 import {
   NEXTRISE_BRAND_CONFIG,
   getBrandFlags,
@@ -16,23 +15,15 @@ import { buildWhatsAppSupportUrl, DEFAULT_WHATSAPP_SUPPORT_MESSAGE } from './wha
  *
  * The brand comes from the request host, never from a cookie, a query
  * string, or user input. Our brand is the fail-safe default.
+ *
+ * This module is safe to import from client components: it never
+ * imports `next/headers` (that lives in `lib/brand-server.ts`, used
+ * only by the root layout's server code — importing it here would
+ * break the production build, because `next/headers` is server-only).
  */
 
 export function getConfiguredRootDomain(): string {
   return process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';
-}
-
-/** Brand of the current request, from the host header. */
-export async function getRequestBrand(): Promise<Brand> {
-  // Outside a request scope (tests, static generation) headers()
-  // throws — fall back to our brand, the same default the provider uses.
-  let host: string | null = null;
-  try {
-    host = (await headers()).get('host');
-  } catch {
-    host = null;
-  }
-  return resolveBrandFromHost(host);
 }
 
 /** Brand of a request-like object (middleware / route handlers). */

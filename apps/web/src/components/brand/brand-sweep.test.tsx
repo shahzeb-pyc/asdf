@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { render, screen } from '@testing-library/react';
 import { ZERO_PLATFORM_COUNTS, type EntitlementResponse } from '@fbuploadpro/contracts';
 import { BrandProvider } from '@/components/brand';
@@ -64,6 +66,14 @@ function sectionLabels(): string[] {
 }
 
 describe('brand sweep (spec 191)', () => {
+  it('lib/brand.ts stays client-safe: it never imports next/headers', () => {
+    // The production build fails when a client-imported module pulls
+    // in next/headers (server-only). The headers() read lives in
+    // lib/brand-server.ts, imported only by the root layout.
+    const source = readFileSync(path.resolve(process.cwd(), 'src/lib/brand.ts'), 'utf8');
+    expect(source).not.toContain('next/headers');
+  });
+
   it('BrandLogo renders NextRise, never FBUploadPro, on nextrise', () => {
     const { container } = render(<BrandLogo brand="nextrise" />);
     expect(container.textContent).toContain('NextRise');
