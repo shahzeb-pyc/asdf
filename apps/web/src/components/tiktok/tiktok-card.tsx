@@ -173,15 +173,15 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
         highlighted ? 'border-link ring-2 ring-link/40' : 'border-line hover:border-brand-emerald/40'
       )}
     >
-      <div className="flex items-start gap-4">
+      <div className="flex items-center gap-4">
         {showAvatarImg ? (
           <Image
             src={mirror.targetAvatarUrl!}
             alt=""
-            width={42}
-            height={42}
+            width={56}
+            height={56}
             data-testid="tiktok-mirror-page-avatar-img"
-            className={cn('size-10.5 shrink-0 rounded-full object-cover', ringClass)}
+            className={cn('size-14 shrink-0 rounded-full object-cover', ringClass)}
             unoptimized
           />
         ) : (
@@ -189,7 +189,7 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
             aria-hidden
             data-testid="tiktok-mirror-page-avatar-initials"
             className={cn(
-              'flex size-10.5 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-ink',
+              'flex size-14 shrink-0 items-center justify-center rounded-full bg-subtle text-xl font-bold text-ink',
               ringClass
             )}
           >
@@ -197,7 +197,7 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <p data-testid="tiktok-mirror-page-name" className="truncate text-body font-semibold text-ink">
+          <p data-testid="tiktok-mirror-page-name" className="truncate text-lg font-bold leading-heading text-ink">
             {mirror.targetDisplayName}
           </p>
           {addedDate ? (
