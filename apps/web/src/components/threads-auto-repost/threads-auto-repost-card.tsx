@@ -56,7 +56,7 @@ export function ThreadsAutoRepostCard({ mirror, onSelect, highlighted }: Readonl
       data-testid={`threads-mirror-card-${mirror.id}`}
       onClick={() => onSelect?.(mirror)}
       className={cn(
-        'w-full rounded-md border border-line bg-panel p-4 text-left shadow-sm transition-colors hover:border-brand-gold/60',
+        'w-full rounded-md border border-line bg-panel p-4 text-left shadow-card transition-colors hover:border-brand-gold/60',
         highlighted && 'border-brand-gold'
       )}
     >
