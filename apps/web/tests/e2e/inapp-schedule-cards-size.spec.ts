@@ -125,11 +125,16 @@ for (const viewport of [
       // Recorded for the before/after comparison against main.
       console.log(`inapp-schedule-cards ${viewport.name}: ${JSON.stringify(boxes)}`);
       // Same grid cell: identical widths, and identical heights for
-      // identical-structure cards.
+      // identical-structure cards. Heights are compared within 1px:
+      // getBoundingClientRect returns fractional values and the
+      // layout rounds them per card, so two truly identical cards
+      // can differ by ~0.0001px — exact float equality is noise,
+      // not a size difference. A real size change moves by a pixel
+      // or more, which this still catches.
       expect(boxes['a2222222-2222-4222-8222-222222222222'].width).toBe(boxes['a1111111-1111-4111-8111-111111111111'].width);
       expect(boxes['a3333333-3333-4333-8333-333333333333'].width).toBe(boxes['a1111111-1111-4111-8111-111111111111'].width);
-      expect(boxes['a2222222-2222-4222-8222-222222222222'].height).toBe(boxes['a1111111-1111-4111-8111-111111111111'].height);
-      expect(boxes['a3333333-3333-4333-8333-333333333333'].height).toBe(boxes['a1111111-1111-4111-8111-111111111111'].height);
+      expect(Math.abs(boxes['a2222222-2222-4222-8222-222222222222'].height - boxes['a1111111-1111-4111-8111-111111111111'].height)).toBeLessThan(1);
+      expect(Math.abs(boxes['a3333333-3333-4333-8333-333333333333'].height - boxes['a1111111-1111-4111-8111-111111111111'].height)).toBeLessThan(1);
 
       // The avatar is the 56px one with the title-scale name.
       const card1 = page.getByTestId('page-card-a1111111-1111-4111-8111-111111111111');
@@ -146,7 +151,9 @@ for (const viewport of [
           const style = getComputedStyle(el);
           return { fontSize: style.fontSize, fontWeight: style.fontWeight };
         });
-      expect(nameStyle.fontSize).toBe('16.25px');
+      expect(nameStyle.fontSize).toBe('17.5px'); // text-lg token: 17.5px
+      // ("16.25px x 14/13", spec 178 re-pinned body 13px -> 14px;
+      // the ADU spec's 16.25px figure predates that re-pin).
       expect(nameStyle.fontWeight).toBe('700');
 
       if (viewport.name === 'phone') {
