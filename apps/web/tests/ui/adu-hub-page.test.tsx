@@ -704,11 +704,13 @@ describe('AduHubPage list cards (Pages-section structure)', () => {
     const row = screen.getByTestId('adu-page-pending-counts');
     expect(row.className).toContain('divide-x');
     expect(row.className).toContain('divide-line');
-    // The Today line sits behind its own divider as the footer's
-    // subtle strip (the divider group is its previous sibling).
+    // The Today line is the footer's subtle strip: its own
+    // border-top is the divider (fix round: a standalone divider
+    // group stacked on the line's margin and grew the card 13px).
     const today = screen.getByTestId('adu-page-today-line');
-    const dividerGroup = today.previousElementSibling as HTMLElement | null;
-    expect(dividerGroup?.firstElementChild?.className).toContain('border-t');
+    expect(today.className).toContain('border-t');
+    expect(today.className).toContain('border-line');
+    expect(today.className).toContain('pt-2.5');
   });
 
   it('shows ADU totals with signal colours in Posted / Pending / Failed order', async () => {

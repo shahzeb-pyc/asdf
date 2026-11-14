@@ -620,15 +620,16 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
         </span>
       </div>
 
-      {/* Divider + ADU-specific Today line as the footer's subtle
-          strip: centred, muted, with nonzero counts in dark
-          semibold and zeros muted. */}
-      <div aria-hidden className="pt-3">
-        <div className="border-t border-line" />
-      </div>
+      {/* ADU-specific Today line as the footer's subtle strip: the
+          divider is its own border-top (1px), not a standalone
+          divider group — the group stacked 12px of padding on top
+          of this line's margin and grew every card 13px (SEND BACK
+          on #262). The gap above the text is the same 12px the
+          undivided line had (mt-px 1px + 1px border + pt-2.5 10px),
+          so the card keeps its baseline height. */}
       <p
         data-testid="adu-page-today-line"
-        className="mt-3 text-center text-body text-ink-sub"
+        className="mt-px border-t border-line pt-2.5 text-center text-body text-ink-sub"
       >
         Today: Pending{' '}
         <span className={config.pendingToday > 0 ? 'font-semibold text-ink' : undefined}>

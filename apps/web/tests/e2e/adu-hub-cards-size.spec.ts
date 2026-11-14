@@ -18,6 +18,13 @@
  * main first to capture the baseline numbers, then against the
  * branch — the widths and column counts must match, and the three
  * cards must share one box height (identical fixture structure).
+ *
+ * Fix round (SEND BACK on #262): the first version asserted only
+ * within-branch uniformity, so it passed while every card had grown
+ * 13px — the Today divider group stacked on the line's margin. The
+ * baseline box heights are now encoded as constants below, so a
+ * height change vs main fails loudly here instead of needing a
+ * manual console.log comparison.
  */
 import { test, expect } from '@playwright/test';
 import { createFixtureState, installApiFixtures } from './fixtures/api';
@@ -108,6 +115,16 @@ const CONFIGS = [
 ];
 
 /** Serves the ADU hub list + stats endpoints for this spec. */
+
+/**
+ * Recorded card box heights on main (56ad14da), same fixtures,
+ * both viewports: desktop 314.66 × 317.875, phone 342 × 317.875.
+ * Any redesign that moves a card's height off this baseline fails
+ * here — the three cards sharing a wrong height is not a pass.
+ */
+const BASELINE_CARD_HEIGHT = 317.875;
+/** Baseline gap, counts-grid bottom to Today text top (mt-3). */
+const BASELINE_TODAY_GAP = 12;
 async function installAduHubFixtures(page: import('@playwright/test').Page) {
   await page.route(
     (url) => url.pathname === `/api/tenant/${TENANT.subdomain}/auto-download-upload`,
@@ -178,6 +195,12 @@ for (const viewport of [
       expect(within1px(boxes['cfg-3'].width, boxes['cfg-1'].width)).toBe(true);
       expect(within1px(boxes['cfg-2'].height, boxes['cfg-1'].height)).toBe(true);
       expect(within1px(boxes['cfg-3'].height, boxes['cfg-1'].height)).toBe(true);
+      // Baseline height, not just uniformity: a change that grows
+      // (or shrinks) every card together must fail here — this is
+      // what let the +13px Today divider group through in round 1.
+      for (const id of ['cfg-1', 'cfg-2', 'cfg-3'] as const) {
+        expect(within1px(boxes[id].height, BASELINE_CARD_HEIGHT)).toBe(true);
+      }
 
       // The counts strip reads Posted / Pending / Failed, and the
       // avatar is the 56px one with the title-scale name.
@@ -209,6 +232,39 @@ for (const viewport of [
       );
       expect(nameStyle.fontSize).toBe(lgToken);
       expect(nameStyle.fontWeight).toBe('700');
+
+      // The Today footer strip's divider is the Today line's own
+      // 1px border-top — it must contribute ≤1px, and the gap from
+      // the counts grid's bottom to the Today text must stay the
+      // baseline 12px. A standalone divider group (pt-3 + border
+      // stacked on the line's margin) is what grew the card 13px.
+      const today = card1.getByTestId('adu-page-today-line');
+      const todayStrip = await today.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return {
+          borderTopWidth: style.borderTopWidth,
+          borderTopStyle: style.borderTopStyle,
+          paddingTop: parseFloat(style.paddingTop),
+        };
+      });
+      expect(todayStrip.borderTopWidth).toBe('1px');
+      expect(todayStrip.borderTopStyle).toBe('solid');
+      const todayGap = await page.evaluate(() => {
+        const countsEl = document.querySelector(
+          '[data-testid="adu-page-pending-counts"]'
+        )!;
+        const todayEl = document.querySelector(
+          '[data-testid="adu-page-today-line"]'
+        )!;
+        const countsBottom = countsEl.getBoundingClientRect().bottom;
+        const style = getComputedStyle(todayEl);
+        const textTop =
+          todayEl.getBoundingClientRect().top +
+          parseFloat(style.borderTopWidth) +
+          parseFloat(style.paddingTop);
+        return textTop - countsBottom;
+      });
+      expect(within1px(todayGap, BASELINE_TODAY_GAP)).toBe(true);
 
       if (viewport.name === 'phone') {
         const overflow = await page.evaluate(
