@@ -75,8 +75,8 @@ export interface AppSidebarProps {
    * pixel-identical. When on, top-level rows render 40px
    * (size="lg") with medium labels (semibold + 3px brand-gold bar
    * on the left edge when active), and group sub-leaves stay 32px.
-   * The bar is the design-system brand-gold token (#FFFC00):
-   * the token system holds no #FFD300, and literals are banned.
+   * The bar is the design-system brand-gold token; the old
+   * Cyber Yellow value is not in the token system, and literals are banned.
    */
   showGoldActiveBar?: boolean | undefined;
 }
