@@ -129,9 +129,12 @@ describe('motion scale (spec 185 — Expressive)', () => {
  * inventing a token is forbidden — so the entrance duration is literal
  * in the single `--animate-page-enter` token in globals.css, cited to
  * the pick, with the spring easing as a pure var() reference to the
- * enter token. Fill is `backwards`, not the mock's `both`: `both`
- * would retain the final keyframe (translateY(0)) forever and pin the
- * transform, blocking the hover lift on the same cards.
+ * enter token. Fill is `backwards`, not the mock's `both`: `both` would
+ * retain the final keyframe (translateY(0)) as the computed transform
+ * after the animation ends. The hover lift uses the separate `translate`
+ * property, so it would still compose — but `backwards` applies the
+ * `from` state only before the animation starts and releases the element
+ * entirely after 380ms, leaving no animation fill lingering on the card.
  */
 
 /** [component source file, class fragment it must carry]. */
@@ -175,6 +178,18 @@ const SURFACES: Array<[string, string]> = [
   [
     'src/components/prompts/prompt-card-grid.tsx',
     'animate-page-enter transition-all duration-fast ease-enter',
+  ],
+  // Dialogs: menus & dialogs take base (300ms) with the spring easing.
+  // (Fix round: the Dialog/AlertDialog content carried duration-base
+  // with no ease class, so it transitioned at the browser-default
+  // `ease` — the spring token never resolved there.)
+  [
+    'src/components/shared/ui/dialog.tsx',
+    'shadow-modal duration-base ease-enter',
+  ],
+  [
+    'src/components/shared/ui/alert-dialog.tsx',
+    'shadow-modal duration-base ease-enter',
   ],
   // Shadow-only card: timing pinned, entrance carried.
   [

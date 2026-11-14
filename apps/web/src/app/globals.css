@@ -222,10 +222,12 @@
      forbidden, so the value lives only in this one animation token.
      The easing is the spring token (pure var() reference). Fill is
      `backwards`, not the mock's `both`: `both` would retain the final
-     keyframe (translateY(0)) forever and pin the transform, blocking
-     the hover lift on the same cards. `backwards` gives the identical
-     visible entrance and releases the element after 380ms, so hover
-     lift works. Reduced motion collapses it via the base-layer block
+     keyframe (translateY(0)) as the computed transform after the
+     animation ends. The hover lift uses the separate `translate`
+     property, so it would still compose — but `backwards` applies the
+     `from` state only before the animation starts and releases the
+     element entirely after 380ms, leaving no animation fill lingering
+     on the card. Reduced motion collapses it via the base-layer block
      below (spec 142, F12), like every other animation. */
   --animate-page-enter: page-enter 380ms var(--motion-easing-enter) backwards;
 }
