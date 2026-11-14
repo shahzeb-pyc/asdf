@@ -201,3 +201,157 @@ describe('middleware API hot path (spec 152 O5)', () => {
     );
   });
 });
+
+describe('middleware white-label brand (spec 191)', () => {
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', 'fbuploadpro.com');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  async function brandToken(
+    brand: 'fbuploadpro' | 'nextrise',
+    subdomain = 'student1'
+  ): Promise<string> {
+    return signSessionToken(
+      {
+        userId: '11111111-1111-4111-8111-111111111111',
+        email: 'owneruser@gmail.com',
+        subdomain,
+        role: 'user',
+        status: 'active',
+        brand,
+      },
+      DEV_SECRET
+    );
+  }
+
+  function rewriteTarget(response: Response): string | null {
+    return response.headers.get('x-middleware-rewrite');
+  }
+
+  it('a NextRise session on the white-label gateway goes to its white-label tenant home', async () => {
+    const token = await brandToken('nextrise');
+    const response = await middleware(
+      requestWithCookie('https://app.nextrisehq.com/login', token)
+    );
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe('https://student1.app.nextrisehq.com/');
+  });
+
+  it('a NextRise session on OUR gateway is not a session there — login renders, no workspace redirect', async () => {
+    const token = await brandToken('nextrise');
+    const response = await middleware(
+      requestWithCookie('https://app.fbuploadpro.com/login', token)
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('our session on the white-label gateway is not a session there — login renders, no workspace redirect', async () => {
+    const token = await brandToken('fbuploadpro');
+    const response = await middleware(
+      requestWithCookie('https://app.nextrisehq.com/login', token)
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('a pre-brand token (no claim) is our brand and is not a session on the white-label gateway', async () => {
+    const token = await validSessionToken();
+    const response = await middleware(
+      requestWithCookie('https://app.nextrisehq.com/login', token)
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('signup and forgot-password on the white-label gateway redirect to login', async () => {
+    for (const path of ['/signup', '/forgot-password', '/reset-password', '/verify-otp']) {
+      const response = await middleware(
+        requestWithCookie(`https://app.nextrisehq.com${path}`, null)
+      );
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe('https://app.nextrisehq.com/login');
+    }
+  });
+
+  it('the Muse guide 404s on the white-label gateway', async () => {
+    const response = await middleware(
+      requestWithCookie('https://app.nextrisehq.com/muse_guide.md', null)
+    );
+    expect(rewriteTarget(response)).toBe('https://app.nextrisehq.com/_not-found');
+  });
+
+  it('billing and Muse pages 404 on a white-label tenant host, even authenticated', async () => {
+    const token = await brandToken('nextrise');
+    for (const path of ['/billing', '/my-plan', '/purchase', '/payments', '/refund', '/muse']) {
+      const response = await middleware(
+        requestWithCookie(`https://student1.app.nextrisehq.com${path}`, token)
+      );
+      expect(rewriteTarget(response)).toBe(
+        `https://student1.app.nextrisehq.com/_not-found`
+      );
+    }
+  });
+
+  it('billing 404s on the white-label gateway in tenant form too', async () => {
+    const token = await brandToken('nextrise');
+    const response = await middleware(
+      requestWithCookie('https://app.nextrisehq.com/tenant/student1/billing', token)
+    );
+    expect(rewriteTarget(response)).toBe('https://app.nextrisehq.com/_not-found');
+  });
+
+  it('an ordinary section still rewrites to the tenant path on a white-label tenant host', async () => {
+    const token = await brandToken('nextrise');
+    const response = await middleware(
+      requestWithCookie('https://student1.app.nextrisehq.com/schedule', token)
+    );
+    expect(rewriteTarget(response)).toBe(
+      'https://student1.app.nextrisehq.com/tenant/student1/schedule'
+    );
+  });
+
+  it('signup, password-reset and billing APIs 404 on the white-label brand', async () => {
+    for (const path of [
+      '/api/auth/signup',
+      '/api/auth/signup/verify-otp',
+      '/api/auth/forgot-password',
+      '/api/auth/reset-password',
+      '/api/tenant/student1/billing',
+      '/api/tenant/student1/billing/payments',
+    ]) {
+      const response = await middleware(
+        requestWithCookie(`https://app.nextrisehq.com${path}`, null)
+      );
+      expect(response.status).toBe(404);
+    }
+  });
+
+  it('login and session APIs still pass through on the white-label brand', async () => {
+    for (const path of ['/api/auth/login', '/api/auth/session', '/api/auth/logout']) {
+      const response = await middleware(
+        requestWithCookie(`https://app.nextrisehq.com${path}`, null)
+      );
+      expect(response.status).not.toBe(404);
+      expect(response.headers.get('location')).toBeNull();
+    }
+  });
+
+  it('negative control: signup renders and billing rewrites on OUR brand', async () => {
+    const signup = await middleware(
+      requestWithCookie('https://app.fbuploadpro.com/signup', null)
+    );
+    expect(signup.status).toBe(200);
+    expect(signup.headers.get('location')).toBeNull();
+
+    const token = await brandToken('fbuploadpro', 'acme');
+    const billing = await middleware(
+      requestWithCookie('https://acme.fbuploadpro.com/billing', token)
+    );
+    expect(rewriteTarget(billing)).toBe('https://acme.fbuploadpro.com/tenant/acme/billing');
+  });
+});

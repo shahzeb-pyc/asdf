@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { BrandSchema } from './brand';
+import { BrandSchema } from './brand.js';
 
 export const RESERVED_SUBDOMAINS = [
   'admin',

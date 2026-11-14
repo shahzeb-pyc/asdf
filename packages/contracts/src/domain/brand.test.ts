@@ -10,7 +10,7 @@ import {
   isWhiteLabelBlockedAuthPath,
   isWhiteLabelBlockedTenantPath,
   resolveBrandFromHost,
-} from './brand';
+} from './brand.js';
 
 describe('resolveBrandFromHost', () => {
   it('maps the white-label gateway host to nextrise', () => {

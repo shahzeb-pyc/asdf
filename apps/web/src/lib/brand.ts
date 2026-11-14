@@ -1,0 +1,74 @@
+import { headers } from 'next/headers';
+import {
+  NEXTRISE_BRAND_CONFIG,
+  getBrandFlags,
+  getBrandGatewayHost,
+  getBrandTenantRoot,
+  resolveBrandFromHost,
+  type Brand,
+  type BrandConfig,
+  type BrandFlags,
+} from '@fbuploadpro/contracts';
+import { buildWhatsAppSupportUrl, DEFAULT_WHATSAPP_SUPPORT_MESSAGE } from './whatsapp';
+
+/**
+ * Brand resolution for the web app (spec 191).
+ *
+ * The brand comes from the request host, never from a cookie, a query
+ * string, or user input. Our brand is the fail-safe default.
+ */
+
+export function getConfiguredRootDomain(): string {
+  return process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';
+}
+
+/** Brand of the current request, from the host header. */
+export async function getRequestBrand(): Promise<Brand> {
+  const host = (await headers()).get('host');
+  return resolveBrandFromHost(host);
+}
+
+/** Brand of a request-like object (middleware / route handlers). */
+export function getRequestBrandFromHost(host: string | null | undefined): Brand {
+  return resolveBrandFromHost(host);
+}
+
+/** Tenant-host suffix for a brand, from the configured root. */
+export function getRequestBrandTenantRoot(brand: Brand): string {
+  return getBrandTenantRoot(brand, getConfiguredRootDomain());
+}
+
+/** Gateway host (the app's front door) for a brand. */
+export function getRequestBrandGatewayHost(brand: Brand): string {
+  return getBrandGatewayHost(brand, getConfiguredRootDomain());
+}
+
+export function getBrandFlagsFor(brand: Brand): BrandFlags {
+  return getBrandFlags(brand);
+}
+
+/**
+ * Full display configuration for a brand. Our brand's WhatsApp number
+ * still comes from the environment (as before); the white-label brand
+ * uses its published number.
+ */
+export function getBrandConfig(brand: Brand): BrandConfig {
+  if (brand === 'nextrise') {
+    return NEXTRISE_BRAND_CONFIG;
+  }
+  return {
+    brand: 'fbuploadpro',
+    displayName: 'FBUploadPro',
+    shortName: 'FBUploadPro',
+    logoPath: null,
+    whatsappNumber: process.env.NEXT_PUBLIC_WHATSAPP_SUPPORT_NUMBER ?? '',
+    whatsappMessage: DEFAULT_WHATSAPP_SUPPORT_MESSAGE,
+    ...getBrandFlags('fbuploadpro'),
+  };
+}
+
+/** WhatsApp support URL for a brand (number + message both brand-aware). */
+export function buildBrandWhatsAppSupportUrl(brand: Brand): string {
+  const config = getBrandConfig(brand);
+  return buildWhatsAppSupportUrl(config.whatsappNumber, config.whatsappMessage);
+}
