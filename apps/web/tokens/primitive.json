@@ -612,19 +612,19 @@
       "$value": "9999px"
     },
     "md": {
-      "$description": "Material 3 shape large (8px) — app frame, sheets, dialogs, popovers (was 16px)",
+      "$description": "Material 3 shape large (28px) — app frame, sheets, dialogs, popovers, auth card (was 8px)",
       "$type": "dimension",
-      "$value": "8px"
+      "$value": "28px"
     },
     "sm": {
-      "$description": "Material 3 shape medium (6px) — cards, nav items, buttons, form inputs, select triggers (was 12px)",
+      "$description": "Material 3 shape medium (20px) — cards & lists, buttons, form inputs, select triggers (was 6px)",
       "$type": "dimension",
-      "$value": "6px"
+      "$value": "20px"
     },
     "xs": {
-      "$description": "Material 3 shape small (4px) — logo-mark tile (closest step to the 3px pick), avatar tile, checkboxes, micro switches, segmented toggles (was 8px)",
+      "$description": "Material 3 shape small (12px) — sidebar items (exact 12px pick), logo-mark tile (+3 over the 9px pick), avatar tile (-4 under the 16px pick), checkboxes, menu items, list rows (was 4px)",
       "$type": "dimension",
-      "$value": "4px"
+      "$value": "12px"
     }
   },
   "shadow": {
