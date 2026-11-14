@@ -18,7 +18,7 @@ const signin = 'https://app.fbuploadpro.com/login';
   <header id="site-topbar" class="topbar-fixed">
     <div class="topbar-pill mx-auto flex w-fit max-w-full items-center gap-6 rounded-full border border-line bg-white px-3 py-1.5 sm:px-5 lg:gap-12">
       <a href="#section-1" class="inline-flex min-h-11 shrink-0 items-center gap-2 py-3 text-sm font-bold tracking-tight no-underline sm:text-base" aria-label="FBUploadPro home">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" fill="none" role="img" aria-label="FBUploadPro" class="h-6 w-6 shrink-0 sm:h-7 sm:w-7"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fcd535" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#f0b90b" /><path d="M32 43H41L35 49H32V43Z" fill="#766018" /></svg><span>FBUploadPro</span>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" fill="none" role="img" aria-label="FBUploadPro" class="h-6 w-6 shrink-0 sm:h-7 sm:w-7"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#FFFC00" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#FCF000" /><path d="M32 43H41L35 49H32V43Z" fill="#716400" /></svg><span>FBUploadPro</span>
       </a>
       <nav class="hidden items-center gap-7 lg:flex" aria-label="Main">
         <a href="#section-5" class="inline-flex min-h-11 items-center py-3 text-base font-medium text-ink-sub no-underline hover:text-ink">Features</a>
@@ -40,16 +40,16 @@ const signin = 'https://app.fbuploadpro.com/login';
           <span class="menu-closed-label">☰ <span class="hidden min-[375px]:inline">Menu</span></span>
           <span class="menu-open-label">✕ <span class="hidden min-[375px]:inline">Close</span></span>
         </button>
-        <div id="mobile-menu-panel" class="fixed inset-x-2 bottom-2 z-[60] max-h-[calc(100dvh-16px)] overflow-y-auto rounded-3xl border border-line bg-white p-3 shadow-xl" hidden>
+        <div id="mobile-menu-panel" class="fixed inset-x-2 bottom-2 z-[60] max-h-[calc(100dvh-16px)] overflow-y-auto rounded-app border border-line bg-white p-3 shadow-modal" hidden>
           <nav class="grid grid-cols-2 gap-2" aria-label="Sections">
-            <a href="#section-2" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Muse</a>
-            <a href="#section-3" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Prompt Library</a>
-            <a href="#section-4" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Creator Finder</a>
-            <a href="#section-5" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Features</a>
-            <a href="#section-6" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Community</a>
-            <a href="#section-7" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Pricing</a>
-            <a href="#section-8" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">FAQ</a>
-            <a href={signin} class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Sign in</a>
+            <a href="#section-2" class="flex min-h-11 items-center rounded-nav px-3 text-sm font-medium text-ink no-underline">Muse</a>
+            <a href="#section-3" class="flex min-h-11 items-center rounded-nav px-3 text-sm font-medium text-ink no-underline">Prompt Library</a>
+            <a href="#section-4" class="flex min-h-11 items-center rounded-nav px-3 text-sm font-medium text-ink no-underline">Creator Finder</a>
+            <a href="#section-5" class="flex min-h-11 items-center rounded-nav px-3 text-sm font-medium text-ink no-underline">Features</a>
+            <a href="#section-6" class="flex min-h-11 items-center rounded-nav px-3 text-sm font-medium text-ink no-underline">Community</a>
+            <a href="#section-7" class="flex min-h-11 items-center rounded-nav px-3 text-sm font-medium text-ink no-underline">Pricing</a>
+            <a href="#section-8" class="flex min-h-11 items-center rounded-nav px-3 text-sm font-medium text-ink no-underline">FAQ</a>
+            <a href={signin} class="flex min-h-11 items-center rounded-nav px-3 text-sm font-medium text-ink no-underline">Sign in</a>
             <a href={signup} class="flex min-h-11 items-center justify-center rounded-full bg-ink px-3 text-sm font-semibold text-white no-underline">Get started</a>
           </nav>
         </div>
@@ -113,7 +113,7 @@ const signin = 'https://app.fbuploadpro.com/login';
          this module script runs before first paint, so the old path
          added .js and then is-visible within pre-paint frames with
          no style calculation in between — the browser's first
-         computed style already contained is-visible, so the 600ms
+         computed style already contained is-visible, so the 380ms
          transition never triggered. For hero elements only: force a
          synchronous layout read, which computes the hidden
          .js .reveal state, and then wait two animation frames, so
@@ -140,7 +140,7 @@ const signin = 'https://app.fbuploadpro.com/login';
           return;
         }
         /* Two animation frames so the hidden state paints first and
-           the 600ms transition always plays, even for content already
+           the 380ms transition always plays, even for content already
            in view when this deferred (module) script runs. */
         requestAnimationFrame(function () {
           requestAnimationFrame(function () {
@@ -226,7 +226,7 @@ const signin = 'https://app.fbuploadpro.com/login';
              margin is not. The margin sits inside the second reveal-mask
              (overflow: hidden), so it cannot collapse away. Do not merge
              these lines back into one reveal-line with a <br>. -->
-        <h1 class="reveal mx-auto mb-6 max-w-4xl text-[32px] leading-[1.25] font-bold tracking-tight sm:text-4xl md:text-5xl lg:text-[56px]">
+        <h1 class="reveal mx-auto mb-6 max-w-4xl text-[32px] leading-[1.2] font-extrabold tracking-[-0.02em] sm:text-4xl md:text-5xl lg:text-[56px]">
           <span class="reveal-mask"><span class="reveal-line">Everything your workflow needs,</span></span>
           <span class="reveal-mask"><span class="reveal-line mt-4"><span class="hero-highlight">in one place.</span></span></span>
         </h1>
@@ -263,7 +263,7 @@ const signin = 'https://app.fbuploadpro.com/login';
     <section id="section-2" class="section-full relative flex items-center overflow-hidden bg-white px-5 pt-24 pb-16 sm:px-8 sm:pt-16 lg:px-12" aria-label="How Muse manages FBUploadPro">
       <div class="s2-grid mx-auto grid w-full max-w-[1240px] items-center gap-12 lg:grid-cols-[1fr_auto] lg:justify-between lg:gap-24">
         <div class="text-left reveal">
-          <h2 class="s2-heading mb-6 text-[36px] leading-[1.15] font-bold tracking-tight sm:text-5xl lg:text-[56px]">
+          <h2 class="s2-heading mb-6 text-[36px] leading-[1.2] font-extrabold tracking-[-0.015em] sm:text-5xl lg:text-[56px]">
             <span class="reveal-mask xl:whitespace-nowrap"><span class="reveal-line">Let Muse <span class="section-highlight">manage</span></span></span>
             <span class="reveal-mask mt-2 ml-[1em] xl:whitespace-nowrap"><span class="reveal-line">FBUploadPro</span></span>
             <span class="reveal-mask mt-2"><span class="reveal-line">for you</span></span>
@@ -273,10 +273,10 @@ const signin = 'https://app.fbuploadpro.com/login';
           </p>
         </div>
         <div class="s2-orbit reveal reveal-d1 relative mx-auto h-[280px] w-[280px] shrink-0 sm:h-[400px] sm:w-[400px] lg:h-[480px] lg:w-[480px]" aria-hidden="true">
-          <span class="absolute inset-0 rounded-full border border-[#e9ebef] bg-white shadow-[0_20px_45px_rgba(17,17,17,0.12)]"></span>
-          <span class="absolute inset-[9%] rounded-full border border-[#e9ebef] bg-white shadow-[0_16px_36px_rgba(17,17,17,0.10)]"></span>
-          <span class="absolute inset-[20%] rounded-full border border-[#e9ebef] bg-white shadow-[0_12px_28px_rgba(17,17,17,0.10)]"></span>
-          <span class="s2-centre absolute left-1/2 top-1/2 flex h-[152px] w-[152px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[#e9ebef] bg-white shadow-[0_20px_40px_rgba(17,17,17,0.14)] sm:h-[192px] sm:w-[192px] lg:h-[216px] lg:w-[216px]">
+          <span class="absolute inset-0 rounded-full border border-line bg-white shadow-card"></span>
+          <span class="absolute inset-[9%] rounded-full border border-line bg-white shadow-card"></span>
+          <span class="absolute inset-[20%] rounded-full border border-line bg-white shadow-card"></span>
+          <span class="s2-centre absolute left-1/2 top-1/2 flex h-[152px] w-[152px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-line bg-white shadow-elevated sm:h-[192px] sm:w-[192px] lg:h-[216px] lg:w-[216px]">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 68" class="h-auto w-[84px] sm:w-[96px] lg:w-[120px]" fill="none" role="img" aria-label="Muse"><defs><linearGradient id="muse-grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0b3dce"/><stop offset="55%" stop-color="#1a4fe0"/><stop offset="100%" stop-color="#0a6cff"/></linearGradient></defs><path d="M 6 38 C 12 16, 22 12, 30 18 C 38 24, 36 50, 44 52 C 52 54, 52 26, 60 22 C 68 18, 70 44, 78 48 C 86 52, 86 30, 94 28 C 102 26, 108 32, 114 38" stroke="url(#muse-grad)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </span>
           <div class="orbit-ring absolute inset-0">
@@ -316,22 +316,22 @@ const signin = 'https://app.fbuploadpro.com/login';
          in gold instead of coloured gold. No gold highlight box
          anywhere in this section. -->
     <section id="section-3" class="section-full relative flex items-center bg-white px-5 py-24 sm:px-8 lg:px-12" aria-label="Prompt Library">
-      <div class="s3-content mx-auto grid w-full max-w-[1240px] items-center gap-10 lg:grid-cols-[1fr_1.2fr]">
+      <div class="s3-content mx-auto grid w-full max-w-[1240px] items-center gap-8 lg:grid-cols-[1fr_1.2fr]">
         <div class="s3-anim reveal">
-          <p class="mb-4 flex items-center gap-3">
+          <p class="mb-4 flex items-center gap-4">
             <span aria-hidden="true" class="inline-block h-[3px] w-8 bg-gold"></span>
-            <span class="text-[13px] font-bold tracking-[0.12em] text-[#b7791f] uppercase">Prompt Library</span>
+            <span class="text-[13px] font-bold tracking-[0.04em] text-accent-text uppercase">Prompt Library</span>
           </p>
-          <h2 class="text-[36px] leading-[1.08] font-bold tracking-tight sm:text-5xl lg:text-[52px]">
+          <h2 class="text-[36px] leading-[1.2] font-extrabold tracking-[-0.015em] sm:text-5xl lg:text-[52px]">
             A library of prompts,<br /><span class="text-ink underline decoration-gold decoration-4 underline-offset-[6px]">ready to use.</span>
           </h2>
           <p class="mt-5 max-w-xl text-base leading-relaxed text-ink-sub sm:text-lg">
             Browse prompts for Dola AI, Veo 3, and Google Flow — search by category, tool, or language, copy the master prompt, and create.
           </p>
-          <a href="https://app.fbuploadpro.com/signup" class="mt-7 inline-flex min-h-11 items-center py-3 font-bold text-ink underline decoration-gold decoration-2 underline-offset-4">Sign up to browse the library →</a>
+          <a href="https://app.fbuploadpro.com/signup" class="mt-6 inline-flex min-h-11 items-center py-3 font-bold text-ink underline decoration-gold decoration-2 underline-offset-4">Sign up to browse the library →</a>
         </div>
         <div>
-          <article class="s3-anim reveal reveal-d1 lift-card overflow-hidden rounded-[20px] border border-line bg-white shadow-[0_12px_32px_rgba(17,17,17,0.10)]">
+          <article class="s3-anim reveal reveal-d1 lift-card overflow-hidden rounded-card border border-line bg-white shadow-card">
             <Image src={dirtBikePreview} widths={[400, 700, 1200]} sizes="(max-width: 767px) 90vw, 660px" loading="lazy" decoding="async" alt="High-Speed Dirt Bike Hill-Climb Master Prompt" class="block h-auto w-full" />
             <div class="p-5">
               <div class="mb-4 flex items-center justify-end gap-3">
@@ -339,8 +339,8 @@ const signin = 'https://app.fbuploadpro.com/login';
               </div>
               <h3 class="mb-3 text-lg font-semibold">High-Speed Dirt Bike Hill-Climb Master Prompt</h3>
               <div class="flex flex-wrap gap-1.5">
-                <span class="inline-flex items-center rounded-full border border-line bg-[#f4f4f5] px-2.5 py-1 text-xs text-ink-sub">Video Prompts</span>
-                <span class="inline-flex items-center rounded-full border border-line bg-[#f4f4f5] px-2.5 py-1 text-xs text-ink-sub">15-30s</span>
+                <span class="inline-flex items-center rounded-full border border-line bg-subtle px-2.5 py-1 text-xs text-ink-sub">Video Prompts</span>
+                <span class="inline-flex items-center rounded-full border border-line bg-subtle px-2.5 py-1 text-xs text-ink-sub">15-30s</span>
               </div>
             </div>
           </article>
@@ -364,52 +364,52 @@ const signin = 'https://app.fbuploadpro.com/login';
          is contacted or published; no feed into any other
          feature. -->
     <section id="section-4" class="section-full relative flex items-center bg-white px-5 py-24 sm:px-8 lg:px-12" aria-label="Creator Finder">
-      <div class="mx-auto grid w-full max-w-[1240px] items-center gap-10 lg:grid-cols-2">
+      <div class="mx-auto grid w-full max-w-[1240px] items-center gap-8 lg:grid-cols-2">
         <div class="reveal">
-          <p class="mb-4 flex items-center gap-3">
+          <p class="mb-4 flex items-center gap-4">
             <span aria-hidden="true" class="inline-block h-[3px] w-8 bg-gold"></span>
-            <span class="text-[13px] font-bold tracking-[0.12em] text-[#b7791f] uppercase">Creator Finder</span>
+            <span class="text-[13px] font-bold tracking-[0.04em] text-accent-text uppercase">Creator Finder</span>
           </p>
-          <h2 class="text-[36px] leading-[1.08] font-bold tracking-tight sm:text-5xl lg:text-[52px]">
+          <h2 class="text-[36px] leading-[1.2] font-extrabold tracking-[-0.015em] sm:text-5xl lg:text-[52px]">
             Creator Finder
           </h2>
           <p class="mt-5 max-w-xl text-base leading-relaxed text-ink-sub sm:text-lg">
             Find TikTok creators by what is trending, by niche, or by a creator you already know. Creators you find are saved automatically — nothing is contacted or published.
           </p>
-          <ul class="mt-7 max-w-xl">
+          <ul class="mt-6 max-w-xl">
             <li class="border-t border-line py-2.5 text-base leading-[1.55] text-ink-sub"><strong class="text-ink">Trending by country</strong> — trending creators by country.</li>
             <li class="border-t border-line py-2.5 text-base leading-[1.55] text-ink-sub"><strong class="text-ink">By niche / words</strong> — creators by keyword, with an optional country.</li>
             <li class="border-t border-line py-2.5 text-base leading-[1.55] text-ink-sub"><strong class="text-ink">Similar creators</strong> — creators similar to a TikTok username you enter.</li>
             <li class="border-t border-b border-line py-2.5 text-base leading-[1.55] text-ink-sub"><strong class="text-ink">Saved</strong> — your automatically saved creators, with CSV export.</li>
           </ul>
         </div>
-        <div class="reveal reveal-d1 lift-card rounded-[20px] border border-line bg-[#fafafa] p-7 shadow-[0_8px_24px_rgba(0,0,0,0.06)]">
-          <p class="mb-4 text-[13px] text-[#71717a]">Example</p>
+        <div class="reveal reveal-d1 lift-card rounded-card border border-line bg-white p-6 shadow-card">
+          <p class="mb-4 text-[13px] text-ink-muted">Example</p>
           <div class="mb-5 flex flex-wrap gap-2">
-            <span class="rounded-full border border-[#111111] bg-[#111111] px-3 py-2 text-[13px] font-bold text-white">Trending by country</span>
-            <span class="rounded-full border border-[#d4d4d8] bg-white px-3 py-2 text-[13px] font-bold text-[#52525b]">By niche / words</span>
-            <span class="rounded-full border border-[#d4d4d8] bg-white px-3 py-2 text-[13px] font-bold text-[#52525b]">Similar creators</span>
-            <span class="rounded-full border border-[#d4d4d8] bg-white px-3 py-2 text-[13px] font-bold text-[#52525b]">Saved</span>
+            <span class="rounded-full border border-ink bg-ink px-3 py-2 text-[13px] font-bold text-white">Trending by country</span>
+            <span class="rounded-full border border-line-strong bg-white px-3 py-2 text-[13px] font-bold text-ink-sub">By niche / words</span>
+            <span class="rounded-full border border-line-strong bg-white px-3 py-2 text-[13px] font-bold text-ink-sub">Similar creators</span>
+            <span class="rounded-full border border-line-strong bg-white px-3 py-2 text-[13px] font-bold text-ink-sub">Saved</span>
           </div>
           <div class="mb-5 flex flex-col gap-2.5 sm:flex-row">
-            <span class="flex-1 rounded-xl border border-[#d4d4d8] bg-white px-3.5 py-3 text-sm text-[#a1a1aa]">Type a country</span>
-            <span class="rounded-full bg-[#f0b90b] px-4 py-3 text-sm font-bold whitespace-nowrap text-[#111111]">Find trending creators</span>
+            <span class="flex-1 rounded-nav border border-line-strong bg-white px-3.5 py-3 text-sm text-ink-muted">Type a country</span>
+            <span class="rounded-full bg-gold px-4 py-3 text-sm font-bold whitespace-nowrap text-ink">Find trending creators</span>
           </div>
           <div class="flex items-center gap-3.5 border-t border-line py-3.5">
-            <span class="h-12 w-12 shrink-0 rounded-full bg-[#e4e4e7]"></span>
+            <span class="h-12 w-12 shrink-0 rounded-full bg-line"></span>
             <span class="min-w-0 flex-1">
               <span class="block text-[15px] font-bold">Creator</span>
-              <span class="block text-[13px] text-[#71717a]">@handle</span>
+              <span class="block text-[13px] text-ink-muted">@handle</span>
             </span>
-            <span class="rounded-full bg-[#f0b90b] px-3.5 py-2 text-[13px] font-bold whitespace-nowrap text-[#111111]">View on TikTok ↗</span>
+            <span class="rounded-full bg-gold px-3.5 py-2 text-[13px] font-bold whitespace-nowrap text-ink">View on TikTok ↗</span>
           </div>
           <div class="flex items-center gap-3.5 border-t border-b border-line py-3.5">
-            <span class="h-12 w-12 shrink-0 rounded-full bg-[#e4e4e7]"></span>
+            <span class="h-12 w-12 shrink-0 rounded-full bg-line"></span>
             <span class="min-w-0 flex-1">
               <span class="block text-[15px] font-bold">Creator</span>
-              <span class="block text-[13px] text-[#71717a]">@handle</span>
+              <span class="block text-[13px] text-ink-muted">@handle</span>
             </span>
-            <span class="rounded-full bg-[#f0b90b] px-3.5 py-2 text-[13px] font-bold whitespace-nowrap text-[#111111]">View on TikTok ↗</span>
+            <span class="rounded-full bg-gold px-3.5 py-2 text-[13px] font-bold whitespace-nowrap text-ink">View on TikTok ↗</span>
           </div>
         </div>
       </div>
@@ -426,37 +426,37 @@ const signin = 'https://app.fbuploadpro.com/login';
          owner-dictated quantities in the copied Pricing lines. -->
     <section id="section-5" class="section-full relative z-10 flex items-center bg-white px-5 py-24 sm:px-8 lg:px-12" aria-label="Features">
       <div class="mx-auto w-full max-w-[1240px]">
-        <p class="reveal mb-4 flex items-center gap-3">
+        <p class="reveal mb-4 flex items-center gap-4">
           <span aria-hidden="true" class="inline-block h-[3px] w-8 bg-gold"></span>
-          <span class="text-[13px] font-bold tracking-[0.12em] text-[#b7791f] uppercase">Features</span>
+          <span class="text-[13px] font-bold tracking-[0.04em] text-accent-text uppercase">Features</span>
         </p>
-        <h2 class="reveal reveal-d1 text-[36px] leading-[1.08] font-bold tracking-tight sm:text-5xl lg:text-[52px]">
+        <h2 class="reveal reveal-d1 text-[36px] leading-[1.2] font-extrabold tracking-[-0.015em] sm:text-5xl lg:text-[52px]">
           More of what FBUploadPro does.
         </h2>
-        <div class="mt-10 grid gap-x-12 sm:grid-cols-2">
-          <div class="flex items-start gap-5 border-b border-[#e5e7eb] py-6 reveal">
-            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-[#d4d7dc]">01</span><svg class="h-7 w-7 flex-none" viewBox="0 0 28 28" fill="none" stroke="#333333" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8 L10 8 L12.5 11 L25 11 L25 22 Q25 24 23 24 L5 24 Q3 24 3 22 Z"/></svg></div>
-            <div><h3 class="text-[19px] leading-[1.3] font-bold">Media Library</h3><p class="mt-1.5 text-base leading-[1.6] text-[#555555]">5 GB storage per page/account</p></div>
+        <div class="mt-8 grid gap-x-12 sm:grid-cols-2">
+          <div class="flex items-start gap-5 border-b border-line py-6 reveal">
+            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-line-strong">01</span><svg class="h-7 w-7 flex-none text-ink" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8 L10 8 L12.5 11 L25 11 L25 22 Q25 24 23 24 L5 24 Q3 24 3 22 Z"/></svg></div>
+            <div><h3 class="text-[19px] leading-[1.2] font-extrabold tracking-[-0.01em]">Media Library</h3><p class="mt-1.5 text-base leading-[1.6] text-ink-sub">5 GB storage per page/account</p></div>
           </div>
-          <div class="flex items-start gap-5 border-b border-[#e5e7eb] py-6 reveal reveal-d1">
-            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-[#d4d7dc]">02</span><svg class="h-7 w-7 flex-none" viewBox="0 0 28 28" fill="none" stroke="#333333" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4 L14 17 M8 11 L14 17 L20 11 M4 21 L24 21"/></svg></div>
-            <div><h3 class="text-[19px] leading-[1.3] font-bold">Downloader</h3><p class="mt-1.5 text-base leading-[1.6] text-[#555555]">download from any platform, straight to your Media Library</p></div>
+          <div class="flex items-start gap-5 border-b border-line py-6 reveal reveal-d1">
+            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-line-strong">02</span><svg class="h-7 w-7 flex-none text-ink" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4 L14 17 M8 11 L14 17 L20 11 M4 21 L24 21"/></svg></div>
+            <div><h3 class="text-[19px] leading-[1.2] font-extrabold tracking-[-0.01em]">Downloader</h3><p class="mt-1.5 text-base leading-[1.6] text-ink-sub">download from any platform, straight to your Media Library</p></div>
           </div>
-          <div class="flex items-start gap-5 border-b border-[#e5e7eb] py-6 reveal">
-            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-[#d4d7dc]">03</span><svg class="h-7 w-7 flex-none" viewBox="0 0 28 28" fill="none" stroke="#333333" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="22" height="20" rx="2"/><path d="M3 10 L25 10 M9 3 L9 7 M19 3 L19 7"/></svg></div>
-            <div><h3 class="text-[19px] leading-[1.3] font-bold">In-App Schedule</h3><p class="mt-1.5 text-base leading-[1.6] text-[#555555]">schedule any post type across all platforms</p></div>
+          <div class="flex items-start gap-5 border-b border-line py-6 reveal">
+            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-line-strong">03</span><svg class="h-7 w-7 flex-none text-ink" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="22" height="20" rx="2"/><path d="M3 10 L25 10 M9 3 L9 7 M19 3 L19 7"/></svg></div>
+            <div><h3 class="text-[19px] leading-[1.2] font-extrabold tracking-[-0.01em]">In-App Schedule</h3><p class="mt-1.5 text-base leading-[1.6] text-ink-sub">schedule any post type across all platforms</p></div>
           </div>
-          <div class="flex items-start gap-5 border-b border-[#e5e7eb] py-6 reveal reveal-d1">
-            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-[#d4d7dc]">04</span><svg class="h-7 w-7 flex-none" viewBox="0 0 28 28" fill="none" stroke="#333333" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 8 A9 9 0 0 0 7 9 M7 9 L7 5 M7 9 L11 9 M8 20 A9 9 0 0 0 21 19 M21 19 L21 23 M21 19 L17 19"/></svg></div>
-            <div><h3 class="text-[19px] leading-[1.3] font-bold">Auto Repost</h3><p class="mt-1.5 text-base leading-[1.6] text-[#555555]">automatically repost a creator's latest TikTok reels to any platform</p></div>
+          <div class="flex items-start gap-5 border-b border-line py-6 reveal reveal-d1">
+            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-line-strong">04</span><svg class="h-7 w-7 flex-none text-ink" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 8 A9 9 0 0 0 7 9 M7 9 L7 5 M7 9 L11 9 M8 20 A9 9 0 0 0 21 19 M21 19 L21 23 M21 19 L17 19"/></svg></div>
+            <div><h3 class="text-[19px] leading-[1.2] font-extrabold tracking-[-0.01em]">Auto Repost</h3><p class="mt-1.5 text-base leading-[1.6] text-ink-sub">automatically repost a creator's latest TikTok reels to any platform</p></div>
           </div>
-          <div class="flex items-start gap-5 border-b border-[#e5e7eb] py-6 reveal">
-            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-[#d4d7dc]">05</span><svg class="h-7 w-7 flex-none" viewBox="0 0 28 28" fill="none" stroke="#333333" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14 L22 5 L17 14 L24 14 L5 23 L10 14 Z"/></svg></div>
-            <div><h3 class="text-[19px] leading-[1.3] font-bold">Direct Publish</h3><p class="mt-1.5 text-base leading-[1.6] text-[#555555]">publish any post to all platforms at once</p></div>
+          <div class="flex items-start gap-5 border-b border-line py-6 reveal">
+            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-line-strong">05</span><svg class="h-7 w-7 flex-none text-ink" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14 L22 5 L17 14 L24 14 L5 23 L10 14 Z"/></svg></div>
+            <div><h3 class="text-[19px] leading-[1.2] font-extrabold tracking-[-0.01em]">Direct Publish</h3><p class="mt-1.5 text-base leading-[1.6] text-ink-sub">publish any post to all platforms at once</p></div>
           </div>
-          <div class="flex items-start gap-5 border-b border-[#e5e7eb] py-6 reveal reveal-d1">
-            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-[#d4d7dc]">06</span><svg class="h-7 w-7 flex-none" viewBox="0 0 28 28" fill="none" stroke="#333333" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L22 9 L19 6 M24 19 L6 19 L9 22"/></svg></div>
-            <div><h3 class="text-[19px] leading-[1.3] font-bold">Auto Download/Upload</h3><p class="mt-1.5 text-base leading-[1.6] text-[#555555]">move reels between platforms, 100% in the cloud, no PC needed</p></div>
+          <div class="flex items-start gap-5 border-b border-line py-6 reveal reveal-d1">
+            <div class="flex w-[84px] flex-none items-center gap-3"><span class="text-[28px] leading-[1.1] font-bold text-line-strong">06</span><svg class="h-7 w-7 flex-none text-ink" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L22 9 L19 6 M24 19 L6 19 L9 22"/></svg></div>
+            <div><h3 class="text-[19px] leading-[1.2] font-extrabold tracking-[-0.01em]">Auto Download/Upload</h3><p class="mt-1.5 text-base leading-[1.6] text-ink-sub">move reels between platforms, 100% in the cloud, no PC needed</p></div>
           </div>
         </div>
       </div>
@@ -472,8 +472,8 @@ const signin = 'https://app.fbuploadpro.com/login';
          to it (that was the mirror image the owner rejected).
          No subhead, no button, no link. -->
     <section id="section-6" class="section-full bg-white" aria-label="Community">
-      <div class="dark-panel relative flex items-center justify-center overflow-hidden bg-[#0b0e11] px-5 py-16 text-center sm:py-20 lg:py-24">
-        <h2 class="reveal relative z-10 mx-auto text-[clamp(28px,8vw,56px)] leading-[1.1] font-bold tracking-tight text-white">
+      <div class="dark-panel relative flex items-center justify-center overflow-hidden bg-dark-canvas px-5 py-16 text-center sm:py-20 lg:py-24">
+        <h2 class="reveal relative z-10 mx-auto text-[clamp(28px,8vw,56px)] leading-[1.2] font-extrabold tracking-[-0.015em] text-dark-text">
           <span class="reveal-mask"><span class="reveal-line">Our community</span></span>
           <span class="reveal-mask mt-1 whitespace-nowrap"><span class="reveal-line">of <span class="community-highlight">700+</span> members</span></span>
         </h2>
@@ -487,10 +487,10 @@ const signin = 'https://app.fbuploadpro.com/login';
          or quantities anywhere in the cards, NO stats,
          NO testimonials, NO popularity labels, NO email. Free is
          Prompt Library only. Both buttons go to sign up. -->
-    <section id="section-7" class="section-full bg-[#0b0e11]" aria-label="Pricing">
-      <div class="dark-panel relative flex flex-col items-center justify-center overflow-hidden bg-[#0b0e11] px-5 pt-20 pb-10 text-center sm:pt-28 sm:pb-16 lg:pt-24 lg:pb-16">
+    <section id="section-7" class="section-full bg-dark-canvas" aria-label="Pricing">
+      <div class="dark-panel relative flex flex-col items-center justify-center overflow-hidden bg-dark-canvas px-5 pt-20 pb-10 text-center sm:pt-28 sm:pb-16 lg:pt-24 lg:pb-16">
         <div class="reveal relative z-10 flex flex-col items-center">
-          <h2 class="mx-auto text-[clamp(28px,8vw,56px)] leading-[1.1] font-bold tracking-tight text-white">
+          <h2 class="mx-auto text-[clamp(28px,8vw,56px)] leading-[1.2] font-extrabold tracking-[-0.015em] text-dark-text">
             <span class="inline-block text-center">
               <span class="reveal-mask"><span class="reveal-line">Start for free.</span></span>
               <span class="block h-[3px] w-full bg-white/25 my-3" aria-hidden="true"></span>
@@ -505,29 +505,29 @@ const signin = 'https://app.fbuploadpro.com/login';
              card below it by ~19px on phone widths (audit m1); lg:gap-6
              keeps the desktop column gap at its previous 24px. -->
         <div class="relative z-10 mt-6 grid w-full max-w-[1240px] items-start gap-8 sm:mt-14 sm:gap-8 lg:grid-cols-[0.9fr_1.5fr] lg:gap-6 lg:mt-10">
-          <div class="reveal lift-card flex flex-col rounded-[20px] border border-[#2a2f36] bg-[#171b1f] p-4 text-left text-white shadow-[0_8px_24px_rgba(0,0,0,0.25)] sm:p-9 lg:p-7">
-            <h3 class="text-[28px] leading-[1.15] font-extrabold tracking-tight">Free</h3>
-            <div class="my-3 h-px bg-[#2a2f36] sm:my-6"></div>
+          <div class="reveal lift-card flex flex-col rounded-card border border-dark-line bg-dark-panel p-4 text-left text-dark-text shadow-dark-elevated sm:p-8 lg:p-6">
+            <h3 class="text-[28px] leading-[1.2] font-extrabold tracking-[-0.01em]">Free</h3>
+            <div class="my-3 h-px bg-dark-line sm:my-6"></div>
             <ul class="mb-5 flex flex-1 flex-col gap-[14px] sm:mb-8">
-              <li class="flex items-start gap-3 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-[#f0b90b]" aria-hidden="true">✓</span><span>Prompts Library — latest Master Prompts</span></li>
+              <li class="flex items-start gap-4 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-gold" aria-hidden="true">✓</span><span>Prompts Library — latest Master Prompts</span></li>
             </ul>
-            <a href="https://app.fbuploadpro.com/signup" class="mt-auto block rounded-full border border-white/35 bg-transparent px-5 py-3 sm:py-4 text-center text-base font-bold text-white no-underline">Get started</a>
+            <a href="https://app.fbuploadpro.com/signup" class="mt-auto block rounded-full border border-white/35 bg-transparent px-5 py-3 sm:py-4 text-center text-base font-bold text-dark-text no-underline">Get started</a>
           </div>
-          <div class="reveal reveal-d1 lift-card relative flex flex-col rounded-[20px] border border-[#e5e5e5] bg-white p-4 text-left text-[#111111] shadow-[0_8px_24px_rgba(0,0,0,0.25)] sm:p-9 lg:p-7">
-            <span class="absolute -top-[14px] left-1/2 -translate-x-1/2 rounded-full border-[1.5px] border-[#f0b90b] bg-white px-[14px] py-[6px] text-[13px] font-bold tracking-[0.02em] whitespace-nowrap text-[#111111]">7-day refund</span>
-            <h3 class="text-[28px] leading-[1.15] font-extrabold tracking-tight">Paid</h3>
-            <div class="my-3 h-px bg-[#e8e8ea] sm:my-6"></div>
+          <div class="reveal reveal-d1 lift-card relative flex flex-col rounded-card border border-line bg-white p-4 text-left text-ink shadow-dark-elevated sm:p-8 lg:p-6">
+            <span class="absolute -top-[14px] left-1/2 -translate-x-1/2 rounded-full border-[1.5px] border-gold bg-white px-[14px] py-[6px] text-[13px] font-bold tracking-[0.02em] whitespace-nowrap text-ink">7-day refund</span>
+            <h3 class="text-[28px] leading-[1.2] font-extrabold tracking-[-0.01em]">Paid</h3>
+            <div class="my-3 h-px bg-line sm:my-6"></div>
             <ul class="mb-5 flex flex-1 flex-col gap-[14px] sm:mb-8">
-              <li class="flex items-start gap-3 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-[#b7791f]" aria-hidden="true">✓</span><span>Media Library — 5 GB storage per page/account</span></li>
-              <li class="flex items-start gap-3 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-[#b7791f]" aria-hidden="true">✓</span><span>Creator Finder — find creators to repost from</span></li>
-              <li class="flex items-start gap-3 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-[#b7791f]" aria-hidden="true">✓</span><span>Downloader — download from any platform, straight to your Media Library</span></li>
-              <li class="flex items-start gap-3 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-[#b7791f]" aria-hidden="true">✓</span><span>In-App Schedule — schedule any post type across all platforms</span></li>
-              <li class="flex items-start gap-3 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-[#b7791f]" aria-hidden="true">✓</span><span>Auto Repost — automatically repost a creator's latest TikTok reels to any platform</span></li>
-              <li class="flex items-start gap-3 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-[#b7791f]" aria-hidden="true">✓</span><span>Direct Publish — publish any post to all platforms at once</span></li>
-              <li class="flex items-start gap-3 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-[#b7791f]" aria-hidden="true">✓</span><span>Auto Download/Upload — move reels between platforms, 100% in the cloud, no PC needed</span></li>
+              <li class="flex items-start gap-4 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-accent-text" aria-hidden="true">✓</span><span>Media Library — 5 GB storage per page/account</span></li>
+              <li class="flex items-start gap-4 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-accent-text" aria-hidden="true">✓</span><span>Creator Finder — find creators to repost from</span></li>
+              <li class="flex items-start gap-4 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-accent-text" aria-hidden="true">✓</span><span>Downloader — download from any platform, straight to your Media Library</span></li>
+              <li class="flex items-start gap-4 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-accent-text" aria-hidden="true">✓</span><span>In-App Schedule — schedule any post type across all platforms</span></li>
+              <li class="flex items-start gap-4 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-accent-text" aria-hidden="true">✓</span><span>Auto Repost — automatically repost a creator's latest TikTok reels to any platform</span></li>
+              <li class="flex items-start gap-4 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-accent-text" aria-hidden="true">✓</span><span>Direct Publish — publish any post to all platforms at once</span></li>
+              <li class="flex items-start gap-4 text-base leading-[1.6]"><span class="flex-none text-[17px] leading-[1.5] font-extrabold text-accent-text" aria-hidden="true">✓</span><span>Auto Download/Upload — move reels between platforms, 100% in the cloud, no PC needed</span></li>
             </ul>
             <a href="https://app.fbuploadpro.com/signup" class="mt-auto block rounded-full bg-gold px-5 py-3 sm:py-4 text-center text-base font-bold text-ink no-underline">Get started</a>
-            <p class="mt-4 text-center text-sm leading-[1.6] text-[#666666]"><span class="text-sm leading-[1.6] font-extrabold text-[#b7791f]" aria-hidden="true">✓</span> 7 days refund if not satisfied</p>
+            <p class="mt-4 text-center text-sm leading-[1.6] text-ink-muted"><span class="text-sm leading-[1.6] font-extrabold text-accent-text" aria-hidden="true">✓</span> 7 days refund if not satisfied</p>
           </div>
         </div>
       </div>
@@ -541,31 +541,31 @@ const signin = 'https://app.fbuploadpro.com/login';
          transitions, no animations. Copy is the owner-edited
          draft, now approved for build — no prices, no caps, no
          partial-refund details. -->
-    <section id="section-8" class="section-full relative flex items-center bg-[#0b0e11] px-5 py-16 sm:px-8 lg:px-12" aria-label="Frequently asked questions">
+    <section id="section-8" class="section-full relative flex items-center bg-dark-canvas px-5 py-16 sm:px-8 lg:px-12" aria-label="Frequently asked questions">
       <div class="mx-auto grid w-full max-w-[1240px] gap-10 lg:grid-cols-[1fr_1.15fr] lg:gap-16">
         <div class="reveal">
-          <p class="text-[14px] tracking-[0.02em] text-[#8a8f98]">// FAQ</p>
-          <h2 class="mt-4 text-[32px] leading-[1.15] font-bold tracking-tight lg:text-[44px]">
-            <span class="text-white">Questions?</span> <span class="text-[#9aa0a8]">We've got answers.</span>
+          <p class="text-[14px] tracking-[0.04em] text-dark-muted">// FAQ</p>
+          <h2 class="mt-4 text-[32px] leading-[1.2] font-extrabold tracking-[-0.015em] lg:text-[44px]">
+            <span class="text-dark-text">Questions?</span> <span class="text-dark-muted">We've got answers.</span>
           </h2>
-          <p class="mt-5 text-base leading-[1.6] text-[#c9cdd3]">For support, <a href="mailto:support@fbuploadpro.com" class="text-white underline underline-offset-[3px]">contact us</a>.</p>
+          <p class="mt-5 text-base leading-[1.6] text-dark-text-2">For support, <a href="mailto:support@fbuploadpro.com" class="text-dark-text underline underline-offset-[3px]">contact us</a>.</p>
         </div>
         <div class="flex flex-col gap-4">
-          <details class="faq-card reveal overflow-hidden rounded-[20px] bg-[#171b1f]">
-            <summary class="flex cursor-pointer items-center justify-between gap-4 px-[22px] py-5 text-base leading-[1.5] font-medium text-white">Is FBUploadPro free?<span class="flex-none text-xl leading-none font-normal text-[#c9cdd3]" aria-hidden="true">+</span></summary>
-            <p class="px-[22px] pb-5 text-base leading-[1.65] text-[#c9cdd3]">Yes, you can start for free. The Free plan covers the Prompt Library, and the Paid plan unlocks the rest of FBUploadPro.</p>
+          <details class="faq-card reveal overflow-hidden rounded-card bg-dark-panel">
+            <summary class="flex cursor-pointer items-center justify-between gap-4 px-5 py-5 text-base leading-[1.5] font-medium text-dark-text">Is FBUploadPro free?<span class="flex-none text-xl leading-none font-normal text-dark-text-2" aria-hidden="true">+</span></summary>
+            <p class="px-5 pb-5 text-base leading-[1.65] text-dark-text-2">Yes, you can start for free. The Free plan covers the Prompt Library, and the Paid plan unlocks the rest of FBUploadPro.</p>
           </details>
-          <details class="faq-card reveal reveal-d1 overflow-hidden rounded-[20px] bg-[#171b1f]">
-            <summary class="flex cursor-pointer items-center justify-between gap-4 px-[22px] py-5 text-base leading-[1.5] font-medium text-white">Which platforms does FBUploadPro support?<span class="flex-none text-xl leading-none font-normal text-[#c9cdd3]" aria-hidden="true">+</span></summary>
-            <p class="px-[22px] pb-5 text-base leading-[1.65] text-[#c9cdd3]">Facebook, Instagram, TikTok, YouTube, Threads, and X.</p>
+          <details class="faq-card reveal reveal-d1 overflow-hidden rounded-card bg-dark-panel">
+            <summary class="flex cursor-pointer items-center justify-between gap-4 px-5 py-5 text-base leading-[1.5] font-medium text-dark-text">Which platforms does FBUploadPro support?<span class="flex-none text-xl leading-none font-normal text-dark-text-2" aria-hidden="true">+</span></summary>
+            <p class="px-5 pb-5 text-base leading-[1.65] text-dark-text-2">Facebook, Instagram, TikTok, YouTube, Threads, and X.</p>
           </details>
-          <details class="faq-card reveal reveal-d2 overflow-hidden rounded-[20px] bg-[#171b1f]">
-            <summary class="flex cursor-pointer items-center justify-between gap-4 px-[22px] py-5 text-base leading-[1.5] font-medium text-white">Do I need to keep my PC on?<span class="flex-none text-xl leading-none font-normal text-[#c9cdd3]" aria-hidden="true">+</span></summary>
-            <p class="px-[22px] pb-5 text-base leading-[1.65] text-[#c9cdd3]">No. FBUploadPro runs 100% in the cloud, so your posts go live and your downloads complete even with your laptop closed.</p>
+          <details class="faq-card reveal reveal-d2 overflow-hidden rounded-card bg-dark-panel">
+            <summary class="flex cursor-pointer items-center justify-between gap-4 px-5 py-5 text-base leading-[1.5] font-medium text-dark-text">Do I need to keep my PC on?<span class="flex-none text-xl leading-none font-normal text-dark-text-2" aria-hidden="true">+</span></summary>
+            <p class="px-5 pb-5 text-base leading-[1.65] text-dark-text-2">No. FBUploadPro runs 100% in the cloud, so your posts go live and your downloads complete even with your laptop closed.</p>
           </details>
-          <details class="faq-card reveal reveal-d3 overflow-hidden rounded-[20px] bg-[#171b1f]">
-            <summary class="flex cursor-pointer items-center justify-between gap-4 px-[22px] py-5 text-base leading-[1.5] font-medium text-white">Is there a refund?<span class="flex-none text-xl leading-none font-normal text-[#c9cdd3]" aria-hidden="true">+</span></summary>
-            <p class="px-[22px] pb-5 text-base leading-[1.65] text-[#c9cdd3]">Yes — 7 days refund if not satisfied.</p>
+          <details class="faq-card reveal reveal-d3 overflow-hidden rounded-card bg-dark-panel">
+            <summary class="flex cursor-pointer items-center justify-between gap-4 px-5 py-5 text-base leading-[1.5] font-medium text-dark-text">Is there a refund?<span class="flex-none text-xl leading-none font-normal text-dark-text-2" aria-hidden="true">+</span></summary>
+            <p class="px-5 pb-5 text-base leading-[1.65] text-dark-text-2">Yes — 7 days refund if not satisfied.</p>
           </details>
         </div>
       </div>
@@ -575,8 +575,8 @@ const signin = 'https://app.fbuploadpro.com/login';
          mockup (bottom-section-faq-footer.html). COMPACT strip,
          NOT full-screen: this deliberately reverses the centered
          full-screen footer for the footer only; the FAQ section
-         above stays full-screen centered. Background #14171b,
-         slightly lighter than the #0b0e11 sections, hairline top
+         above stays full-screen centered. Background #1c1917,
+         slightly lighter than the #0c0a09 sections, hairline top
          border. Left: official BrandMark + wordmark (kept from
          the live footer — the mockup's text-only wordmark was
          NOT used, so the brand is not downgraded), brand line,
@@ -587,39 +587,39 @@ const signin = 'https://app.fbuploadpro.com/login';
          copyright line below). Sign in and Get started stay
          dropped here (both still in the topbar + mobile menu);
          Contact survives as the FAQ support line above. -->
-    <footer id="section-9" class="relative border-t border-white/10 bg-[#14171b] px-5 py-11 sm:px-8 lg:px-12 lg:py-14" aria-label="Footer">
-      <div class="mx-auto flex w-full max-w-[1240px] flex-col gap-9 lg:flex-row lg:items-start lg:justify-between">
+    <footer id="section-9" class="relative border-t border-white/10 bg-dark-subtle px-5 py-11 sm:px-8 lg:px-12 lg:py-14" aria-label="Footer">
+      <div class="mx-auto flex w-full max-w-[1240px] flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
         <div class="reveal">
           <a href="#section-1" class="inline-flex min-h-11 w-fit items-center gap-3 py-1.5 no-underline">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" fill="none" role="img" aria-label="FBUploadPro" class="h-8 w-8 shrink-0"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fcd535" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#f0b90b" /><path d="M32 43H41L35 49H32V43Z" fill="#766018" /></svg><span class="text-xl font-bold tracking-tight text-white">FBUploadPro</span>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" fill="none" role="img" aria-label="FBUploadPro" class="h-8 w-8 shrink-0"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#FFFC00" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#FCF000" /><path d="M32 43H41L35 49H32V43Z" fill="#716400" /></svg><span class="text-xl font-bold tracking-tight text-dark-text">FBUploadPro</span>
           </a>
-          <p class="mt-3.5 max-w-[340px] text-base leading-[1.6] text-[#9aa0a8]">Your accounts, posting themselves — 100% in the cloud</p>
-          <div class="mt-[22px] flex gap-3">
-            <a href="https://wa.me/923351989971" target="_blank" rel="noopener noreferrer" aria-label="WhatsApp" class="flex h-11 w-11 items-center justify-center rounded-full bg-white text-[#111111] no-underline"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" role="img" aria-label="WhatsApp"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" /></svg></a>
-            <a href="https://www.facebook.com/shahzaib.pyc" target="_blank" rel="noopener noreferrer" aria-label="Facebook" class="flex h-11 w-11 items-center justify-center rounded-full bg-white text-[#111111] no-underline"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" role="img" aria-label="Facebook"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z" /></svg></a>
+          <p class="mt-3.5 max-w-[340px] text-base leading-[1.6] text-dark-muted">Your accounts, posting themselves — 100% in the cloud</p>
+          <div class="mt-5 flex gap-3">
+            <a href="https://wa.me/923351989971" target="_blank" rel="noopener noreferrer" aria-label="WhatsApp" class="flex h-11 w-11 items-center justify-center rounded-full bg-white text-ink no-underline"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" role="img" aria-label="WhatsApp"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" /></svg></a>
+            <a href="https://www.facebook.com/shahzaib.pyc" target="_blank" rel="noopener noreferrer" aria-label="Facebook" class="flex h-11 w-11 items-center justify-center rounded-full bg-white text-ink no-underline"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" role="img" aria-label="Facebook"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z" /></svg></a>
           </div>
         </div>
         <nav aria-label="Sections" class="reveal reveal-d1">
-          <h3 class="mb-[18px] text-[15px] font-semibold text-white">Navigation</h3>
+          <h3 class="mb-4 text-[15px] font-semibold text-dark-text">Navigation</h3>
           <ul class="flex flex-col gap-0">
-            <li><a href="#section-2" class="flex min-h-[44px] items-center text-base text-[#9aa0a8] no-underline hover:text-white">Muse</a></li>
-            <li><a href="#section-3" class="flex min-h-[44px] items-center text-base text-[#9aa0a8] no-underline hover:text-white">Prompt Library</a></li>
-            <li><a href="#section-4" class="flex min-h-[44px] items-center text-base text-[#9aa0a8] no-underline hover:text-white">Creator Finder</a></li>
-            <li><a href="#section-5" class="flex min-h-[44px] items-center text-base text-[#9aa0a8] no-underline hover:text-white">Features</a></li>
-            <li><a href="#section-6" class="flex min-h-[44px] items-center text-base text-[#9aa0a8] no-underline hover:text-white">Community</a></li>
-            <li><a href="#section-7" class="flex min-h-[44px] items-center text-base text-[#9aa0a8] no-underline hover:text-white">Pricing</a></li>
-            <li><a href="#section-8" class="flex min-h-[44px] items-center text-base text-[#9aa0a8] no-underline hover:text-white">FAQ</a></li>
+            <li><a href="#section-2" class="flex min-h-[44px] items-center text-base text-dark-muted no-underline hover:text-dark-text">Muse</a></li>
+            <li><a href="#section-3" class="flex min-h-[44px] items-center text-base text-dark-muted no-underline hover:text-dark-text">Prompt Library</a></li>
+            <li><a href="#section-4" class="flex min-h-[44px] items-center text-base text-dark-muted no-underline hover:text-dark-text">Creator Finder</a></li>
+            <li><a href="#section-5" class="flex min-h-[44px] items-center text-base text-dark-muted no-underline hover:text-dark-text">Features</a></li>
+            <li><a href="#section-6" class="flex min-h-[44px] items-center text-base text-dark-muted no-underline hover:text-dark-text">Community</a></li>
+            <li><a href="#section-7" class="flex min-h-[44px] items-center text-base text-dark-muted no-underline hover:text-dark-text">Pricing</a></li>
+            <li><a href="#section-8" class="flex min-h-[44px] items-center text-base text-dark-muted no-underline hover:text-dark-text">FAQ</a></li>
           </ul>
         </nav>
         <nav aria-label="Legal" class="reveal reveal-d2">
-          <h3 class="mb-[18px] text-[15px] font-semibold text-white">Legal</h3>
+          <h3 class="mb-4 text-[15px] font-semibold text-dark-text">Legal</h3>
           <ul class="flex flex-col gap-0">
-            <li><a href="https://app.fbuploadpro.com/privacy" class="flex min-h-[44px] items-center text-base text-[#9aa0a8] no-underline hover:text-white">Privacy Policy</a></li>
-            <li><a href="https://app.fbuploadpro.com/terms" class="flex min-h-[44px] items-center text-base text-[#9aa0a8] no-underline hover:text-white">Terms of Service</a></li>
+            <li><a href="https://app.fbuploadpro.com/privacy" class="flex min-h-[44px] items-center text-base text-dark-muted no-underline hover:text-dark-text">Privacy Policy</a></li>
+            <li><a href="https://app.fbuploadpro.com/terms" class="flex min-h-[44px] items-center text-base text-dark-muted no-underline hover:text-dark-text">Terms of Service</a></li>
           </ul>
         </nav>
       </div>
-      <p class="mx-auto mt-9 w-full max-w-[1240px] border-t border-white/10 pt-6 text-sm leading-[1.6] text-[#9aa0a8]">© 2026 FBUploadPro, All Rights Reserved</p>
+      <p class="mx-auto mt-9 w-full max-w-[1240px] border-t border-white/10 pt-6 text-sm leading-[1.6] text-dark-muted">© 2026 FBUploadPro, All Rights Reserved</p>
     </footer>
 
   </main>
