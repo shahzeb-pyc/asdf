@@ -30,7 +30,7 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "border border-link bg-primary text-on-primary hover:bg-brand-peru dark:hover:bg-brand-pale",
+        default: "border border-link bg-primary text-on-primary shadow-elevated hover:bg-brand-peru dark:hover:bg-brand-pale",
         destructive: "bg-brand-rose text-neutral-white hover:bg-brand-rose focus-visible:outline-signal-critical",
         outline: "border border-line bg-panel text-ink shadow-card hover:bg-hover",
         secondary: "bg-subtle text-ink hover:bg-hover",
