@@ -98,7 +98,8 @@ describe('NEXTRISE_BRAND_CONFIG', () => {
     expect(parsed.displayName).toBe('NextRise Digital');
     expect(parsed.shortName).toBe('NextRise');
     expect(parsed.logoPath).toBe('/brand/nextrise-logo.svg');
-    expect(parsed.whatsappNumber).toBe('0342-9469500');
+    // The wa.me dial string is the international form, not the display form.
+    expect(parsed.whatsappNumber).toBe('923429469500');
   });
 });
 
