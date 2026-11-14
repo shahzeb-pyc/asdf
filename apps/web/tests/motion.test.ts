@@ -140,7 +140,7 @@ const SURFACES: Array<[string, string]> = [
   // 1px lift on the filled variants (see the lift test below).
   [
     'src/components/shared/ui/button.tsx',
-    'transition-[background-color,border-color,color,transform,box-shadow] duration-fast ease-enter',
+    'transition duration-fast ease-enter',
   ],
   // Cards: hover lift at fast (200ms) with the spring easing, and the
   // page entrance (380ms, rises 14px from opacity 0).
