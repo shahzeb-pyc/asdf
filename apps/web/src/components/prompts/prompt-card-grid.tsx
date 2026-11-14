@@ -110,7 +110,7 @@ export function PromptCardGrid({
               key={item.slug}
               data-testid="prompt-card"
               onClick={() => onSelect(item.slug)}
-              className="cursor-pointer overflow-hidden rounded-2xl border border-line bg-panel shadow-card transition hover:-translate-y-1 hover:border-brand-gold hover:shadow-elevated"
+              className="cursor-pointer overflow-hidden rounded-2xl border border-line bg-panel shadow-card animate-page-enter transition-all duration-fast ease-enter hover:-translate-y-1 hover:border-brand-gold hover:shadow-elevated"
             >
               <div
                 data-testid="prompt-card-preview"

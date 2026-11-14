@@ -32,7 +32,7 @@ export function ThreadsScheduleCard({
     <Link
       href={`/tenant/${subdomain}/threads/schedule/${item.id}`}
       data-testid={`threads-schedule-card-${item.id}`}
-      className="flex min-h-40 flex-col justify-between rounded-md border border-line bg-panel p-6 shadow-card transition hover:-translate-y-0.5 hover:shadow-elevated"
+      className="flex min-h-40 flex-col justify-between rounded-md border border-line bg-panel p-6 shadow-card animate-page-enter transition-all duration-fast ease-enter hover:-translate-y-0.5 hover:shadow-elevated"
     >
       <div className="mb-4 flex items-center gap-4">
         <div

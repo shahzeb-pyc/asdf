@@ -207,6 +207,19 @@
   --ease-enter: var(--motion-easing-enter);
   --ease-exit: var(--motion-easing-exit);
   --ease-linear: var(--motion-easing-linear);
+
+  /* Page entrance (spec 185 — Expressive): the pick's entrance is
+     380ms rising 14px from opacity 0. 380ms is literal here, cited to
+     the pick: no duration token equals it and inventing one is
+     forbidden, so the value lives only in this one animation token.
+     The easing is the spring token (pure var() reference). Fill is
+     `backwards`, not the mock's `both`: `both` would retain the final
+     keyframe (translateY(0)) forever and pin the transform, blocking
+     the hover lift on the same cards. `backwards` gives the identical
+     visible entrance and releases the element after 380ms, so hover
+     lift works. Reduced motion collapses it via the base-layer block
+     below (spec 142, F12), like every other animation. */
+  --animate-page-enter: page-enter 380ms var(--motion-easing-enter) backwards;
 }
 
 @layer theme {
@@ -258,6 +271,14 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  /* Page entrance (spec 185 — Expressive): from opacity 0, 14px below,
+     to opacity 1 at rest. Applied via the `animate-page-enter` utility
+     to the card surfaces, so cards settle 14px as a page lands. */
+  @keyframes page-enter {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 }
 
