@@ -42,9 +42,11 @@ describe('root viewport export (spec 142 F03)', () => {
   });
 
   it('does NOT put viewportFit inside the metadata export (Next ignores it there)', () => {
-    // Match the metadata object literal itself — prose comments between
-    // the two exports legitimately discuss the viewport.
-    const metadataBlock = layout.match(/export const metadata: Metadata = \{[\s\S]*?\n\};/)?.[0] ?? '';
+    // Match the metadata builder itself — the metadata is built by
+    // generateMetadata() now (spec 191: title/icon follow the brand).
+    // Prose comments between the two exports legitimately discuss the
+    // viewport.
+    const metadataBlock = layout.match(/export async function generateMetadata[\s\S]*?\n\}/)?.[0] ?? '';
     expect(metadataBlock).not.toBe('');
     expect(metadataBlock).not.toContain('viewportFit');
     expect(metadataBlock).not.toContain('viewport');

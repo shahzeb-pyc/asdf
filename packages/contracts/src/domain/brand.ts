@@ -45,11 +45,19 @@ export function resolveBrandFromHost(host: string | null | undefined): Brand {
  * Tenant-host suffix for a brand. Our brand uses the configured root
  * (from `NEXT_PUBLIC_ROOT_DOMAIN`); the white-label brand always uses
  * `app.nextrisehq.com`, whatever the deployment's root is.
+ *
+ * Verbatim: the port is part of the root (`localhost:3000`), and an
+ * empty root stays empty — the routing helpers resolve locally from
+ * the request URL when no root is configured. An earlier version
+ * stripped the port and defaulted empty to `fbuploadpro.com`, which
+ * broke localhost login redirects (`:3000` lost) and the OAuth
+ * local-resolution fallback (a configured-looking root where none
+ * was set). Callers that need a bare hostname (cookie domains) strip
+ * the port themselves before calling.
  */
 export function getBrandTenantRoot(brand: Brand, fallbackRoot: string): string {
   if (brand === 'nextrise') return NEXTRISE_TENANT_ROOT;
-  const clean = (fallbackRoot || 'fbuploadpro.com').trim().toLowerCase().split(':')[0] ?? '';
-  return clean || 'fbuploadpro.com';
+  return fallbackRoot.trim().toLowerCase();
 }
 
 /**

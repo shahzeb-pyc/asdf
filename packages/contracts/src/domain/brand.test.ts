@@ -56,6 +56,12 @@ describe('getBrandTenantRoot / getBrandGatewayHost', () => {
 
   it('our brand keeps the configured root verbatim', () => {
     expect(getBrandTenantRoot('fbuploadpro', 'fbuploadpro.com')).toBe('fbuploadpro.com');
+    // The port is part of the root: stripping it broke localhost
+    // login redirects (activecorp.localhost lost its :3000).
+    expect(getBrandTenantRoot('fbuploadpro', 'localhost:3000')).toBe('localhost:3000');
+    // An empty root stays empty: the OAuth helpers resolve locally
+    // from the request URL when no root is configured.
+    expect(getBrandTenantRoot('fbuploadpro', '')).toBe('');
     expect(getBrandGatewayHost('fbuploadpro', 'fbuploadpro.com')).toBe('app.fbuploadpro.com');
   });
 
