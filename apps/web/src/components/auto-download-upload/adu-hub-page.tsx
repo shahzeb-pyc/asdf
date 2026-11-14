@@ -442,24 +442,24 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
       className="group flex min-w-0 cursor-pointer flex-col rounded-md border border-line bg-panel p-6 shadow-card animate-page-enter transition-all duration-fast ease-enter outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
     >
       {/* Top row: avatar with status ring + identity + circled arrow. */}
-      <div className="flex items-start gap-4">
+      <div className="flex items-center gap-4">
         {showAvatarImg ? (
           <Image
             src={config.destinationAvatarUrl!}
             alt={config.destinationName}
-            width={42}
-            height={42}
+            width={56}
+            height={56}
             data-testid="adu-page-avatar-img"
             onError={() =>
               setFailedAvatarUrl(config.destinationAvatarUrl ?? '__error__')
             }
-            className={cn('size-10.5 shrink-0 rounded-full object-cover', ringClass)}
+            className={cn('size-14 shrink-0 rounded-full object-cover', ringClass)}
           />
         ) : (
           <div
             data-testid="adu-page-avatar-initials"
             className={cn(
-              'flex size-10.5 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-ink',
+              'flex size-14 shrink-0 items-center justify-center rounded-full bg-subtle text-xl font-bold text-ink',
               ringClass
             )}
           >
@@ -470,7 +470,7 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
         <div className="min-w-0 flex-1">
           <h3
             data-testid="adu-page-name"
-            className="m-0 truncate text-body font-semibold text-ink"
+            className="m-0 truncate text-lg font-bold leading-heading text-ink"
           >
             {config.destinationName}
           </h3>
@@ -573,26 +573,15 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
       </div>
 
       {/* Divider + counts row: big signal-coloured numbers on top,
-          labels below, in Pending / Posted / Failed order. */}
+          labels below, in Posted / Pending / Failed order, with
+          dividers between the three stats. */}
       <div aria-hidden className="pt-3">
         <div className="border-t border-line" />
       </div>
       <div
         data-testid="adu-page-pending-counts"
-        className="mt-3 grid grid-cols-3 gap-4"
+        className="mt-3 grid grid-cols-3 divide-x divide-line"
       >
-        <span
-          data-testid="adu-page-pending-stat"
-          className="flex flex-col items-center text-center"
-        >
-          <span
-            data-testid="adu-page-pending-count"
-            className="text-xxxl font-bold tabular-nums text-signal-queued"
-          >
-            {config.pendingCount.toLocaleString('en-US')}
-          </span>
-          <span className="mt-1 text-metadata text-ink-sub">Pending</span>
-        </span>
         <span
           data-testid="adu-page-posted-stat"
           className="flex flex-col items-center text-center"
@@ -604,6 +593,18 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
             {config.postedCount.toLocaleString('en-US')}
           </span>
           <span className="mt-1 text-metadata text-ink-sub">Posted</span>
+        </span>
+        <span
+          data-testid="adu-page-pending-stat"
+          className="flex flex-col items-center text-center"
+        >
+          <span
+            data-testid="adu-page-pending-count"
+            className="text-xxxl font-bold tabular-nums text-signal-queued"
+          >
+            {config.pendingCount.toLocaleString('en-US')}
+          </span>
+          <span className="mt-1 text-metadata text-ink-sub">Pending</span>
         </span>
         <span
           data-testid="adu-page-failed-stat"
@@ -619,8 +620,12 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
         </span>
       </div>
 
-      {/* ADU-specific Today line, kept: centred, muted, with
-          nonzero counts in dark semibold and zeros muted. */}
+      {/* Divider + ADU-specific Today line as the footer's subtle
+          strip: centred, muted, with nonzero counts in dark
+          semibold and zeros muted. */}
+      <div aria-hidden className="pt-3">
+        <div className="border-t border-line" />
+      </div>
       <p
         data-testid="adu-page-today-line"
         className="mt-3 text-center text-body text-ink-sub"
