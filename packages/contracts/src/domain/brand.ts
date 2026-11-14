@@ -112,6 +112,7 @@ export const BrandConfigSchema = z.object({
   shortName: z.string().min(1),
   /** Public asset path of the brand logo, or null when the inline mark is used. */
   logoPath: z.string().nullable(),
+  /** WhatsApp support number as a wa.me dial string: international form, no trunk 0. */
   whatsappNumber: z.string().min(1),
   whatsappMessage: z.string().min(1),
   ...BrandFlagsSchema.shape,
@@ -123,7 +124,9 @@ export const NEXTRISE_BRAND_CONFIG: BrandConfig = {
   displayName: NEXTRISE_DISPLAY_NAME,
   shortName: NEXTRISE_SHORT_NAME,
   logoPath: NEXTRISE_LOGO_PATH,
-  whatsappNumber: NEXTRISE_WHATSAPP_NUMBER,
+  // wa.me needs the international form (923429469500), not the display
+  // form 0342-9469500 — the trunk 0 is not diallable via wa.me.
+  whatsappNumber: NEXTRISE_WHATSAPP_INTERNATIONAL,
   whatsappMessage: 'Hi! I need assistance with my NextRise account.',
   ...getBrandFlags('nextrise'),
 };
