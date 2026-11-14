@@ -82,6 +82,15 @@ const SURFACES: Array<[string, string]> = [
   ['src/components/pages/page-card.tsx', 'flex-col rounded-sm border bg-panel p-card'],
   // Nav item → sm (6px).
   ['src/components/shell/app-sidebar.tsx', 'rounded-sm px-nav py-nav'],
+  // Sidebar menu buttons → sm (6px; reverted from the Rounded xs re-wire).
+  [
+    'src/components/shared/ui/sidebar.tsx',
+    'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-sm p-2',
+  ],
+  [
+    'src/components/shared/ui/sidebar.tsx',
+    'flex min-h-8 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-sm px-2',
+  ],
   // Avatar tiles → xs (4px).
   [
     'src/components/workspace/workspace-switcher.tsx',
@@ -140,5 +149,34 @@ describe('surface wiring (spec 183)', () => {
       .find((line) => line.includes('p-card'));
     expect(cardLine).toBeDefined();
     expect(cardLine).not.toContain('rounded-md');
+  });
+
+  it('does not leave the sidebar nav items on the old xs step', () => {
+    const sidebarSource = readFileSync(
+      path.resolve(process.cwd(), 'src/components/shared/ui/sidebar.tsx'),
+      'utf8'
+    );
+    const menuButtonLine = sidebarSource
+      .split('\n')
+      .find((line) => line.includes('peer/menu-button'));
+    expect(menuButtonLine).toBeDefined();
+    expect(menuButtonLine).toContain('rounded-sm');
+    expect(menuButtonLine).not.toContain('rounded-xs');
+    const subButtonLine = sidebarSource
+      .split('\n')
+      .find((line) => line.includes('min-h-8 min-w-0 -translate-x-px'));
+    expect(subButtonLine).toBeDefined();
+    expect(subButtonLine).toContain('rounded-sm');
+    expect(subButtonLine).not.toContain('rounded-xs');
+    const appSidebarSource = readFileSync(
+      path.resolve(process.cwd(), 'src/components/shell/app-sidebar.tsx'),
+      'utf8'
+    );
+    const brandingLine = appSidebarSource
+      .split('\n')
+      .find((line) => line.includes('px-nav py-nav'));
+    expect(brandingLine).toBeDefined();
+    expect(brandingLine).toContain('rounded-sm');
+    expect(brandingLine).not.toContain('rounded-xs');
   });
 });
