@@ -3,6 +3,7 @@
 import * as React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { PlayIcon, XIcon } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   AlertDialog,
@@ -106,6 +107,19 @@ function formatAduDetailAddedDate(createdAt: string): string {
     month: 'short',
     year: 'numeric',
   }).format(date);
+}
+
+/**
+ * Video duration as m:ss ("0:12") for the card preview badge, read from
+ * the video element's own metadata. Null when the duration is unknown
+ * or not positive — no badge renders then, never a faked "0:00".
+ */
+function formatReelDuration(totalSeconds: number | null | undefined): string | null {
+  if (totalSeconds === null || totalSeconds === undefined || !Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+    return null;
+  }
+  const totalSec = Math.round(totalSeconds);
+  return `${Math.floor(totalSec / 60)}:${(totalSec % 60).toString().padStart(2, '0')}`;
 }
 
 type AduStatusMarkKind = 'operational' | 'queued' | 'critical';
@@ -363,10 +377,14 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   // switch.
   const reelsLoadedPagesRef = React.useRef(new Set<number>());
   const failedLoadedRef = React.useRef(false);
-  const [selectedReel, setSelectedReel] = React.useState<Reel | null>(null);
+  // Spec 179: one card expanded at a time, in place — the expanded
+  // card is the editor; there is no side panel anymore. `durations`
+  // holds each preview's length once its metadata loads (badge only).
+  const [expandedReelId, setExpandedReelId] = React.useState<string | null>(null);
+  const [durations, setDurations] = React.useState<Record<string, number>>({});
   const [captionDraft, setCaptionDraft] = React.useState('');
   const [deleteOpen, setDeleteOpen] = React.useState(false);
-  const [deleteReelOpen, setDeleteReelOpen] = React.useState(false);
+  const [deleteReelId, setDeleteReelId] = React.useState<string | null>(null);
   const [sourceOpen, setSourceOpen] = React.useState(false);
   const [newPlatform, setNewPlatform] = React.useState('instagram');
   const [newUsername, setNewUsername] = React.useState('');
@@ -472,16 +490,34 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
     }
   }, [base]);
 
-  // F19: the draft follows the selected reel — it starts from the
-  // reel's own caption, never empty for a captioned reel. Typing only
-  // changes the draft, never the reel, so it cannot reset mid-edit.
-  // The length guard keeps the fallback honest: reels[0] is
-  // undefined on an empty page, whatever the index type claims.
-  const firstReel = reels.length > 0 ? reels[0] : null;
-  const draftSource = selectedReel ?? firstReel;
+  // Spec 179 / F19: the draft is prefilled from the reel when its
+  // card expands — never empty for a captioned reel, so Save can
+  // never wipe a real caption. Collapsing clears it; expanding
+  // always re-prefills from the reel, so no stale draft can leak
+  // into another reel's save.
+  const expandReel = React.useCallback((reel: Reel) => {
+    setExpandedReelId(reel.id);
+    setCaptionDraft(reel.caption ?? '');
+  }, []);
+  const collapseExpanded = React.useCallback(() => {
+    setExpandedReelId(null);
+    setCaptionDraft('');
+  }, []);
+
+  // Spec 179: Escape collapses the expanded card. A document listener
+  // (not a handler on the grid div) so no non-interactive element
+  // carries a keyboard handler. It fires from the textarea too — the
+  // draft is re-prefilled on the next expand, so nothing is lost
+  // silently. Skipped while the delete dialog is open: its own Escape
+  // handling dismisses it, exactly as before.
   React.useEffect(() => {
-    setCaptionDraft(draftSource ? (draftSource.caption ?? '') : '');
-  }, [draftSource]);
+    if (expandedReelId === null || deleteReelId !== null) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') collapseExpanded();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [expandedReelId, deleteReelId, collapseExpanded]);
 
   React.useEffect(() => { void loadConfig(); }, [loadConfig]);
 
@@ -558,7 +594,7 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
     // a visited-but-inactive tab needs the explicit fetch).
     if (body.sourcePlatform || body.sourceUsername) {
       reelsLoadedPagesRef.current.clear();
-      setSelectedReel(null);
+      setExpandedReelId(null);
       setCaptionDraft('');
       setReelsPage(1);
       if (activeTab === 'reels' && reelsPage === 1) await loadReels(1, true);
@@ -567,28 +603,29 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
     return true;
   };
 
-  const runAction = async (action: string, label: string) => {
-    setError(null);
-    const response = await fetch(`${base}/reels`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) { setError(result.error ?? `${label} failed.`); return; }
-    setNotice(`${label} done.`);
-    // F14: discovery only flips sync_status — a silent config-only
-    // refresh updates the banner without touching reels/failed.
-    await loadConfig(true);
-  };
-
   // F14/F19: skip/delete update local state only — the row leaves the
-  // list, the selection and draft clear, and the pending tile drops by
-  // one. No full reload. If the page empties, step back a page (its
-  // rows are refetched: the loaded-set entry is dropped first).
+  // list, the pending tile drops by one, and the next reel expands
+  // with its own caption prefilled (spec 179: no stale expanded state
+  // may point at a removed reel). No full reload. If the page empties,
+  // step back a page (its rows are refetched: the loaded-set entry is
+  // dropped first) and nothing expands — the new page loads fresh.
   const handleReelRemoved = (reelId: string) => {
     const wasLastOnPage = reels.length <= 1;
+    const removedIndex = reels.findIndex((r) => r.id === reelId);
+    // Expand the next reel in line — the one after the removed row,
+    // or the one before it when the last row goes. (wasLastOnPage
+    // means there is no next reel, so the index math below only runs
+    // when at least two rows exist and the fallback index is >= 0.)
+    const nextIndex = removedIndex + 1 < reels.length ? removedIndex + 1 : removedIndex - 1;
+    const nextReel = wasLastOnPage ? null : reels[nextIndex];
     setReels((prev) => prev.filter((r) => r.id !== reelId));
-    setSelectedReel(null);
-    setCaptionDraft('');
+    if (nextReel) {
+      setExpandedReelId(nextReel.id);
+      setCaptionDraft(nextReel.caption ?? '');
+    } else {
+      setExpandedReelId(null);
+      setCaptionDraft('');
+    }
     setConfig((prev) => (prev ? { ...prev, pendingCount: Math.max(0, prev.pendingCount - 1) } : prev));
     const nextTotal = Math.max(0, reelsTotal - 1);
     setReelsTotal(nextTotal);
@@ -599,6 +636,21 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
     }
   };
 
+  // Spec 179: the expanded card's actions, all targeted (no reload).
+  const saveReelCaption = async (reel: Reel) => {
+    const response = await fetch(`${base}/reels/${reel.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption: captionDraft }) });
+    if (!response.ok) { const body = await response.json().catch(() => ({})); setError(body.error ?? 'Could not save caption.'); } else { setNotice('Caption saved.'); setReels((prev) => prev.map((r) => (r.id === reel.id ? { ...r, caption: captionDraft } : r))); }
+  };
+  const skipReel = async (reel: Reel) => {
+    const response = await fetch(`${base}/reels/${reel.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'skip' }) });
+    if (response.ok) { setNotice('Reel skipped.'); handleReelRemoved(reel.id); }
+  };
+  const deleteReel = async (reelId: string) => {
+    const response = await fetch(`${base}/reels/${reelId}`, { method: 'DELETE' });
+    if (response.ok) { setNotice('Reel removed.'); handleReelRemoved(reelId); }
+    setDeleteReelId(null);
+  };
+
   if (loading) return <AduDetailSkeleton />;
   if (!config) return <div className="mx-auto w-full max-w-7xl px-6 py-6">{error ? <Banner variant="critical" title="Page not found" description={error} /> : null}</div>;
 
@@ -607,7 +659,6 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
     config.status === 'invalid_token' ||
     config.status === 'completed' ||
     config.status === 'invalid_username';
-  const selected = selectedReel ?? reels[0] ?? null;
   const statusKind = getAduDetailStatusMarkKind(config.displayStatus);
   const ringClass = ADU_DETAIL_RING_CLASSES[statusKind];
   const initials = getUserInitials(config.destinationName);
@@ -810,12 +861,9 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
 
         {visitedTabs.has('reels') && (
           <TabsContent value="reels" forceMount className="data-[state=inactive]:hidden">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="font-semibold">Downloaded Queue</h2>
-                <p className="text-body text-ink-sub">View, edit captions, skip or purge reels from the automatic publication queue.</p>
-              </div>
-              <Button type="button" variant="outline" onClick={() => void runAction('discover', 'Discovery')}>Discover reels</Button>
+            <div>
+              <h2 className="font-semibold">Downloaded Queue</h2>
+              <p className="text-body text-ink-sub">View, edit captions, skip or purge reels from the automatic publication queue.</p>
             </div>
             {reelsError && reels.length === 0 ? (
               <Banner variant="critical" title="Could not load reels" description={reelsError} />
@@ -828,65 +876,143 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
             ) : (
               <>
               {reelsError ? <Banner variant="critical" title="Could not load reels" description={reelsError} /> : null}
-              <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_360px]">
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  {reels.map((reel) => (
-                    <Card key={reel.id} className={selected?.id === reel.id ? 'border-2' : ''}>
-                      <button type="button" className="flex w-full flex-col gap-2 p-4 text-left" onClick={() => { setSelectedReel(reel); setCaptionDraft(reel.caption ?? ''); }}>
-                        <span className="aspect-9/16 w-full rounded-md bg-surface" />
-                        <span className="line-clamp-3 text-body">{reel.caption ?? 'No caption'}</span>
-                        <span className="text-metadata text-ink-dim">Downloaded {reel.downloaded_at ? new Date(reel.downloaded_at).toLocaleString() : '—'}</span>
-                      </button>
-                    </Card>
-                  ))}
-                </div>
-                {selected ? (
-                  <Card><CardContent className="flex flex-col gap-3 pt-6">
-                    <p className="font-medium">Interactive Workspace</p>
-                    {selected.media_url ? <video src={selected.media_url} controls className="aspect-9/16 w-full rounded-md bg-black" /> : <p className="text-body text-ink-sub">No media URL for this reel yet.</p>}
-                    <p className="text-body text-ink-sub">{config.sourceIdentity} · Reel {selected.source_reel_id}</p>
-                    <label className="font-medium" htmlFor="adu-caption">Caption Editor</label>
-                    <Textarea id="adu-caption" rows={5} value={captionDraft} onChange={(e) => setCaptionDraft(e.target.value)} />
-                    <p className="text-metadata text-ink-dim">{captionDraft.length} characters · Reel ID {selected.source_reel_id}</p>
-                    <div className="flex flex-wrap gap-1">
-                      {QUICK_TAGS.map((tag) => (
-                        <Button key={tag} type="button" variant="outline" onClick={() => setCaptionDraft((d) => `${d} ${tag}`.trim())}>{tag}</Button>
-                      ))}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button type="button" onClick={async () => {
-                        const response = await fetch(`${base}/reels/${selected.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption: captionDraft }) });
-                        if (!response.ok) { const body = await response.json().catch(() => ({})); setError(body.error ?? 'Could not save caption.'); } else { setNotice('Caption saved.'); setReels((prev) => prev.map((r) => (r.id === selected.id ? { ...r, caption: captionDraft } : r))); }
-                      }}>Save Caption</Button>
-                      <Button type="button" variant="outline" onClick={async () => {
-                        const response = await fetch(`${base}/reels/${selected.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'skip' }) });
-                        if (response.ok) { setNotice('Reel skipped.'); handleReelRemoved(selected.id); }
-                      }}>Skip</Button>
-                      <Button type="button" variant="outline" onClick={() => setDeleteReelOpen(true)}>Delete</Button>
-                      <AlertDialog open={deleteReelOpen} onOpenChange={(open) => { if (!open) setDeleteReelOpen(false); }}>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Remove reel?</AlertDialogTitle>
-                            <AlertDialogDescription>Remove this reel from the queue? This cannot be undone.</AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              variant="destructive"
-                              onClick={async (event) => {
-                                event.preventDefault();
-                                const response = await fetch(`${base}/reels/${selected.id}`, { method: 'DELETE' });
-                                if (response.ok) { setNotice('Reel removed.'); handleReelRemoved(selected.id); }
-                                setDeleteReelOpen(false);
+              <div
+                className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-3"
+                data-testid="adu-reels-grid"
+              >
+                {reels.map((reel) => {
+                  const expanded = expandedReelId === reel.id;
+                  const duration = formatReelDuration(durations[reel.id]);
+                  // Spec 179: the compact view always sizes the card.
+                  // When a card expands, this same content stays in
+                  // flow (invisible) and the editor overlays it, so
+                  // the expanded card keeps exactly the compact
+                  // card's outer dimensions and the grid cannot move.
+                  const cardBody = (
+                    <>
+                      <span className="relative block aspect-9/16 w-full overflow-hidden rounded-md bg-surface">
+                        {reel.media_url ? (
+                          <>
+                            <video
+                              src={reel.media_url}
+                              preload="metadata"
+                              muted
+                              playsInline
+                              data-testid={`adu-reel-preview-${reel.id}`}
+                              onLoadedMetadata={(e) => {
+                                const seconds = e.currentTarget.duration;
+                                setDurations((prev) => (prev[reel.id] === seconds ? prev : { ...prev, [reel.id]: seconds }));
                               }}
-                            >Remove reel</AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
-                    <p className="text-metadata text-ink-dim">Downloaded {selected.downloaded_at ? new Date(selected.downloaded_at).toLocaleString() : '—'}</p>
-                  </CardContent></Card>
-                ) : null}
+                              className="absolute inset-0 h-full w-full bg-black object-cover"
+                            />
+                            <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
+                              <span className="flex size-10 items-center justify-center rounded-full bg-black/60 text-white">
+                                <PlayIcon className="size-5" aria-hidden />
+                              </span>
+                            </span>
+                            {duration ? (
+                              <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-xs font-medium text-white tabular-nums">{duration}</span>
+                            ) : null}
+                          </>
+                        ) : (
+                          <span className="absolute inset-0 flex items-center justify-center p-4 text-center text-body text-ink-sub">No media URL for this reel yet.</span>
+                        )}
+                      </span>
+                      <span className="line-clamp-2 text-body">{reel.caption ?? 'No caption'}</span>
+                      <span className="mt-auto text-metadata text-ink-dim">Downloaded {reel.downloaded_at ? new Date(reel.downloaded_at).toLocaleString() : '—'}</span>
+                    </>
+                  );
+                  return (
+                    <Card
+                      key={reel.id}
+                      data-testid={`adu-reel-card-${reel.id}`}
+                      className={cn('relative gap-0 overflow-hidden py-0', expanded && 'ring-2 ring-primary')}
+                    >
+                      {expanded ? (
+                        <div aria-hidden className="invisible flex w-full flex-1 flex-col gap-2 p-4 text-left">
+                          {cardBody}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="flex w-full flex-1 flex-col gap-2 p-4 text-left"
+                          aria-expanded={false}
+                          onClick={() => expandReel(reel)}
+                        >
+                          {cardBody}
+                        </button>
+                      )}
+                      {expanded ? (
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Edit reel: ${reel.caption ?? 'No caption'}`}
+                          className="absolute inset-0 flex flex-col overflow-y-auto bg-panel"
+                          onClick={(e) => {
+                            // Clicking the card again collapses it —
+                            // but never from an interactive descendant
+                            // (textarea, buttons, video controls),
+                            // which keep their own behaviour.
+                            if ((e.target as HTMLElement).closest('button, textarea, input, select, a, video')) return;
+                            collapseExpanded();
+                          }}
+                          onKeyDown={(e) => {
+                            // Enter/Space on the card itself collapses
+                            // it, mirroring the click — but never from
+                            // an interactive descendant (typing a space
+                            // in the textarea must not collapse it).
+                            if ((e.target as HTMLElement).closest('button, textarea, input, select, a, video')) return;
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              collapseExpanded();
+                            }
+                          }}
+                        >
+                          <div className="my-auto flex w-full flex-col items-center gap-3 p-4 text-center">
+                            <div className="flex w-full items-start justify-between gap-2 text-left">
+                              <span className="text-metadata text-ink-dim">{config.sourceIdentity} · Reel {reel.source_reel_id}</span>
+                              <button
+                                type="button"
+                                aria-label="Close editor"
+                                onClick={collapseExpanded}
+                                className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-sub outline-none hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
+                              >
+                                <XIcon className="size-4" aria-hidden />
+                              </button>
+                            </div>
+                            {reel.media_url ? (
+                              <video
+                                src={reel.media_url}
+                                controls
+                                preload="metadata"
+                                muted
+                                playsInline
+                                data-testid="adu-reel-editor-video"
+                                className="aspect-video w-3/4 rounded-md bg-black object-cover"
+                              />
+                            ) : (
+                              <p className="text-body text-ink-sub">No media URL for this reel yet.</p>
+                            )}
+                            <label className="font-medium" htmlFor="adu-caption">Caption Editor</label>
+                            <Textarea id="adu-caption" rows={3} value={captionDraft} onChange={(e) => setCaptionDraft(e.target.value)} />
+                            <p className="text-metadata text-ink-dim">{captionDraft.length} characters · Reel ID {reel.source_reel_id}</p>
+                            <div className="flex flex-wrap justify-center gap-1">
+                              {QUICK_TAGS.map((tag) => (
+                                <Button key={tag} type="button" variant="outline" onClick={() => setCaptionDraft((d) => `${d} ${tag}`.trim())}>{tag}</Button>
+                              ))}
+                            </div>
+                            <div className="flex flex-wrap justify-center gap-2">
+                              <Button type="button" onClick={() => void saveReelCaption(reel)}>Save Caption</Button>
+                              <Button type="button" variant="outline" onClick={() => void skipReel(reel)}>Skip</Button>
+                              <Button type="button" variant="outline" onClick={() => setDeleteReelId(reel.id)}>Delete</Button>
+                            </div>
+                            <p className="text-metadata text-ink-dim">Downloaded {reel.downloaded_at ? new Date(reel.downloaded_at).toLocaleString() : '—'}</p>
+                          </div>
+                        </div>
+                      ) : null}
+                    </Card>
+                  );
+                })}
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                 <p className="text-body text-ink-sub" data-testid="adu-reels-page-label">
@@ -898,6 +1024,24 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
                 </div>
               </div>
               {reelsLoading ? <p className="mt-2 text-body text-ink-sub">Loading reels…</p> : null}
+              <AlertDialog open={deleteReelId !== null} onOpenChange={(open) => { if (!open) setDeleteReelId(null); }}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Remove reel?</AlertDialogTitle>
+                    <AlertDialogDescription>Remove this reel from the queue? This cannot be undone.</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      variant="destructive"
+                      onClick={async (event) => {
+                        event.preventDefault();
+                        if (deleteReelId !== null) await deleteReel(deleteReelId);
+                      }}
+                    >Remove reel</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
               </>
             )}
           </TabsContent>

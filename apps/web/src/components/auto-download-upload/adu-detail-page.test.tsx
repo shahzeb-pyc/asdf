@@ -6,9 +6,10 @@
  * Behavioural pins, not markup: an Overview landing fetches the
  * config only; the Reels tab fetches on first visit and pages with
  * keepPreviousData; a caption save never sends an empty caption and
- * never refetches; skip/delete clear the selection and draft and
- * update the list locally; a config failure after reels loaded does
- * not discard the reels; Insights receives the config timezone.
+ * never refetches; expanding a card prefills its draft, and skip/delete
+ * remove the row locally and expand the next reel; a config failure
+ * after reels loaded does not discard the reels; Insights receives
+ * the config timezone.
  */
 import * as React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -75,7 +76,7 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const REEL1 = { id: 'r1', source_reel_id: 'sr-1', caption: 'First caption', media_url: null, status: 'downloaded', downloaded_at: '2026-11-12T10:00:00.000Z' };
+const REEL1 = { id: 'r1', source_reel_id: 'sr-1', caption: 'First caption', media_url: 'https://example.com/r1.mp4', status: 'downloaded', downloaded_at: '2026-11-12T10:00:00.000Z' };
 const REEL2 = { id: 'r2', source_reel_id: 'sr-2', caption: 'Second caption', media_url: null, status: 'downloaded', downloaded_at: '2026-11-12T09:00:00.000Z' };
 const REEL3 = { id: 'r3', source_reel_id: 'sr-3', caption: 'Third caption', media_url: null, status: 'downloaded', downloaded_at: '2026-11-12T08:00:00.000Z' };
 
@@ -89,21 +90,19 @@ interface FetchCall {
   body?: unknown;
 }
 
-/** `failConfigAfterFirst`: every config GET after the first 500s. */
-function setupFetch(opts: { failConfigAfterFirst?: boolean } = {}) {
+/** `failPatch`: a config PATCH (e.g. the automation switch) 500s. */
+function setupFetch(opts: { failPatch?: boolean } = {}) {
   const calls: FetchCall[] = [];
-  let configGets = 0;
   const fetchMock = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     const method = init?.method ?? 'GET';
     calls.push({ url, method, body: init?.body ? JSON.parse(init.body) : undefined });
     if (url === BASE && method === 'GET') {
-      configGets += 1;
-      if (opts.failConfigAfterFirst && configGets > 1) {
-        return jsonResponse({ error: 'Boom.' }, false, 500);
-      }
       return jsonResponse({ config: makeConfig() });
     }
-    if (url === BASE && method === 'PATCH') return jsonResponse({ config: makeConfig() });
+    if (url === BASE && method === 'PATCH') {
+      if (opts.failPatch) return jsonResponse({ error: 'Boom.' }, false, 500);
+      return jsonResponse({ config: makeConfig() });
+    }
     if (url === `${BASE}/reels` && method === 'POST') return jsonResponse({ queued: true });
     if (url.startsWith(`${BASE}/reels?`) && method === 'GET') {
       const page = new URL(url, 'http://x').searchParams.get('page');
@@ -130,9 +129,15 @@ async function openReelsTab() {
   // Radix TabsTrigger activates on mousedown, which fireEvent.click
   // never fires — use a real user click for tab switches.
   await userEvent.setup().click(screen.getByTestId('adu-detail-tab-reels-btn'));
-  // The caption appears twice once loaded (grid card + synced draft),
-  // so wait on the pagination label instead of the caption text.
+  // Nothing is expanded on first visit (spec 179), so wait on the
+  // pagination label instead of any editor content.
   await screen.findByTestId('adu-reels-page-label');
+}
+
+// The card is the only way into the editor (spec 179): click the
+// compact card, then the caption editor belongs to that reel.
+function expandCard(caption: string) {
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(caption) }));
 }
 
 async function clickTab(testId: string) {
@@ -198,13 +203,14 @@ describe('AduDetailPage (adu-opt-c)', { timeout: 20000 }, () => {
     expect(getCalls(calls, 'GET', `${BASE}/reels?`)).toHaveLength(0);
   });
 
-  it('F19/F14: the caption draft starts from the selected reel, and Save sends that caption with no refetch', async () => {
+  it('F19/F14: the caption draft starts from the expanded reel, and Save sends that caption with no refetch', async () => {
     const { calls } = setupFetch();
     renderPage();
     await screen.findByText('Ellie Blossom');
     await openReelsTab();
-    // The workspace auto-selects the first reel: its caption is the
+    // Clicking the card expands it in place: its caption is the
     // draft — never an empty string that would wipe it on save.
+    expandCard('First caption');
     expect(screen.getByDisplayValue('First caption')).toBeInTheDocument();
     const getsBefore = getCalls(calls, 'GET', BASE).length;
     fireEvent.click(screen.getByRole('button', { name: 'Save Caption' }));
@@ -216,30 +222,31 @@ describe('AduDetailPage (adu-opt-c)', { timeout: 20000 }, () => {
     expect(screen.getAllByText('First caption').length).toBeGreaterThan(0);
   });
 
-  it('F19/F14: Skip clears the selection and draft, removes the row locally, and never refetches', async () => {
+  it('F19/F14: Skip removes the row locally, expands the next reel, and never refetches', async () => {
     const { calls } = setupFetch();
     renderPage();
     await screen.findByText('Ellie Blossom');
     await openReelsTab();
+    expandCard('First caption');
     const getsBefore = calls.filter((c) => c.method === 'GET').length;
     fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
     await screen.findByText('Reel skipped.');
     expect(calls.find((c) => c.method === 'POST' && c.url === `${BASE}/reels/r1`)?.body).toEqual({ action: 'skip' });
-    // The skipped reel is gone; the workspace now shows the next
-    // reel with ITS caption — a later save cannot 400 on the skipped
-    // reel.
+    // The skipped reel is gone; the next reel expands with ITS
+    // caption — a later save cannot 400 on the skipped reel.
     expect(screen.queryByText('First caption')).not.toBeInTheDocument();
     expect(await screen.findByDisplayValue('Second caption')).toBeInTheDocument();
     expect(calls.filter((c) => c.method === 'GET').length).toBe(getsBefore);
   });
 
-  it('F19/F14: Delete clears the selection and draft and removes the row locally', async () => {
+  it('F19/F14: Delete removes the row locally and expands the next reel', async () => {
     setupFetch();
     renderPage();
     await screen.findByText('Ellie Blossom');
     await openReelsTab();
-    // Two "Delete" buttons exist (page header first, reel workspace
-    // second); the workspace one removes the selected reel.
+    expandCard('First caption');
+    // Two "Delete" buttons exist (page header first, expanded card
+    // second); the card one removes the expanded reel.
     const deletes = screen.getAllByRole('button', { name: 'Delete' });
     fireEvent.click(deletes[1]);
     fireEvent.click(screen.getByRole('button', { name: 'Remove reel' }));
@@ -248,19 +255,41 @@ describe('AduDetailPage (adu-opt-c)', { timeout: 20000 }, () => {
     expect(await screen.findByDisplayValue('Second caption')).toBeInTheDocument();
   });
 
-  it('F17: a config fetch failure after reels loaded keeps the reels on screen', async () => {
-    const { calls } = setupFetch({ failConfigAfterFirst: true });
+  it('Spec 179: Escape collapses the expanded card and the compact card returns', async () => {
+    setupFetch();
     renderPage();
     await screen.findByText('Ellie Blossom');
     await openReelsTab();
-    // Discover triggers a silent config-only refresh, which now 500s.
-    fireEvent.click(screen.getByRole('button', { name: 'Discover reels' }));
-    await screen.findByText('Discovery done.');
-    expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+    expandCard('First caption');
+    expect(screen.getByDisplayValue('First caption')).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByTestId('adu-reels-grid'), { key: 'Escape' });
+    expect(screen.queryByDisplayValue('First caption')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /First caption/ })).toBeInTheDocument();
+  });
+
+  it('Spec 179: the Close editor button collapses the expanded card', async () => {
+    setupFetch();
+    renderPage();
+    await screen.findByText('Ellie Blossom');
+    await openReelsTab();
+    expandCard('First caption');
+    fireEvent.click(screen.getByRole('button', { name: 'Close editor' }));
+    expect(screen.queryByDisplayValue('First caption')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /First caption/ })).toBeInTheDocument();
+  });
+
+  it('F17: a failed automation PATCH shows the error and keeps the reels on screen', async () => {
+    const { calls } = setupFetch({ failPatch: true });
+    renderPage();
+    await screen.findByText('Ellie Blossom');
+    await openReelsTab();
+    // The automation toggle PATCHes the config; the 500 surfaces as
+    // an error banner and the loaded reels stay on screen.
+    await userEvent.setup().click(screen.getByRole('switch', { name: /Automation/ }));
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.getByText('Boom.')).toBeInTheDocument();
     expect(screen.getAllByText('First caption').length).toBeGreaterThan(0);
-    // Exactly two config GETs (initial + the silent refresh after
-    // Discover) — the reels GET is a different URL, not a refetch.
-    expect(calls.filter((c) => c.method === 'GET' && c.url === BASE).length).toBe(2);
+    expect(calls.find((c) => c.method === 'PATCH' && c.url === BASE)).toBeDefined();
   });
 
   it('F18: Insights receives the config timezone, not UTC', async () => {

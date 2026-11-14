@@ -5,16 +5,14 @@ import { aduContext } from '@/lib/server/adu';
  * Reels queue.
  *
  * GET: downloaded-only queue, newest first (the old Reels tab).
- * POST { action: 'discover' }: re-queues the config for discovery by
- *   the VPS scraper service (sync_status -> 'pending'). Discovery
- *   itself does NOT run in the web app — it lives in apps/adu-scraper
- *   (yt-dlp + Puppeteer), exactly like the old fbuploadpro, and the
- *   scraper claims pending configs on its own loop. If the scraper
- *   is not running, the config stays 'pending' ("Scrape pending").
  * There is NO 'download' action in the web app: downloading is the
  * VPS downloader service (apps/adu-downloader), which claims pending
  * reels itself, downloads via yt-dlp + aria2, and copies them to the
  * R2 buffer. The old webapp never downloaded in-request either.
+ * (Spec 179 removed the Discover reels button and with it the only
+ * caller of the old POST { action: 'discover' } re-queue, so the
+ * POST handler is gone too — the IG/Threads reels routes keep
+ * theirs, their detail pages still use them.)
  */
 export async function GET(
   request: NextRequest,
@@ -61,44 +59,4 @@ export async function GET(
     total,
     totalPages: Math.max(1, Math.ceil(total / REELS_PAGE_SIZE)),
   });
-}
-
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ subdomain: string; id: string }> }
-) {
-  const { subdomain, id } = await params;
-  const resolved = await aduContext(request, subdomain);
-  if ('errorResponse' in resolved) return resolved.errorResponse;
-  const { workspaceId, supabase } = resolved.context;
-  const body = await request.json().catch(() => ({}));
-  const action = (body as { action?: string }).action;
-
-  const { data: config, error: configError } = await supabase
-    .from('adu_configs')
-    .select('*')
-    .eq('workspace_id', workspaceId)
-    .eq('id', id)
-    .maybeSingle();
-  if (configError || !config) {
-    return NextResponse.json({ error: 'Page not found.' }, { status: 404 });
-  }
-
-  if (action === 'discover') {
-    // Re-queue only. The scraper service claims this config on its
-    // next loop; nothing is discovered in this request.
-    const { error: updateError } = await supabase
-      .from('adu_configs')
-      .update({ sync_status: 'pending', updated_at: new Date().toISOString() })
-      .eq('id', id);
-    if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 500 });
-    }
-    return NextResponse.json({
-      queued: true,
-      message: 'Discovery queued. The scraper service picks up this page on its next run.',
-    });
-  }
-
-  return NextResponse.json({ error: 'Unknown action.' }, { status: 400 });
 }
