@@ -192,5 +192,10 @@ export function isWhiteLabelBlockedApiPath(brand: Brand, pathname: string): bool
   if (lower === '/api/auth/reset-password' || lower.startsWith('/api/auth/reset-password/')) {
     return true;
   }
-  return /^\/api\/tenant\/[^/]+\/billing(\/.*)?$/.test(lower);
+  if (/^\/api\/tenant\/[^/]+\/billing(\/.*)?$/.test(lower)) return true;
+  // The Muse API (keys + activity) must be blocked exactly like billing:
+  // the menu and page are hidden, but without this a white-label student
+  // with a session could still mint a working Muse key by direct call.
+  if (/^\/api\/tenant\/[^/]+\/muse(\/.*)?$/.test(lower)) return true;
+  return false;
 }

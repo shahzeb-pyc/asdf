@@ -174,6 +174,18 @@ describe('isWhiteLabelBlockedApiPath', () => {
     ).toBe(true);
   });
 
+  it('blocks tenant Muse APIs on nextrise (keys + activity)', () => {
+    expect(isWhiteLabelBlockedApiPath('nextrise', '/api/tenant/student1/muse/keys')).toBe(
+      true
+    );
+    expect(
+      isWhiteLabelBlockedApiPath('nextrise', '/api/tenant/student1/muse/keys/abc-123')
+    ).toBe(true);
+    expect(isWhiteLabelBlockedApiPath('nextrise', '/api/tenant/student1/muse/activity')).toBe(
+      true
+    );
+  });
+
   it('keeps login, session and logout open on nextrise', () => {
     expect(isWhiteLabelBlockedApiPath('nextrise', '/api/auth/login')).toBe(false);
     expect(isWhiteLabelBlockedApiPath('nextrise', '/api/auth/session')).toBe(false);
@@ -185,5 +197,8 @@ describe('isWhiteLabelBlockedApiPath', () => {
     expect(
       isWhiteLabelBlockedApiPath('fbuploadpro', '/api/tenant/student1/billing')
     ).toBe(false);
+    expect(isWhiteLabelBlockedApiPath('fbuploadpro', '/api/tenant/student1/muse/keys')).toBe(
+      false
+    );
   });
 });

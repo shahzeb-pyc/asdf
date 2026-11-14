@@ -315,7 +315,7 @@ describe('middleware white-label brand (spec 191)', () => {
     );
   });
 
-  it('signup, password-reset and billing APIs 404 on the white-label brand', async () => {
+  it('signup, password-reset, billing and Muse APIs 404 on the white-label brand', async () => {
     for (const path of [
       '/api/auth/signup',
       '/api/auth/signup/verify-otp',
@@ -323,6 +323,9 @@ describe('middleware white-label brand (spec 191)', () => {
       '/api/auth/reset-password',
       '/api/tenant/student1/billing',
       '/api/tenant/student1/billing/payments',
+      '/api/tenant/student1/muse/keys',
+      '/api/tenant/student1/muse/keys/abc-123',
+      '/api/tenant/student1/muse/activity',
     ]) {
       const response = await middleware(
         requestWithCookie(`https://app.nextrisehq.com${path}`, null)
@@ -353,5 +356,11 @@ describe('middleware white-label brand (spec 191)', () => {
       requestWithCookie('https://acme.fbuploadpro.com/billing', token)
     );
     expect(rewriteTarget(billing)).toBe('https://acme.fbuploadpro.com/tenant/acme/billing');
+
+    // The Muse API still passes through on OUR brand (not a 404).
+    const museApi = await middleware(
+      requestWithCookie('https://app.fbuploadpro.com/api/tenant/acme/muse/keys', token)
+    );
+    expect(museApi.status).not.toBe(404);
   });
 });
