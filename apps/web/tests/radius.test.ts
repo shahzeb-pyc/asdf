@@ -1,12 +1,11 @@
 /**
- * Radius-scale drift guard (spec 186 — Rounded).
+ * Radius-scale drift guard (spec 183 — Squared).
  *
- * The Rounded roundness pick (owner 2026-11-14, re-deciding the Squared
- * pick of spec 183) re-pins the named radius ladder in
- * tokens/primitive.json. These assertions fail if any copy of the scale
- * drifts from the others — the token source, the generated :root
- * variables, or the generated theme export — so the scale cannot
- * silently fork, and they fail on the old Squared values.
+ * The Squared roundness pick (owner 2026-11-13) re-pins the named radius
+ * ladder in tokens/primitive.json. These assertions fail if any copy of
+ * the scale drifts from the others — the token source, the generated
+ * :root variables, or the generated theme export — so the scale cannot
+ * silently fork, and they fail on the old Direction 4 values.
  *
  * Honest scope note (see the PR body): the token-scale block alone could
  * not catch the spacing bug (verifier SEND BACK on PR #255), because the
@@ -33,16 +32,16 @@ const primitiveTokens = JSON.parse(
   radius: Record<'xs' | 'sm' | 'md' | 'full', { $value: string }>;
 };
 
-/** Rounded scale (spec 186): xs 12, sm 20, md 28, full unchanged. */
+/** Squared scale (spec 183): xs 4, sm 6, md 8, full unchanged. */
 const EXPECTED: Record<keyof typeof primitiveTokens.radius, string> = {
-  xs: '12px',
-  sm: '20px',
-  md: '28px',
+  xs: '4px',
+  sm: '6px',
+  md: '8px',
   full: '9999px',
 };
 
-describe('radius scale (spec 186 — Rounded)', () => {
-  it('pins the Rounded values in the token source of truth', () => {
+describe('radius scale (spec 183 — Squared)', () => {
+  it('pins the Squared values in the token source of truth', () => {
     for (const [step, value] of Object.entries(EXPECTED)) {
       expect(primitiveTokens.radius[step as keyof typeof EXPECTED].$value).toBe(
         value
@@ -50,54 +49,49 @@ describe('radius scale (spec 186 — Rounded)', () => {
     }
   });
 
-  it('pins the Rounded values in the generated :root variables', () => {
+  it('pins the Squared values in the generated :root variables', () => {
     for (const [step, value] of Object.entries(EXPECTED)) {
       expect(generatedCss).toContain(`--radius-${step}: ${value};`);
     }
   });
 
-  it('pins the Rounded values in the generated theme export', () => {
-    expect(RADII.xs).toBe('12px');
-    expect(RADII.sm).toBe('20px');
-    expect(RADII.md).toBe('28px');
+  it('pins the Squared values in the generated theme export', () => {
+    expect(RADII.xs).toBe('4px');
+    expect(RADII.sm).toBe('6px');
+    expect(RADII.md).toBe('8px');
     expect(RADII.full).toBe('9999px');
   });
 });
 
 /**
- * Surface wiring (spec 186).
+ * Surface wiring (spec 183).
  *
- * The picked values are display roles, not token names. The ladder has
- * three steps for five surfaces, so two surfaces render off-pick — both
- * disclosed here and in the PR body (the #256 logo-mark precedent):
- * the card takes the sm step (20px, exact), the nav takes the xs step
- * (12px, exact — re-wired from sm), the avatar tiles and the logo-mark
- * tiles share the xs step (12px — tiles 4px under their 16px pick, mark
- * 3px over its 9px pick), the app frame takes the md step (28px,
- * exact), and pill buttons take the full step (unchanged). The default
- * button keeps the sm step (renders 20px; on the standard 36px button
- * height that caps to a pill silhouette, so "buttons stay pill" holds
- * in effect — same precedent as spec 183). These assertions pin each
- * surface to its utility, so a revert of any link fails. The
- * real-browser check proves the computed values; this test pins the
- * wiring.
+ * The picked values are display roles, not token names: the card takes
+ * the sm step (6px), the nav takes sm (6px), the avatar tiles and the
+ * logo-mark tiles take the xs step (4px — the closest step to the 3px
+ * mark pick, which has no token home), the app frame takes the md step
+ * (8px), and pill buttons take the full step (unchanged). These
+ * assertions pin each surface to its utility, so a revert of any link
+ * fails. The real-browser check proves the computed values; this test
+ * pins the wiring.
  */
 
 /** [component source file, class fragment it must carry]. */
 const SURFACES: Array<[string, string]> = [
-  // Card → sm (20px, exact).
+  // Card → sm (6px).
   ['src/components/pages/page-card.tsx', 'flex-col rounded-sm border bg-panel p-card'],
-  // Nav → xs (12px, exact — re-wired from sm).
-  ['src/components/shell/app-sidebar.tsx', 'rounded-xs px-nav py-nav'],
+  // Nav item → sm (6px).
+  ['src/components/shell/app-sidebar.tsx', 'rounded-sm px-nav py-nav'],
+  // Sidebar menu buttons → sm (6px; reverted from the Rounded xs re-wire).
   [
     'src/components/shared/ui/sidebar.tsx',
-    'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-xs p-2',
+    'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-sm p-2',
   ],
   [
     'src/components/shared/ui/sidebar.tsx',
-    'flex min-h-8 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-xs px-2',
+    'flex min-h-8 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-sm px-2',
   ],
-  // Avatar tiles → xs (12px; 4px under the 16px pick).
+  // Avatar tiles → xs (4px).
   [
     'src/components/workspace/workspace-switcher.tsx',
     'rounded-xs border border-link bg-primary text-body font-bold text-on-primary',
@@ -106,7 +100,7 @@ const SURFACES: Array<[string, string]> = [
     'src/components/workspace/workspace-switcher-list.tsx',
     'rounded-xs border border-line bg-subtle text-metadata font-semibold text-ink',
   ],
-  // Logo-mark tiles → xs (12px; 3px over the 9px pick).
+  // Logo-mark tiles → xs (4px, closest step to the 3px pick).
   [
     'src/components/shell/app-sidebar.tsx',
     'rounded-xs border border-line bg-canvas',
@@ -119,7 +113,7 @@ const SURFACES: Array<[string, string]> = [
     'src/components/auth/login-showcase-panel.tsx',
     'rounded-xs border border-line bg-subtle',
   ],
-  // App frame surfaces → md (28px, exact).
+  // App frame surfaces → md (8px).
   [
     'src/components/shared/ui/dialog.tsx',
     'overflow-y-auto rounded-md border border-line bg-panel',
@@ -137,7 +131,7 @@ const SURFACES: Array<[string, string]> = [
   ['src/components/shared/ui/button.tsx', 'default: "rounded-sm"'],
 ];
 
-describe('surface wiring (spec 186)', () => {
+describe('surface wiring (spec 183)', () => {
   it('carries the token utilities on the key surfaces', () => {
     for (const [file, fragment] of SURFACES) {
       const source = readFileSync(path.resolve(process.cwd(), file), 'utf8');
@@ -157,7 +151,7 @@ describe('surface wiring (spec 186)', () => {
     expect(cardLine).not.toContain('rounded-md');
   });
 
-  it('does not leave the sidebar nav items on the old sm step', () => {
+  it('does not leave the sidebar nav items on the old xs step', () => {
     const sidebarSource = readFileSync(
       path.resolve(process.cwd(), 'src/components/shared/ui/sidebar.tsx'),
       'utf8'
@@ -166,7 +160,14 @@ describe('surface wiring (spec 186)', () => {
       .split('\n')
       .find((line) => line.includes('peer/menu-button'));
     expect(menuButtonLine).toBeDefined();
-    expect(menuButtonLine).not.toContain('rounded-sm');
+    expect(menuButtonLine).toContain('rounded-sm');
+    expect(menuButtonLine).not.toContain('rounded-xs');
+    const subButtonLine = sidebarSource
+      .split('\n')
+      .find((line) => line.includes('min-h-8 min-w-0 -translate-x-px'));
+    expect(subButtonLine).toBeDefined();
+    expect(subButtonLine).toContain('rounded-sm');
+    expect(subButtonLine).not.toContain('rounded-xs');
     const appSidebarSource = readFileSync(
       path.resolve(process.cwd(), 'src/components/shell/app-sidebar.tsx'),
       'utf8'
@@ -175,6 +176,7 @@ describe('surface wiring (spec 186)', () => {
       .split('\n')
       .find((line) => line.includes('px-nav py-nav'));
     expect(brandingLine).toBeDefined();
-    expect(brandingLine).not.toContain('rounded-sm');
+    expect(brandingLine).toContain('rounded-sm');
+    expect(brandingLine).not.toContain('rounded-xs');
   });
 });

@@ -121,9 +121,9 @@
   --motion-easing-linear: cubic-bezier(0, 0, 1, 1);
   --motion-easing-standard: cubic-bezier(0.34, 1.4, 0.64, 1);
   --radius-full: 9999px;
-  --radius-md: 28px;
-  --radius-sm: 20px;
-  --radius-xs: 12px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+  --radius-xs: 4px;
   --shadow-dark-card: 0 4px 16px rgba(0, 0, 0, 0.62);
   --shadow-dark-elevated: 0 24px 48px rgba(0, 0, 0, 0.91);
   --shadow-dark-modal: 0 28px 90px rgba(0, 0, 0, 0.95);
