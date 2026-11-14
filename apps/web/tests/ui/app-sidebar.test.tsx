@@ -376,7 +376,7 @@ describe('spec 187 sidebar polish', () => {
     expect(accounts.getAttribute('data-size')).toBe('md');
   });
 
-  it('seller/admin rows stay 36px and unstyled without the prop', () => {
+  it('seller/admin rows stay default-sized and unstyled without the prop', () => {
     // Token-exact check: the primitive always carries the
     // data-[active=true]:font-medium variant, so a substring check
     // would false-positive — only a bare `font-medium` token counts.

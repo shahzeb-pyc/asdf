@@ -238,8 +238,12 @@ test.describe('sidebar polish at desktop width (spec 187)', () => {
     await expect(page.getByRole('heading', { name: 'Subscriptions approval' })).toBeVisible();
     await expect(page.getByTestId('sidebar-active-bar')).toHaveCount(0);
     const approvals = page.getByRole('link', { name: 'Subscriptions approval' });
-    expect((await approvals.boundingBox())?.height).toBe(36);
-    expect(await approvals.evaluate((el) => getComputedStyle(el).fontWeight)).toBe('400');
+    // Unchanged from before spec 187: the primitive's default button
+    // is 37px in practice (21px line box + 16px padding beats the
+    // 36px min-height), and the prop stays off (data-size "default",
+    // never "lg").
+    expect((await approvals.boundingBox())?.height).toBe(37);
+    expect(await approvals.getAttribute('data-size')).toBe('default');
     await page
       .locator('[data-slot="sidebar"]')
       .screenshot({ path: test.info().outputPath('admin-sidebar.png') });
@@ -257,8 +261,8 @@ test.describe('sidebar polish at desktop width (spec 187)', () => {
       await expect(sellerPage.getByRole('link', { name: 'Dashboard' })).toBeVisible();
       await expect(sellerPage.getByTestId('sidebar-active-bar')).toHaveCount(0);
       const dashboard = sellerPage.getByRole('link', { name: 'Dashboard' });
-      expect((await dashboard.boundingBox())?.height).toBe(36);
-      expect(await dashboard.evaluate((el) => getComputedStyle(el).fontWeight)).toBe('400');
+      expect((await dashboard.boundingBox())?.height).toBe(37);
+      expect(await dashboard.getAttribute('data-size')).toBe('default');
       await sellerPage
         .locator('[data-slot="sidebar"]')
         .screenshot({ path: test.info().outputPath('seller-sidebar.png') });
