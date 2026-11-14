@@ -23,6 +23,7 @@ describe('seller login redirect', () => {
         subdomain: 'sellerlogin',
         role: 'seller',
         status: 'active',
+        brand: 'fbuploadpro',
       },
       'Password123!'
     );

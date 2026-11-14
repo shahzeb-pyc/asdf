@@ -99,6 +99,7 @@ describe('Auth API Endpoints (Spec 009 & 014 Hardened)', () => {
         subdomain: 'existing',
         role: 'user',
         status: 'active',
+        brand: 'fbuploadpro',
       });
 
       const req = new NextRequest('http://localhost:3000/api/auth/signup', {
@@ -131,6 +132,7 @@ describe('Auth API Endpoints (Spec 009 & 014 Hardened)', () => {
           subdomain: 'activecorp',
           role: 'user',
           status: 'active',
+        brand: 'fbuploadpro',
         },
         'Password123!'
       );
@@ -167,6 +169,7 @@ describe('Auth API Endpoints (Spec 009 & 014 Hardened)', () => {
           subdomain: 'bannedcorp',
           role: 'user',
           status: 'suspended',
+        brand: 'fbuploadpro',
         },
         'Password123!'
       );

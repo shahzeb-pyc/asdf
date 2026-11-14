@@ -24,7 +24,14 @@ export function getConfiguredRootDomain(): string {
 
 /** Brand of the current request, from the host header. */
 export async function getRequestBrand(): Promise<Brand> {
-  const host = (await headers()).get('host');
+  // Outside a request scope (tests, static generation) headers()
+  // throws — fall back to our brand, the same default the provider uses.
+  let host: string | null = null;
+  try {
+    host = (await headers()).get('host');
+  } catch {
+    host = null;
+  }
   return resolveBrandFromHost(host);
 }
 
@@ -77,11 +84,11 @@ export function getBrandConfig(brand: Brand): BrandConfig {
  * 'localhost:3000' for logout).
  */
 export function getRequestBrandRoot(
-  request: { headers: { get(name: string): string | null } },
+  request: { headers: { get(name: string): string | null } } | undefined | null,
   fallback = '',
 ): string {
   const configured = process.env.NEXT_PUBLIC_ROOT_DOMAIN || fallback;
-  return getBrandTenantRoot(getRequestBrandFromHost(request.headers.get('host')), configured);
+  return getBrandTenantRoot(getRequestBrandFromHost(request?.headers.get('host') ?? null), configured);
 }
 
 /** WhatsApp support URL for a brand (number + message both brand-aware). */

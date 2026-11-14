@@ -23,6 +23,7 @@ describe('admin login redirect', () => {
         subdomain: 'e2e',
         role: 'admin',
         status: 'active',
+        brand: 'fbuploadpro',
       },
       'Password123!'
     );
@@ -46,6 +47,7 @@ describe('admin login redirect', () => {
         subdomain: 'e2e',
         role: 'user',
         status: 'active',
+        brand: 'fbuploadpro',
       },
       'Password123!'
     );
@@ -67,6 +69,7 @@ describe('admin login redirect', () => {
         subdomain: 'e2e',
         role: 'admin',
         status: 'active',
+        brand: 'fbuploadpro',
       },
       'Password123!'
     );
@@ -88,6 +91,7 @@ describe('admin login redirect', () => {
         subdomain: 'e2e',
         role: 'admin',
         status: 'active',
+        brand: 'fbuploadpro',
       },
       'Password123!'
     );

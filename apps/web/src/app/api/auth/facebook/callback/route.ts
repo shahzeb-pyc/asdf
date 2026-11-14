@@ -470,7 +470,7 @@ function buildPostConnectRedirect(
   return NextResponse.redirect(destinationUrl);
 }
 
-function getCallbackEnvConfig() {
+function getCallbackEnvConfig(request: NextRequest) {
   const sessionSecret = getSessionSecret();
   const encryptionKey = getTokenEncryptionKey();
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
@@ -635,7 +635,7 @@ export async function handleFacebookCallback(
     encryptionKey,
     appUrl,
     rootDomain,
-  } = getCallbackEnvConfig();
+  } = getCallbackEnvConfig(request);
 
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get('code');

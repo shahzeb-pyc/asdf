@@ -281,7 +281,7 @@ function buildPostConnectRedirect(
   return NextResponse.redirect(destinationUrl);
 }
 
-function getCallbackEnvConfig() {
+function getCallbackEnvConfig(request: NextRequest) {
   const sessionSecret = getSessionSecret();
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
   const rootDomain = getRequestBrandRoot(request);
@@ -326,7 +326,7 @@ export async function handleInstagramCallback(
   fetchFn: typeof fetch = globalThis.fetch
 ): Promise<NextResponse> {
   const { sessionSecret, appUrl, rootDomain, redirectUri } =
-    getCallbackEnvConfig();
+    getCallbackEnvConfig(request);
 
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get('code');

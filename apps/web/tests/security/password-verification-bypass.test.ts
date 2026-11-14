@@ -25,6 +25,7 @@ describe('ISSUE-04: Password Verification Bypass in Local/Fallback loginTenantUs
       subdomain: 'test-ws',
       role: 'user',
       status: 'active',
+        brand: 'fbuploadpro',
     });
 
     // Attempting login with ANY password (or empty password) must fail with 'Invalid email or password'
@@ -49,6 +50,7 @@ describe('ISSUE-04: Password Verification Bypass in Local/Fallback loginTenantUs
         subdomain: 'valid-ws',
         role: 'user',
         status: 'active',
+        brand: 'fbuploadpro',
       },
       correctPassword
     );
