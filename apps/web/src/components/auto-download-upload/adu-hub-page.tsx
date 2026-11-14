@@ -439,7 +439,7 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
       onKeyDown={handleKeyDown}
       onMouseEnter={prefetchDetail}
       onFocus={prefetchDetail}
-      className="group flex min-w-0 cursor-pointer flex-col rounded-md border border-line bg-panel p-6 shadow-card transition outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
+      className="group flex min-w-0 cursor-pointer flex-col rounded-md border border-line bg-panel p-6 shadow-card animate-page-enter transition-all duration-fast ease-enter outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
     >
       {/* Top row: avatar with status ring + identity + circled arrow. */}
       <div className="flex items-start gap-4">
@@ -518,7 +518,7 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
         <span
           data-testid="adu-page-card-arrow"
           aria-hidden
-          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-sub transition group-hover:border-link group-hover:text-link"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-sub transition-all duration-fast ease-enter group-hover:border-link group-hover:text-link"
         >
           <MoveUpRightIcon className="size-4" />
         </span>

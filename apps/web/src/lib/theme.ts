@@ -235,14 +235,14 @@ export const THEME = {
 /** Motion scale — duration tokens + easings (exit faster than enter). */
 export const MOTION = {
   duration: {
-    fast: '100ms',
-    base: '150ms',
-    slow: '200ms',
-    slower: '300ms',
+    fast: '200ms',
+    base: '300ms',
+    slow: '420ms',
+    slower: '520ms',
   },
   easing: {
-    standard: 'cubic-bezier(0.4, 0, 0.2, 1)',
-    enter: 'cubic-bezier(0, 0, 0.2, 1)',
+    standard: 'cubic-bezier(0.34, 1.4, 0.64, 1)',
+    enter: 'cubic-bezier(0.34, 1.4, 0.64, 1)',
     exit: 'cubic-bezier(0.4, 0, 1, 1)',
     linear: 'cubic-bezier(0, 0, 1, 1)',
   },

@@ -169,7 +169,7 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
       data-testid={`tiktok-mirror-card-${mirror.id}`}
       onClick={() => onSelect?.(mirror)}
       className={cn(
-        'group flex min-w-0 w-full cursor-pointer flex-col rounded-md border bg-panel p-6 text-left shadow-card transition hover:-translate-y-0.5 hover:shadow-elevated',
+        'group flex min-w-0 w-full cursor-pointer flex-col rounded-md border bg-panel p-6 text-left shadow-card animate-page-enter transition-all duration-fast ease-enter hover:-translate-y-0.5 hover:shadow-elevated',
         highlighted ? 'border-link ring-2 ring-link/40' : 'border-line hover:border-brand-emerald/40'
       )}
     >
@@ -244,7 +244,7 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
         <span
           data-testid="tiktok-mirror-card-arrow"
           aria-hidden
-          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-sub transition group-hover:border-link group-hover:text-link"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-sub transition-all duration-fast ease-enter group-hover:border-link group-hover:text-link"
         >
           <MoveUpRightIcon className="size-4" />
         </span>

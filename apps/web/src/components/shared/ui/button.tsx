@@ -26,14 +26,14 @@ import { Slot } from "radix-ui";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 text-body font-medium whitespace-nowrap transition-colors duration-base ease-standard outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-signal-critical [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-4",
+  "inline-flex shrink-0 items-center justify-center gap-2 text-body font-medium whitespace-nowrap transition duration-fast ease-enter outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-signal-critical [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-4",
   {
     variants: {
       variant: {
-        default: "border border-link bg-primary text-on-primary shadow-elevated hover:bg-brand-peru dark:hover:bg-brand-pale",
-        destructive: "bg-brand-rose text-neutral-white hover:bg-brand-rose focus-visible:outline-signal-critical",
-        outline: "border border-line bg-panel text-ink shadow-card hover:bg-hover",
-        secondary: "bg-subtle text-ink hover:bg-hover",
+        default: "border border-link bg-primary text-on-primary shadow-elevated hover:-translate-y-px hover:bg-brand-peru dark:hover:bg-brand-pale",
+        destructive: "bg-brand-rose text-neutral-white hover:-translate-y-px hover:bg-brand-rose focus-visible:outline-signal-critical",
+        outline: "border border-line bg-panel text-ink shadow-card hover:-translate-y-px hover:bg-hover",
+        secondary: "bg-subtle text-ink hover:-translate-y-px hover:bg-hover",
         ghost: "text-ink hover:bg-hover",
         link: "text-link underline-offset-4 hover:underline",
       },

@@ -316,7 +316,7 @@ export function AccountCard({
       data-testid={`account-card-${account.id}`}
       data-highlighted={highlighted ? 'true' : undefined}
       className={cn(
-        'flex min-h-40 flex-col justify-between rounded-md border bg-panel p-6 shadow-card transition hover:-translate-y-0.5 hover:shadow-elevated',
+        'flex min-h-40 flex-col justify-between rounded-md border bg-panel p-6 shadow-card animate-page-enter transition-all duration-fast ease-enter hover:-translate-y-0.5 hover:shadow-elevated',
         highlighted
           ? 'border-link ring-2 ring-link/40'
           : isExpired

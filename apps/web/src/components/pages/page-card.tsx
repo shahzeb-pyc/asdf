@@ -326,7 +326,7 @@ export function PageCard({
       onClick={handleActivate}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group flex min-w-0 cursor-pointer flex-col rounded-sm border bg-panel p-card shadow-card transition outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link',
+        'group flex min-w-0 cursor-pointer flex-col rounded-sm border bg-panel p-card shadow-card animate-page-enter transition-all duration-fast ease-enter outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link',
         highlighted
           ? 'border-link ring-2 ring-link/40'
           : needsAttention
@@ -420,7 +420,7 @@ export function PageCard({
         <span
           data-testid="page-card-arrow"
           aria-hidden
-          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-sub transition group-hover:border-link group-hover:text-link"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-sub transition-all duration-fast ease-enter group-hover:border-link group-hover:text-link"
         >
           <MoveUpRightIcon className="size-4" />
         </span>

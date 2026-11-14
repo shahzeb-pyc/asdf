@@ -198,15 +198,38 @@
      same change (the one sanctioned exception to no-copied-values, forced by
      the media-query limitation). */
 
-  /* Motion */
-  --duration-fast: var(--motion-duration-fast);
-  --duration-base: var(--motion-duration-base);
-  --duration-slow: var(--motion-duration-slow);
-  --duration-slower: var(--motion-duration-slower);
+  /* Motion — durations live in the `--transition-duration-*` namespace:
+     that is the namespace Tailwind v4's `duration-*` utility resolves
+     (`--duration-*` generates NOTHING — verified in the built CSS: no
+     `.duration-fast` rule existed, so every `duration-*` class in the
+     app silently fell back to Tailwind's 150ms default and the motion
+     tokens never drove a single transition. Same failure class as the
+     spacing SEND BACK on PR 255: a token-only change that moves
+     nothing the user sees. Renaming the four aliases here is the fix;
+     the `duration-*` classes in the components are unchanged. */
+  --transition-duration-fast: var(--motion-duration-fast);
+  --transition-duration-base: var(--motion-duration-base);
+  --transition-duration-slow: var(--motion-duration-slow);
+  --transition-duration-slower: var(--motion-duration-slower);
   --ease-standard: var(--motion-easing-standard);
   --ease-enter: var(--motion-easing-enter);
   --ease-exit: var(--motion-easing-exit);
   --ease-linear: var(--motion-easing-linear);
+
+  /* Page entrance (spec 185 — Expressive): the pick's entrance is
+     380ms rising 14px from opacity 0. 380ms is literal here, cited to
+     the pick: no duration token equals it and inventing one is
+     forbidden, so the value lives only in this one animation token.
+     The easing is the spring token (pure var() reference). Fill is
+     `backwards`, not the mock's `both`: `both` would retain the final
+     keyframe (translateY(0)) as the computed transform after the
+     animation ends. The hover lift uses the separate `translate`
+     property, so it would still compose — but `backwards` applies the
+     `from` state only before the animation starts and releases the
+     element entirely after 380ms, leaving no animation fill lingering
+     on the card. Reduced motion collapses it via the base-layer block
+     below (spec 142, F12), like every other animation. */
+  --animate-page-enter: page-enter 380ms var(--motion-easing-enter) backwards;
 }
 
 @layer theme {
@@ -258,6 +281,14 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  /* Page entrance (spec 185 — Expressive): from opacity 0, 14px below,
+     to opacity 1 at rest. Applied via the `animate-page-enter` utility
+     to the card surfaces, so cards settle 14px as a page lands. */
+  @keyframes page-enter {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 }
 

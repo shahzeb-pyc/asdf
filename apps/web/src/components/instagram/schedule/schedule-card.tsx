@@ -46,7 +46,7 @@ export function ScheduleCard({
     <Card
       data-testid={`instagram-schedule-card-${item.id}`}
       className={cn(
-        'cursor-pointer transition-shadow hover:shadow-elevated',
+        'cursor-pointer animate-page-enter transition-shadow duration-fast ease-enter hover:shadow-elevated',
         highlighted && 'border-brand-gold bg-brand-gold/10'
       )}
       onClick={() => onSelect(item)}
