@@ -29,7 +29,7 @@ export interface AuthSplitLayoutProps {
 }
 
 const BrandLogo = () => (
-  <div className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-line bg-subtle">
+  <div className="flex size-8 shrink-0 items-center justify-center rounded-xs border border-line bg-subtle">
     <BrandMark size={22} />
   </div>
 );

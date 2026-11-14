@@ -55,11 +55,11 @@ export const SPACING = {
 
 export const RADII = {
   /** 4px: Checkboxes, micro switches, segmented toggles */
-  xs: '8px',
+  xs: '4px',
   /** 6px: Primary/Secondary buttons, form text inputs, select triggers */
-  sm: '12px',
+  sm: '6px',
   /** 8px: Cards, data tables, sheet containers, dialog modals */
-  md: '16px',
+  md: '8px',
   /** 9999px: Strictly reserved for circular avatars and round indicators. */
   full: '9999px',
 } as const;

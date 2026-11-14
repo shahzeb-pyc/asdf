@@ -316,7 +316,7 @@ export function WorkspaceStudioFooter({
               >
                 <div
                   data-testid="workspace-user-avatar"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-link bg-primary text-body font-bold text-on-primary"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-xs border border-link bg-primary text-body font-bold text-on-primary"
                 >
                   {getUserInitials(activeWorkspace.name || subdomain)}
                 </div>

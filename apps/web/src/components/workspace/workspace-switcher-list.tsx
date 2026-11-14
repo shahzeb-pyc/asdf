@@ -36,7 +36,7 @@ export function SwitcherUserHeader({
     <div className="flex items-center gap-2 px-2 py-1">
       <div
         data-testid="workspace-user-avatar"
-        className="flex size-7 shrink-0 items-center justify-center rounded-sm border border-line bg-subtle text-metadata font-semibold text-ink"
+        className="flex size-7 shrink-0 items-center justify-center rounded-xs border border-line bg-subtle text-metadata font-semibold text-ink"
       >
         {userInitials}
       </div>
