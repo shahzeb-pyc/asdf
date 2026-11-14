@@ -259,7 +259,7 @@ function AppSidebarContent({
           aria-label="FBUploadPro Studio"
           className={cn(
             brandingClassName ??
-              'flex items-center gap-2 rounded-sm px-nav py-nav outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-link',
+              'flex items-center gap-2 rounded-xs px-nav py-nav outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-link',
             isCollapsed && 'justify-center px-0'
           )}
         >
