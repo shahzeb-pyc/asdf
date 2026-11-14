@@ -336,26 +336,27 @@ export function PageCard({
     >
       {/* Top Section: Avatar with Dynamic Status Ring + Identity + Affordance.
           Identity lines, in order: name, Added date, followers + category.
-          The followers NUMBER is page-name size (text-body) and bold; the
-          rest of the followers line stays muted at metadata size. */}
-      <div className="flex items-start gap-4">
+          The name is title size (text-lg) and bold; the followers NUMBER
+          stays page-body size (text-body) and bold; the rest of the
+          followers line stays muted at metadata size. */}
+      <div className="flex items-center gap-4">
         {showAvatarImg ? (
           <Image
             src={page.profilePictureUrl!}
             alt={page.pageName}
-            width={42}
-            height={42}
+            width={56}
+            height={56}
             data-testid="page-avatar-img"
             onError={() =>
               setFailedAvatarUrl(page.profilePictureUrl ?? '__error__')
             }
-            className={cn('size-10.5 shrink-0 rounded-full object-cover', ringClass)}
+            className={cn('size-14 shrink-0 rounded-full object-cover', ringClass)}
           />
         ) : (
           <div
             data-testid="page-avatar-initials"
             className={cn(
-              'flex size-10.5 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-ink',
+              'flex size-14 shrink-0 items-center justify-center rounded-full bg-subtle text-xl font-bold text-ink',
               ringClass
             )}
           >
@@ -366,7 +367,7 @@ export function PageCard({
         <div className="min-w-0 flex-1">
           <h3
             data-testid="page-name"
-            className="m-0 truncate text-body font-semibold text-ink"
+            className="m-0 truncate text-lg font-bold leading-heading text-ink"
           >
             {page.pageName}
           </h3>

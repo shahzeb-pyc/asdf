@@ -401,8 +401,9 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(linkEl?.props.className).toContain('shrink-0');
       const followersEl = findElementByTestId(tree, 'page-current-followers');
       expect(followersEl).not.toBeNull();
-      // Followers number is page-name size (text-body) and bold; the rest
-      // of the followers line stays muted at metadata size.
+      // Followers number stays page-body size (text-body) and bold —
+      // the name is title size now (text-lg, spec 189); the rest of
+      // the followers line stays muted at metadata size.
       expect(followersEl?.props.className).toContain('text-body');
       expect(followersEl?.props.className).toContain('font-bold');
       expect(followersEl?.props.className).not.toContain('text-brand-gold');
@@ -425,6 +426,34 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(errorAvatarRender.hasAttribute('data-testid', 'page-avatar-initials')).toBe(true);
       expect(errorAvatarRender.hasAttribute('data-testid', 'page-avatar-img')).toBe(false);
       expect(errorAvatarRender.hasText('CR')).toBe(true);
+    });
+
+    it('renders the 56px avatar and title-scale name (spec 189 — ADU profile treatment)', () => {
+      // Avatar image: 56px with the status ring; initials fallback
+      // scales up with it. The name is a proper title, and the header
+      // vertically centres the identity against the bigger avatar.
+      const first = renderBehavioural(
+        <PageCard page={baseActivePage} subdomain="acme" />
+      );
+      const img = screen.getByTestId('page-avatar-img');
+      expect(img.getAttribute('width')).toBe('56');
+      expect(img.getAttribute('height')).toBe('56');
+      expect(img.className).toContain('size-14');
+      expect(screen.queryByTestId('page-avatar-initials')).toBeNull();
+      const name = screen.getByTestId('page-name');
+      expect(name.className).toContain('text-lg');
+      expect(name.className).toContain('font-bold');
+      expect(name.className).toContain('leading-heading');
+      expect(name.parentElement?.parentElement?.className).toContain('items-center');
+      first.unmount();
+
+      renderBehavioural(
+        <PageCard page={zeroGrowthPage} subdomain="acme" />
+      );
+      const initials = screen.getByTestId('page-avatar-initials');
+      expect(initials.className).toContain('size-14');
+      expect(initials.className).toContain('text-xl');
+      expect(screen.queryByTestId('page-avatar-img')).toBeNull();
     });
 
     it('hides the followers-gained line when growth is zero (Spec 102)', () => {
