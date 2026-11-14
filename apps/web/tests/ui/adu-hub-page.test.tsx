@@ -683,18 +683,45 @@ describe('AduHubPage list cards (Pages-section structure)', () => {
     await renderCards();
     const img = screen.getByTestId('adu-page-avatar-img');
     expect(img.getAttribute('src')).toBe('https://example.invalid/avatar.jpg');
+    expect(img.getAttribute('width')).toBe('56');
+    expect(img.getAttribute('height')).toBe('56');
+    expect(img.className).toContain('size-14');
     expect(screen.queryByTestId('adu-page-avatar-initials')).toBeNull();
   });
 
-  it('shows ADU totals with signal colours in Pending / Posted / Failed order', async () => {
+  it('renders the 56px avatar, title-scale name, divided counts strip, and Today footer strip (spec 188)', async () => {
+    installFetchCards([CARD_CONFIG]);
+    await renderCards();
+    const initials = screen.getByTestId('adu-page-avatar-initials');
+    expect(initials.className).toContain('size-14');
+    expect(initials.className).toContain('text-xl');
+    const name = screen.getByTestId('adu-page-name');
+    expect(name.className).toContain('text-lg');
+    expect(name.className).toContain('font-bold');
+    // The top row vertically centres the identity against the
+    // bigger avatar (name's grandparent is the top-row flex).
+    expect(name.parentElement?.parentElement?.className).toContain('items-center');
+    const row = screen.getByTestId('adu-page-pending-counts');
+    expect(row.className).toContain('divide-x');
+    expect(row.className).toContain('divide-line');
+    // The Today line is the footer's subtle strip: its own
+    // border-top is the divider (fix round: a standalone divider
+    // group stacked on the line's margin and grew the card 13px).
+    const today = screen.getByTestId('adu-page-today-line');
+    expect(today.className).toContain('border-t');
+    expect(today.className).toContain('border-line');
+    expect(today.className).toContain('pt-2.5');
+  });
+
+  it('shows ADU totals with signal colours in Posted / Pending / Failed order', async () => {
     installFetchCards([
       { ...CARD_CONFIG, pendingCount: 5, postedCount: 12, failedCount: 2 },
     ]);
     await renderCards();
     const row = screen.getByTestId('adu-page-pending-counts');
     expect(Array.from(row.children).map((el) => el.getAttribute('data-testid'))).toEqual([
-      'adu-page-pending-stat',
       'adu-page-posted-stat',
+      'adu-page-pending-stat',
       'adu-page-failed-stat',
     ]);
     const pending = screen.getByTestId('adu-page-pending-count');
