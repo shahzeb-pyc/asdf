@@ -431,7 +431,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-xs p-2 text-left text-body outline-none transition-[width,height,padding] duration-base hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-link active:bg-active disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-active data-[active=true]:font-medium data-[active=true]:text-ink group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-2 [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0",
+  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-sm p-2 text-left text-body outline-none transition-[width,height,padding] duration-base hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-link active:bg-active disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-active data-[active=true]:font-medium data-[active=true]:text-ink group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-2 [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -585,7 +585,7 @@ function SidebarMenuSubButton({
       data-active={isActive}
       aria-current={isActive ? "page" : undefined}
       className={cn(
-        "flex min-h-8 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-xs px-2 text-ink outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link active:bg-active disabled:pointer-events-none disabled:opacity-50 data-[active=true]:bg-active [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0",
+        "flex min-h-8 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-sm px-2 text-ink outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link active:bg-active disabled:pointer-events-none disabled:opacity-50 data-[active=true]:bg-active [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0",
         size === "sm" && "text-xs",
         size === "md" && "text-body",
         "group-data-[collapsible=icon]:hidden",
