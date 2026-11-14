@@ -60,26 +60,26 @@ export function ThreadsAutoRepostCard({ mirror, onSelect, highlighted }: Readonl
         highlighted && 'border-brand-gold'
       )}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-center gap-3">
         {mirror.sourceAvatarUrl ? (
           <Image
             src={mirror.sourceAvatarUrl}
             alt=""
-            width={48}
-            height={48}
-            className="size-12 shrink-0 rounded-full object-cover"
+            width={56}
+            height={56}
+            className="size-14 shrink-0 rounded-full object-cover"
             unoptimized
           />
         ) : (
           <span
             aria-hidden
-            className="flex size-12 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-ink"
+            className="flex size-14 shrink-0 items-center justify-center rounded-full bg-subtle text-xl font-bold text-ink"
           >
             {(mirror.sourceUsername[0] ?? '?').toUpperCase()}
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-body font-bold text-ink">@{mirror.sourceUsername}</p>
+          <p className="truncate text-lg font-bold leading-heading text-ink">@{mirror.sourceUsername}</p>
           <p className="truncate text-metadata text-ink-sub">
             {mirror.sourceDisplayName ?? 'TikTok account'}
           </p>
