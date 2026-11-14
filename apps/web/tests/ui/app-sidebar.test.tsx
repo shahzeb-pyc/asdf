@@ -338,6 +338,10 @@ describe('spec 187 sidebar polish', () => {
   });
 
   it('gold active bar renders on the active top-level leaf with the prop on', () => {
+    // Home exact-matches only at its own href (trailing slash);
+    // the real shell normalises the tenant prefix away, so the
+    // test sets the pathname the leaf actually carries.
+    mockPathname = '/tenant/acme/';
     renderSidebar(getUserSections('acme', false), { showGoldActiveBar: true });
     const bars = screen.getAllByTestId('sidebar-active-bar');
     expect(bars).toHaveLength(1);
@@ -373,15 +377,19 @@ describe('spec 187 sidebar polish', () => {
   });
 
   it('seller/admin rows stay 36px and unstyled without the prop', () => {
+    // Token-exact check: the primitive always carries the
+    // data-[active=true]:font-medium variant, so a substring check
+    // would false-positive — only a bare `font-medium` token counts.
+    const hasBaseFontMedium = (el: Element) => el.className.split(/\s+/).includes('font-medium');
     const { unmount } = renderSidebar(SELLER_SECTIONS);
     const dashboard = screen.getByRole('link', { name: 'Dashboard' });
     expect(dashboard.getAttribute('data-size')).toBe('default');
-    expect(dashboard.className).not.toContain('font-medium');
+    expect(hasBaseFontMedium(dashboard)).toBe(false);
     unmount();
     renderSidebar(ADMIN_SECTIONS);
     const approvals = screen.getByRole('link', { name: 'Subscriptions approval' });
     expect(approvals.getAttribute('data-size')).toBe('default');
-    expect(approvals.className).not.toContain('font-medium');
+    expect(hasBaseFontMedium(approvals)).toBe(false);
   });
 });
 
