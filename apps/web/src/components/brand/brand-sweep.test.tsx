@@ -71,7 +71,8 @@ describe('brand sweep (spec 191)', () => {
     // in next/headers (server-only). The headers() read lives in
     // lib/brand-server.ts, imported only by the root layout.
     const source = readFileSync(path.resolve(process.cwd(), 'src/lib/brand.ts'), 'utf8');
-    expect(source).not.toContain('next/headers');
+    // Match an import statement, not the prose comment explaining the split.
+    expect(source).not.toMatch(/^import .* from 'next\/headers';/m);
   });
 
   it('BrandLogo renders NextRise, never FBUploadPro, on nextrise', () => {
