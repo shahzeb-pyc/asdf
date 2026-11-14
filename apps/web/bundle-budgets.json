@@ -346,7 +346,7 @@
         "firstLoadGzipBytes": 153250,
         "firstLoadRawBytes": 505010,
         "routeSpecificGzipBytes": 13944,
-        "routeSpecificRawBytes": 34982
+        "routeSpecificRawBytes": 37397
       },
       "/privacy": {
         "firstLoadGzipBytes": 148779,
