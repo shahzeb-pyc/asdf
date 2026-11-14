@@ -353,7 +353,7 @@ async function checkSectionIntegrity(
             count: 'exact',
           })
           .eq('destinations.platform', 'facebook')
-          .not('destinations.section', 'in', '(schedule,publish_now)')
+          .neq('destinations.section', 'schedule')
           .then(countOrZero),
         db
           .from('adu_configs')
@@ -444,7 +444,6 @@ export async function probeInternalHealth(
       'schedule',
       'adu',
       'mirror',
-      'publish_now',
       null,
     ]),
     countByStatus(db, 'social_accounts', ACCOUNT_STATUSES, 'facebook'),

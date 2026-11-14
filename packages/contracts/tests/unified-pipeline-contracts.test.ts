@@ -395,9 +395,9 @@ describe('DatabaseDestinationRowSchema', () => {
   });
 });
 
-describe('DestinationSectionSchema (spec 174 PR 1A)', () => {
+describe('DestinationSectionSchema (spec 174 PR 1A, spec 180)', () => {
   it('accepts every section label', () => {
-    for (const section of ['schedule', 'adu', 'mirror', 'publish_now'] as const) {
+    for (const section of ['schedule', 'adu', 'mirror'] as const) {
       expect(DestinationSectionSchema.parse(section)).toBe(section);
       const parsed = DatabaseDestinationRowSchema.parse({ ...validDestinationRow, section });
       expect(parsed.section).toBe(section);
@@ -413,6 +413,14 @@ describe('DestinationSectionSchema (spec 174 PR 1A)', () => {
     ).toBe(false);
   });
 
+  it("rejects 'publish_now' — the section no longer exists (spec 180)", () => {
+    expect(DestinationSectionSchema.safeParse('publish_now').success).toBe(false);
+    expect(
+      DatabaseDestinationRowSchema.safeParse({ ...validDestinationRow, section: 'publish_now' })
+        .success
+    ).toBe(false);
+  });
+
   it('rejects a missing label — section is required from 1A', () => {
     expect(DestinationSectionSchema.safeParse(undefined).success).toBe(false);
     const { section: _dropped, ...missingSection } = validDestinationRow;
@@ -424,9 +432,9 @@ describe('DestinationSectionSchema (spec 174 PR 1A)', () => {
     ).toBe(false);
   });
 
-  it('types the Section export as the four labels', () => {
+  it('types the Section export as the three labels (spec 180)', () => {
     const section: Section = 'mirror';
-    expectTypeOf(section).toEqualTypeOf<'schedule' | 'adu' | 'mirror' | 'publish_now'>();
+    expectTypeOf(section).toEqualTypeOf<'schedule' | 'adu' | 'mirror'>();
   });
 });
 

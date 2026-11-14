@@ -387,7 +387,11 @@ function seedUsage(
   platform: string,
   key: string,
   feature = 'destination-queue',
-  destinationId: string | null = null
+  destinationId: string | null = null,
+  // Spec 180: the mapping returns null for legacy publish-now
+  // features (they count in no section), so a historical legacy
+  // row's stored section 'publish_now' must be passed explicitly.
+  section: string | null = null
 ): void {
   tables['subscription_usage'].push({
     id: `usage-${platform}-${key}`,
@@ -397,7 +401,7 @@ function seedUsage(
     feature,
     // Spec 174 PR 2B: seeded rows carry the section their feature
     // maps to, exactly like the migration backfill.
-    section: sectionForUsageFeature(feature),
+    section: section ?? sectionForUsageFeature(feature),
     destination_id: destinationId,
   });
 }
@@ -560,9 +564,9 @@ describe('C2 — RPC parity with the legacy query read', () => {
   it('legacy publish-now rows never count, capped rows still do', async () => {
     const { rpc, legacy } = await parity((tables) => {
       seedPeriod(tables);
-      seedUsage(tables, 'facebook', 'page-pn', 'publish-now');
-      seedUsage(tables, 'instagram', 'ig-pn', 'instagram-publish-now');
-      seedUsage(tables, 'threads', 'th-pn', 'threads-publish-now');
+      seedUsage(tables, 'facebook', 'page-pn', 'publish-now', null, 'publish_now');
+      seedUsage(tables, 'instagram', 'ig-pn', 'instagram-publish-now', null, 'publish_now');
+      seedUsage(tables, 'threads', 'th-pn', 'threads-publish-now', null, 'publish_now');
       seedUsage(tables, 'facebook', 'page-1');
     });
     expect(rpc).toEqual(legacy);
@@ -581,7 +585,7 @@ describe('C2 — RPC parity with the legacy query read', () => {
       seedPeriod(tables);
       seedWorkspace(tables);
       seedDestination(tables, 'dest-off', 'disconnected', 'facebook');
-      seedUsage(tables, 'facebook', 'page-pn', 'publish-now', 'dest-off');
+      seedUsage(tables, 'facebook', 'page-pn', 'publish-now', 'dest-off', 'publish_now');
     });
     expect(rpc).toEqual(legacy);
     expect(rpc.usage.facebook).toBe(0);
@@ -965,7 +969,7 @@ describe('C2 — race: the register guards still hold on the RPC gate read', () 
     // backfill); the capped registration lands in 'schedule', so
     // the two rows coexist under the section-scoped key instead of
     // the old delete-and-replace. The legacy row never counts.
-    seedUsage(tables, 'facebook', 'page-1', 'publish-now');
+    seedUsage(tables, 'facebook', 'page-1', 'publish-now', null, 'publish_now');
     const result = await registerUsage(
       client,
       USER_ID,

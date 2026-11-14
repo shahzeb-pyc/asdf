@@ -10,9 +10,11 @@ import { DestinationSectionSchema } from '../src/domain/database.js';
  * single source of truth the register/release paths derive the
  * section from. Every capped feature the app registers today
  * maps to exactly one section; the two mirror features share
- * 'mirror'; legacy publish-now features map to 'publish_now'
- * for the migration backfill (their rows are history). An
- * unknown feature has no section — callers fail loud.
+ * 'mirror'. Spec 180: legacy publish-now features map to NO
+ * section (null) — they are uncapped history, excluded from every
+ * count by feature string, and the register path refuses them
+ * before it ever derives a section. An unknown feature has no
+ * section — callers fail loud.
  */
 describe('sectionForUsageFeature', () => {
   it('maps each capped feature to its section', () => {
@@ -22,10 +24,10 @@ describe('sectionForUsageFeature', () => {
     expect(sectionForUsageFeature('auto-repost')).toBe('mirror');
   });
 
-  it('maps legacy publish-now features to publish_now (backfill only)', () => {
-    expect(sectionForUsageFeature('publish-now')).toBe('publish_now');
-    expect(sectionForUsageFeature('instagram-publish-now')).toBe('publish_now');
-    expect(sectionForUsageFeature('threads-publish-now')).toBe('publish_now');
+  it('maps legacy publish-now features to no section (spec 180 — uncapped history)', () => {
+    expect(sectionForUsageFeature('publish-now')).toBeNull();
+    expect(sectionForUsageFeature('instagram-publish-now')).toBeNull();
+    expect(sectionForUsageFeature('threads-publish-now')).toBeNull();
   });
 
   it('returns null for an unknown feature instead of inventing a section', () => {

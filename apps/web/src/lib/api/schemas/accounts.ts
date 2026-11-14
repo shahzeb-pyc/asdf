@@ -85,7 +85,7 @@ export const SocialDestinationViewSchema = z.object({
   avatarUrl: z.string().nullable(),
   timezone: z.string(),
   status: z.string(),
-  /** Which section this copy belongs to (spec 174): 'schedule' | 'adu' | 'mirror' | 'publish_now'; null = created before the section label, belongs to no section. */
+  /** Which section this copy belongs to (spec 174): 'schedule' | 'adu' | 'mirror'; null = created before the section label, belongs to no section. */
   section: z.string().nullable(),
   /** Provider-reported account type (destinations.metadata `account_type`); null = unknown, never guessed. */
   accountType: z.string().nullable(),

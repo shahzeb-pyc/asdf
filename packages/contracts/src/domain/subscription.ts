@@ -292,9 +292,15 @@ export type UsageRegisterRequest = z.infer<typeof UsageRegisterRequestSchema>;
  * feature string already identifies the section 1:1, so the
  * register/release paths derive the section from it here — one
  * mapping, not one per call site. The legacy publish-now
- * features map to 'publish_now' for the migration backfill
- * (their rows are history, excluded from every count); the
- * register path refuses them before it ever derives a section.
+ * features ('publish-now', 'instagram-publish-now',
+ * 'threads-publish-now') map to NO section (spec 180): they are
+ * uncapped history, excluded from every count by feature string,
+ * and the register path refuses them before it ever derives a
+ * section — so sectionForUsageFeature returns null for them, like
+ * any unknown feature. Their historical subscription_usage rows
+ * keep section 'publish_now' in the database (that table's CHECK
+ * still permits it); that string is historical data, not a live
+ * destination section.
  * An unknown feature has no section: callers fail loud instead
  * of inventing one.
  */
@@ -303,9 +309,6 @@ export const USAGE_FEATURE_SECTIONS = {
   'auto-download-upload': 'adu',
   'tiktok-mirror': 'mirror',
   'auto-repost': 'mirror',
-  'publish-now': 'publish_now',
-  'instagram-publish-now': 'publish_now',
-  'threads-publish-now': 'publish_now',
 } as const satisfies Record<string, Section>;
 
 export function sectionForUsageFeature(feature: string): Section | null {

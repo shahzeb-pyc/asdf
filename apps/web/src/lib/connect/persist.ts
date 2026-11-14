@@ -42,7 +42,7 @@ export interface SocialDestinationView {
   status: string;
   /**
    * Which section this copy belongs to (spec 174): 'schedule' |
-   * 'adu' | 'mirror' | 'publish_now'. Null for rows created before
+   * 'adu' | 'mirror'. Null for rows created before
    * the section label (1A) or in the deploy window — the Phase 4
    * straggler backfill labels them, and no new row is created
    * without a section. Null is never guessed: a section-less row
@@ -214,12 +214,13 @@ export async function persistConnectedAccount(
  * account must never create a destinations row — every account lives
  * only in the Accounts section, and every feature IMPORTS from
  * Accounts at its own Add/import endpoint, which creates that
- * section's copy with its section stamped (the Publish Now import
- * pattern from 1B). A connect-time creator cannot name a section:
- * no connect flow is initiated from a section, so no section is
- * available at connect time. Any future caller that needs to create
- * a section copy must do it at the section's endpoint, with the
- * section, never here.
+ * section's copy with its section stamped (the Schedule / ADU /
+ * mirror import pattern). Publish Now is the exception (spec 180):
+ * it imports nothing and persists nothing. A connect-time creator
+ * cannot name a section: no connect flow is initiated from a
+ * section, so no section is available at connect time. Any future
+ * caller that needs to create a section copy must do it at the
+ * section's endpoint, with the section, never here.
  */
 
 /**
@@ -528,7 +529,6 @@ const SECTION_RANK: Record<string, number> = {
   schedule: 0,
   adu: 1,
   mirror: 2,
-  publish_now: 3,
 };
 
 function sectionRank(section: string | null): number {

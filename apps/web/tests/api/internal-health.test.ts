@@ -410,7 +410,7 @@ describe('Internal Health Probe (/api/internal/health)', () => {
     // Every child query joins destinations, scopes to Facebook
     // pages, and filters on the owning section: slots/claims want
     // schedule, ADU configs want adu, queue items accept schedule
-    // or publish_now.
+    // only (spec 180: there is no publish_now section anymore).
     const childQueries = db.__queries.filter((q) =>
       q.select?.includes('destinations!inner')
     );
@@ -430,13 +430,7 @@ describe('Internal Health Probe (/api/internal/health)', () => {
     const adu = childQueries.find((q) => q.table === 'adu_configs');
     expect(adu?.neq['destinations.section']).toBe('adu');
     const queue = childQueries.find((q) => q.table === 'queue_items');
-    expect(queue?.not).toEqual([
-      {
-        column: 'destinations.section',
-        operator: 'in',
-        value: '(schedule,publish_now)',
-      },
-    ]);
+    expect(queue?.neq['destinations.section']).toBe('schedule');
   });
 
   it('flips to unhealthy when storage is down', async () => {

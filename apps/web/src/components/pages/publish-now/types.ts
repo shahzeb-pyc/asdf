@@ -1,14 +1,14 @@
 /**
  * Publish Now flow types (client-side only).
  *
- * A selected page is a PUBLISH NOW IMPORT: continuing from Step 1
- * imports the selected accounts' pages into the publish_now
- * section first (spec 174 1B), and Step 2 lists only those imports.
- * A page published here does not appear in Pages unless added
- * separately — the publish_now copy belongs to Publish Now alone.
- * The same fbPageId under two accounts is de-duplicated (first
- * selected account wins) so one post can never be published twice
- * to the same Facebook page in one run.
+ * A selected page is a LIVE DISCOVERED page (spec 180): continuing
+ * from Step 1 discovers the selected accounts' pages live from
+ * Facebook each time — nothing is imported or saved, and Publish
+ * Now holds no copies of its own. A page published here does not
+ * appear in Pages unless added separately. The same fbPageId under
+ * two accounts is de-duplicated (first selected account wins) so
+ * one post can never be published twice to the same Facebook page
+ * in one run.
  */
 export interface PublishNowSelectedPage {
   accountId: string;

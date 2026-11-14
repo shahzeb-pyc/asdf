@@ -137,13 +137,9 @@ function cleanStore(): FakeStore {
       { id: 'd-schedule', section: 'schedule' },
       { id: 'd-adu', section: 'adu' },
       { id: 'd-mirror', section: 'mirror' },
-      { id: 'd-pn', section: 'publish_now' },
     ],
     posting_slots: [{ id: 's1', destination_id: 'd-schedule' }],
-    queue_items: [
-      { id: 'q1', destination_id: 'd-schedule' },
-      { id: 'q2', destination_id: 'd-pn' },
-    ],
+    queue_items: [{ id: 'q1', destination_id: 'd-schedule' }],
     adu_configs: [{ id: 'a1', destination_id: 'd-adu' }],
     posting_slot_claims: [{ id: 'c1', destination_id: 'd-schedule' }],
   };
@@ -179,13 +175,12 @@ describe('runSectionCheck', () => {
     expect(result.dirty).toBe(true);
   });
 
-  it('flags queue items on adu/mirror rows but not schedule or publish_now rows', async () => {
+  it('flags queue items on adu/mirror rows but not schedule rows', async () => {
     const store = cleanStore();
     store.queue_items.push(
       { id: 'q3', destination_id: 'd-adu' },
       { id: 'q4', destination_id: 'd-mirror' },
-      { id: 'q5', destination_id: 'd-schedule' },
-      { id: 'q6', destination_id: 'd-pn' }
+      { id: 'q5', destination_id: 'd-schedule' }
     );
     const result = await runSectionCheck(createFakeDb(store));
     expect(result.queueItemsOnWrongSection).toBe(2);
