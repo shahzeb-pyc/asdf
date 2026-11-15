@@ -10,6 +10,17 @@ const GRID_WAIT_TIMEOUT_MS = 30000;
 const SCROLL_SETTLE_MS = 3000;
 const WHEEL_SETTLE_MS = 1500;
 
+// Timer seam: production uses real timers; tests replace
+// timers.sleep with a no-op so the suite stays fast (the production
+// sleeps are 5s load settle + 3s + 1.5s per scroll — real time would
+// make the suite take minutes). Never a page method: Puppeteer 25
+// removed page.waitForTimeout, so calling it crashes the first real
+// run (caught by the 2026-11-15 live proof, not by the tests — the
+// old FakePage implemented it and masked the bug).
+export const timers = {
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
 // Strip leading/trailing slashes without a regex (Sonar S8786 flagged
 // the regex form): plain string trims, with internal slashes preserved
 // exactly as before.
@@ -132,7 +143,7 @@ export async function scrapeFacebookProfileFromPage(page, username) {
         console.error(`❌ Facebook navigation failed for ${reelsUrl}:`, error);
         return null;
     }
-    await page.waitForTimeout(LOAD_SETTLE_MS);
+    await timers.sleep(LOAD_SETTLE_MS);
 
     // Session gate, before any discovery: a dead session must fail
     // loudly here, never discover logged-out.
@@ -184,7 +195,7 @@ export async function scrapeFacebookProfileFromPage(page, username) {
         while (uniqueLinks.size < SCRAPER_CONFIG.MAX_REELS_PER_PLATFORM) {
             const before = uniqueLinks.size;
             await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await page.waitForTimeout(SCROLL_SETTLE_MS);
+            await timers.sleep(SCROLL_SETTLE_MS);
             // A mouse-wheel nudge, which some infinite-scroll handlers
             // listen for instead of a raw scrollTo.
             try {
@@ -192,7 +203,7 @@ export async function scrapeFacebookProfileFromPage(page, username) {
             } catch (error) {
                 console.warn('[facebook] mouse-wheel nudge failed:', error.message);
             }
-            await page.waitForTimeout(WHEEL_SETTLE_MS);
+            await timers.sleep(WHEEL_SETTLE_MS);
             // The session can die mid-scroll — re-gate after every
             // scroll, before collecting, so a checkpoint never yields
             // a half-logged-in batch.

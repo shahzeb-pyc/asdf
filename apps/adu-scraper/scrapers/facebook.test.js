@@ -55,8 +55,10 @@ class FakePage {
     }
   }
 
-  async waitForTimeout() {}
-
+  // NOTE: deliberately NO waitForTimeout here — Puppeteer 25 removed
+  // it, and the fake must match the real API surface, or the tests
+  // cannot catch a call to a removed method (which is exactly how
+  // this bug shipped once already).
   async waitForSelector() {
     this.gridWaits += 1;
     if (!this.gridRenders) {
@@ -97,6 +99,14 @@ class FakePage {
     throw new Error(`FakePage: unexpected evaluate: ${src.slice(0, 120)}`);
   }
 }
+
+// Tests run with no-op timers: the production sleeps (5s load
+// settle, 3s + 1.5s per scroll) are real time and would make the
+// suite take minutes; the waits themselves are timing, not logic —
+// the scroll/probe counts below pin the logic. The seam also pins
+// the Puppeteer 25 API: timers.sleep is the only timer the module
+// uses, never page.waitForTimeout (removed in Puppeteer 25).
+facebookModule.timers.sleep = async () => {};
 
 const reelHref = (id) => `https://www.facebook.com/reel/${id}/`;
 
