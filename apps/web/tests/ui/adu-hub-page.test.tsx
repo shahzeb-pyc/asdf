@@ -5,11 +5,10 @@
  * step 1 multi-selects accounts, step 2 selects the union of the
  * selected accounts' pages, step 3 configures per-page sources, step 4
  * configures the posting time, and submitting sends the bulk POST shape.
- * In step 3, Facebook, Instagram, and YouTube must render as DISABLED
- * source-platform options (still listed, never selectable), TikTok stays
- * enabled, and the default source platform is TikTok — so the dialog
- * never opens with a disabled platform pre-selected and a bare username
- * entry never silently creates a non-TikTok source.
+ * In step 3, all four source platforms are enabled and selectable, and
+ * the default source platform is TikTok — so the dialog opens with
+ * TikTok pre-selected and a bare username entry creates a TikTok source
+ * unless the user picks another platform.
  * Picker rows carry a photo avatar (initials fallback) plus, for pages,
  * a "category • followers" meta line from the destinations metadata
  * (followers always shown via current_followers ?? 0) — neither the
@@ -156,13 +155,11 @@ function lastPostBody() {
 // Radix renders the open SelectContent in a portal on document.body, not
 // inside the dialog node, so options must be queried from the whole screen.
 // Only one picker is open at a time, so the platform names are unambiguous.
-// Only Instagram is disabled: Facebook and YouTube were unblocked by
-// PR #202, and TikTok is the default platform.
+// All four platforms are enabled: Instagram was unblocked alongside
+// Facebook and YouTube (PR #202 unblocked the latter two), and TikTok is
+// the default platform.
 function expectPlatformOptions() {
-  const instagram = screen.getByRole('option', { name: 'instagram' });
-  expect(instagram.getAttribute('data-disabled')).not.toBeNull();
-  expect(instagram.getAttribute('aria-disabled')).toBe('true');
-  for (const platform of ['facebook', 'youtube', 'tiktok']) {
+  for (const platform of ['facebook', 'youtube', 'tiktok', 'instagram']) {
     const option = screen.getByRole('option', { name: platform });
     expect(option.getAttribute('data-disabled')).toBeNull();
     expect(option.getAttribute('aria-disabled')).not.toBe('true');
@@ -298,7 +295,7 @@ describe('AduHubPage Add Page dialog 4-step flow', () => {
     expect(checkbox?.getAttribute('data-disabled')).not.toBeNull();
   });
 
-  it('step 3: per-page pickers disable only Instagram and default to TikTok', async () => {
+  it('step 3: per-page pickers offer all platforms and default to TikTok', async () => {
     const user = userEvent.setup();
     await openDialog(user);
     await pickCheckboxFor(user, 'My FB Account');

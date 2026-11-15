@@ -412,7 +412,7 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect(onCreated).not.toHaveBeenCalled();
   });
 
-  it('step 3 platform picker offers facebook, youtube and tiktok; instagram stays disabled', async () => {
+  it('step 3 platform picker offers facebook, youtube, tiktok and instagram', async () => {
     const user = userEvent.setup();
     await openDialog([]);
     await goToPagesStep();
@@ -431,7 +431,7 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect(facebook.getAttribute('data-disabled')).toBeNull();
     expect(youtube.getAttribute('data-disabled')).toBeNull();
     expect(tiktok.getAttribute('data-disabled')).toBeNull();
-    expect(instagram.getAttribute('data-disabled')).toBe('');
+    expect(instagram.getAttribute('data-disabled')).toBeNull();
   });
 
   it('step 4 shows posting time only and Back keeps the sources and selection', async () => {
