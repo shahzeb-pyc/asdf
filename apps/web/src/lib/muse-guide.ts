@@ -544,8 +544,12 @@ const NEXTRISE_REPLACEMENTS: ReadonlyArray<readonly [string, string]> = [
     ', and Facebook In-App Schedule — and a Muse Assistant rail card.',
   ],
   [
-    ', and quick links for Prompt Library and Billing only.',
+    ', an Upgrade card, and quick links for Prompt Library and Billing only.',
     ', and quick links for Prompt Library only.',
+  ],
+  [
+    '- Expired: a banner that the plan has expired, with a Renew button only.',
+    '- Expired: a banner that the plan has expired, with a Contact support button only, which opens WhatsApp support to renew the plan.',
   ],
   [
     'Home also shows a banner for old FBUploadPro users, and the Muse Assistant rail card.',

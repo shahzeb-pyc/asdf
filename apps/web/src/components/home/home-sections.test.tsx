@@ -5,6 +5,7 @@ import { render, screen } from '@testing-library/react';
 
 import type { HomePaidData } from './home-data';
 import {
+  ExpiredBanner,
   FreePlanCard,
   HomeHeader,
   MuseAssistantCard,
@@ -92,6 +93,62 @@ describe('PaidPlanCard', () => {
     expect(screen.getByRole('link', { name: 'View Payments' }).getAttribute('href')).toBe(
       '/tenant/acme/payments'
     );
+  });
+
+  it('on the white-label brand the billing buttons become one Contact support link', () => {
+    // Spec 191 Home buttons fix: there is no billing section on the
+    // NextRise brand, so Renew / View My Plan / View Payments would
+    // all be dead ends. The card keeps its plan facts; only the
+    // actions change, to the brand's WhatsApp support link.
+    const supportHref =
+      'https://wa.me/923429469500?text=Hi!%20I%20need%20assistance%20with%20my%20NextRise%20account.';
+    render(
+      <PaidPlanCard
+        data={PAID_DATA}
+        billingHref="/tenant/acme/my-plan"
+        billingPurchaseHref="/tenant/acme/purchase"
+        paymentsHref="/tenant/acme/payments"
+        supportHref={supportHref}
+      />
+    );
+    expect(screen.queryByRole('link', { name: 'Renew' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'View My Plan' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'View Payments' })).toBeNull();
+    const support = screen.getByRole('link', { name: 'Contact support' });
+    expect(support.getAttribute('href')).toBe(supportHref);
+    expect(support.getAttribute('target')).toBe('_blank');
+    // The plan facts themselves are unchanged on the white-label brand.
+    expect(screen.getByText('21 pages or accounts')).toBeTruthy();
+    expect(screen.getByText(/1,470 PKR \/ month/)).toBeTruthy();
+  });
+});
+
+describe('ExpiredBanner', () => {
+  it('links Renew to Purchase on our brand', () => {
+    render(<ExpiredBanner billingPurchaseHref="/tenant/acme/purchase" />);
+    expect(screen.getByText('Your plan has expired')).toBeTruthy();
+    expect(screen.getByText('Renew to post and schedule again.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Renew' }).getAttribute('href')).toBe(
+      '/tenant/acme/purchase'
+    );
+    expect(screen.queryByRole('link', { name: 'Contact support' })).toBeNull();
+  });
+
+  it('on the white-label brand Renew becomes a WhatsApp Contact support link', () => {
+    // Spec 191 Home buttons fix: the Purchase page does not exist on
+    // the NextRise brand, so Renew would be a dead end. Renewals go
+    // through the brand's WhatsApp support instead.
+    const supportHref =
+      'https://wa.me/923429469500?text=Hi!%20I%20need%20assistance%20with%20my%20NextRise%20account.';
+    render(
+      <ExpiredBanner billingPurchaseHref="/tenant/acme/purchase" supportHref={supportHref} />
+    );
+    expect(screen.getByText('Your plan has expired')).toBeTruthy();
+    expect(screen.getByText('Contact support to renew your plan.')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Renew' })).toBeNull();
+    const support = screen.getByRole('link', { name: 'Contact support' });
+    expect(support.getAttribute('href')).toBe(supportHref);
+    expect(support.getAttribute('target')).toBe('_blank');
   });
 });
 

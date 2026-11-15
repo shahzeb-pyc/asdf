@@ -70,32 +70,43 @@ export interface HomeQuickLink {
  * Paid quick links, in the approved order. Queue and Calendar are
  * deliberately absent: Home carries no queue or post data at all.
  * Prompt Library is absent too — it is already the header action.
+ * `billingHref` is optional: the white-label brand has no billing
+ * section, so its callers pass nothing and the Billing row is
+ * omitted rather than linked at a page that does not exist.
  */
 export function buildPaidQuickLinks(args: {
   mediaHref: string;
   creatorFinderHref: string;
   accountsHref: string;
   inAppScheduleHref: string;
-  billingHref: string;
+  billingHref?: string;
 }): HomeQuickLink[] {
-  return [
+  const links: HomeQuickLink[] = [
     { label: 'Media Library', href: args.mediaHref },
     { label: 'Creator Finder', href: args.creatorFinderHref },
     { label: 'Facebook Accounts', href: args.accountsHref },
     { label: 'Facebook In-App Schedule', href: args.inAppScheduleHref },
-    { label: 'Billing', href: args.billingHref },
   ];
+  if (args.billingHref) {
+    links.push({ label: 'Billing', href: args.billingHref });
+  }
+  return links;
 }
 
-/** Free users only ever link to sections the free plan allows. */
+/**
+ * Free users only ever link to sections the free plan allows.
+ * `billingHref` is optional, as above: without it the Billing row
+ * is omitted (white-label brand, no billing section).
+ */
 export function buildFreeQuickLinks(args: {
   promptsHref: string;
-  billingHref: string;
+  billingHref?: string;
 }): HomeQuickLink[] {
-  return [
-    { label: 'Prompt Library', href: args.promptsHref },
-    { label: 'Billing', href: args.billingHref },
-  ];
+  const links: HomeQuickLink[] = [{ label: 'Prompt Library', href: args.promptsHref }];
+  if (args.billingHref) {
+    links.push({ label: 'Billing', href: args.billingHref });
+  }
+  return links;
 }
 
 export interface HomePlatformRow {

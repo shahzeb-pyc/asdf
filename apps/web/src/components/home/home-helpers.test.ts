@@ -110,4 +110,26 @@ describe('quick links and the no-queue-data rule', () => {
     });
     expect(links.map((link) => link.label)).toEqual(['Prompt Library', 'Billing']);
   });
+
+  it('without a billing href the Billing row is omitted (white-label brand)', () => {
+    // Spec 191 Home buttons fix: the white-label brand has no billing
+    // section, so its callers pass no billing href and the row must
+    // not render — a Billing link there would be a dead end.
+    const paid = buildPaidQuickLinks({
+      mediaHref: '/tenant/acme/media',
+      creatorFinderHref: '/tenant/acme/creator-finder',
+      accountsHref: '/tenant/acme/accounts',
+      inAppScheduleHref: '/tenant/acme/inapp-schedule',
+    });
+    expect(paid.map((link) => link.label)).toEqual([
+      'Media Library',
+      'Creator Finder',
+      'Facebook Accounts',
+      'Facebook In-App Schedule',
+    ]);
+    expect(paid.some((link) => link.href.includes('my-plan'))).toBe(false);
+
+    const free = buildFreeQuickLinks({ promptsHref: '/tenant/acme/prompts' });
+    expect(free.map((link) => link.label)).toEqual(['Prompt Library']);
+  });
 });

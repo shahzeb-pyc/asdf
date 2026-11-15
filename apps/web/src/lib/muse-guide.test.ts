@@ -21,6 +21,9 @@ describe('buildMuseGuide', () => {
     expect(buildMuseGuide('fbuploadpro')).toContain(
       'https://app.fbuploadpro.com/muse_guide.md'
     );
+    // Home still describes the billing buttons on our brand.
+    expect(buildMuseGuide('fbuploadpro')).toContain('an Upgrade card');
+    expect(buildMuseGuide('fbuploadpro')).toContain('with a Renew button only');
   });
 
   it('names NextRise Digital with its own guide address on nextrise', () => {
@@ -49,6 +52,13 @@ describe('buildMuseGuide', () => {
     expect(guide).not.toContain('My Plan or Purchase actually shows');
     // The free-plan dialogue has no Upgrade exit on this brand.
     expect(guide).toContain('Its only exit is Back to Home');
+    // Spec 191 Home buttons fix: Home has no Upgrade card and no
+    // Renew button on this brand — the expired banner points at
+    // WhatsApp support instead.
+    expect(guide).not.toContain('an Upgrade card');
+    expect(guide).not.toContain('with a Renew button only');
+    expect(guide).toContain('with a Contact support button only');
+    expect(guide).toContain('which opens WhatsApp support to renew the plan');
   });
 
   it('keeps the non-billing sections on nextrise', () => {
