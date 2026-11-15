@@ -79,7 +79,7 @@ export function buildPaidQuickLinks(args: {
   creatorFinderHref: string;
   accountsHref: string;
   inAppScheduleHref: string;
-  billingHref?: string;
+  billingHref?: string | undefined;
 }): HomeQuickLink[] {
   const links: HomeQuickLink[] = [
     { label: 'Media Library', href: args.mediaHref },
@@ -100,7 +100,7 @@ export function buildPaidQuickLinks(args: {
  */
 export function buildFreeQuickLinks(args: {
   promptsHref: string;
-  billingHref?: string;
+  billingHref?: string | undefined;
 }): HomeQuickLink[] {
   const links: HomeQuickLink[] = [{ label: 'Prompt Library', href: args.promptsHref }];
   if (args.billingHref) {
