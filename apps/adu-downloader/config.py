@@ -108,11 +108,13 @@ def direct_env() -> dict:
         env.pop(var, None)
     return env
 
-# Owner-supplied rotating residential proxy for TikTok resolve + Countik
-# calls ONLY (never downloads). The value lives in the server .env
-# (mode 600) and is never recorded anywhere else. Empty means TikTok
-# claiming is disabled (the worker logs loudly and claims zero TikTok
-# rows) — the non-TikTok service keeps running.
+# Owner-supplied rotating residential proxy for TikTok resolve +
+# Countik calls and Instagram metadata ONLY (never downloads: it
+# fetches links, the file download stays direct). The value lives in
+# the server .env (mode 600) and is never recorded anywhere else.
+# Empty means TikTok claiming is disabled (the worker logs loudly and
+# claims zero TikTok rows) and Instagram downloads fail loudly with a
+# config error — the other platforms keep running.
 RESOLVE_PROXY_URL = os.environ.get("RESOLVE_PROXY_URL", "").strip() or None
 
 # Resolve pacing (shared across all TikTok worker threads): minimum
