@@ -5,6 +5,7 @@ import {
   getSessionSecret,
 } from '@fbuploadpro/contracts';
 import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
+import { getRequestBrandRoot } from '@/lib/brand';
 import { enforceIpRateLimit } from '@/lib/request-body';
 // Side effect: registers the X connect config (spec 127).
 import '@/lib/connect/platforms/x';
@@ -124,7 +125,7 @@ export async function handleConnectInitiate(
   platformParam: string,
   dbClient?: ConnectDbClient
 ): Promise<NextResponse> {
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || '';
+  const rootDomain = getRequestBrandRoot(request);
 
   const session = await extractConnectSession(request);
   if (!session) {

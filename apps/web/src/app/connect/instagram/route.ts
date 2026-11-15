@@ -8,6 +8,7 @@ import {
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import { getRequestBrandRoot } from '@/lib/brand';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import { resolvePlatformClientCredentials } from '@/lib/connect/persist';
@@ -29,7 +30,7 @@ export async function handleConnectInstagram(
   dbClient?: DatabaseClient | SupabaseClient<Database>
 ): Promise<NextResponse> {
   const sessionSecret = getSessionSecret();
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || '';
+  const rootDomain = getRequestBrandRoot(request);
   const appUrlFallback =
     process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 

@@ -144,6 +144,7 @@ const USER_ROW: Row = {
   phone: null,
   role: 'user',
   status: 'active',
+  brand: 'fbuploadpro',
   password_updated_at: null,
 };
 
@@ -238,5 +239,67 @@ describe('loginTenantUser mints the workspaceId claim (S3)', () => {
     installFake(USER_ROW, WORKSPACE_ROWS);
     _setMockSupabaseAuthClient(null);
     await expect(loginTenantUser({ email: 'client@gmail.com', password: 'correct-password' })).rejects.toThrow('Supabase auth client is unavailable');
+  });
+});
+
+describe('loginTenantUser brand gate (spec 191)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', 'fbuploadpro.com');
+  });
+
+  afterEach(() => {
+    _resetMockSupabaseClients();
+    vi.unstubAllEnvs();
+  });
+
+  it('rejects a NextRise account on our host, naming the white-label login', async () => {
+    installFake({ ...USER_ROW, brand: 'nextrise' }, WORKSPACE_ROWS);
+    await expect(
+      loginTenantUser({
+        email: 'client@gmail.com',
+password: 'correct-password',
+        requestHost: 'app.fbuploadpro.com',
+      })
+    ).rejects.toThrow(
+      'This account belongs to NextRise. Please log in at app.nextrisehq.com.'
+    );
+  });
+
+  it('rejects our account on the white-label host, naming our login', async () => {
+    installFake(USER_ROW, WORKSPACE_ROWS);
+    await expect(
+      loginTenantUser({
+        email: 'client@gmail.com',
+password: 'correct-password',
+        requestHost: 'app.nextrisehq.com',
+      })
+    ).rejects.toThrow(
+      'This account belongs to FBUploadPro. Please log in at app.fbuploadpro.com.'
+    );
+  });
+
+  it('a NextRise account logs in on the white-label host with a branded token and a white-label redirect', async () => {
+    installFake({ ...USER_ROW, brand: 'nextrise' }, WORKSPACE_ROWS);
+    const { token, redirectUrl } = await loginTenantUser({
+      email: 'client@gmail.com',
+password: 'correct-password',
+      requestHost: 'app.nextrisehq.com',
+    });
+    const decoded = await verifySessionToken(token, getSessionSecret());
+    expect(decoded.brand).toBe('nextrise');
+    expect(redirectUrl).toBe('https://acme.app.nextrisehq.com/');
+  });
+
+  it('our account logs in on our host with a branded token and our redirect', async () => {
+    installFake(USER_ROW, WORKSPACE_ROWS);
+    const { token, redirectUrl } = await loginTenantUser({
+      email: 'client@gmail.com',
+password: 'correct-password',
+      requestHost: 'app.fbuploadpro.com',
+    });
+    const decoded = await verifySessionToken(token, getSessionSecret());
+    expect(decoded.brand).toBe('fbuploadpro');
+    expect(redirectUrl).toBe('https://acme.fbuploadpro.com/');
   });
 });

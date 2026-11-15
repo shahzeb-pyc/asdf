@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  getBrandGatewayHost,
+  NEXTRISE_DISPLAY_NAME,
+  type Brand,
+} from './brand.js';
 
 /**
  * Muse agent keys — Media Library only.
@@ -91,3 +96,23 @@ export type MuseActivityResponse = z.infer<typeof MuseActivityResponseSchema>;
  */
 export const MUSE_CONNECT_PROMPT =
   'Connect to my FBUploadPro account, in this order: 1. First, ask me for my FBUploadPro Media Library key. Never ask me to paste the key in chat. 2. Then read the full Muse guide at https://app.fbuploadpro.com/muse_guide.md. 3. Then ask me for my FBUploadPro sign-in, so you can help me in my browser. After that: add media directly to my Media Library with my key, and help me use everything else in my browser, step by step, following the guide. Act on what I ask without asking again, for everything including publishing and deleting. Keep going until I tell you to stop, I revoke the key, or I log out.';
+
+/**
+ * The same prompt, with the brand name and guide address for a brand.
+ * Our brand returns MUSE_CONNECT_PROMPT exactly; the white-label brand
+ * reads NextRise Digital with its own guide address. The brand name
+ * comes from the brand config, never a hardcoded string at the call
+ * site — the dialogue renders whatever this returns.
+ */
+export function buildMuseConnectPrompt(brand: Brand): string {
+  if (brand === 'fbuploadpro') return MUSE_CONNECT_PROMPT;
+  const displayName = NEXTRISE_DISPLAY_NAME;
+  const guideUrl = `https://${getBrandGatewayHost(brand, 'fbuploadpro.com')}/muse_guide.md`;
+  return (
+    `Connect to my ${displayName} account, in this order: ` +
+    `1. First, ask me for my ${displayName} Media Library key. Never ask me to paste the key in chat. ` +
+    `2. Then read the full Muse guide at ${guideUrl}. ` +
+    `3. Then ask me for my ${displayName} sign-in, so you can help me in my browser. ` +
+    'After that: add media directly to my Media Library with my key, and help me use everything else in my browser, step by step, following the guide. Act on what I ask without asking again, for everything including publishing and deleting. Keep going until I tell you to stop, I revoke the key, or I log out.'
+  );
+}

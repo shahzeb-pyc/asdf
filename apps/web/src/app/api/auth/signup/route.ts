@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { SignupRequestSchema, isSignupEnabled, normalizeReferralCode } from '@fbuploadpro/contracts';
+import { SignupRequestSchema, isSignupEnabled, normalizeReferralCode, resolveBrandFromHost } from '@fbuploadpro/contracts';
 import { signUpTenantUser } from '@/lib/auth/signup';
 import { formatAuthErrorResponse } from '@/lib/auth-errors-server';
 import { checkRateLimit, extractClientIp, RATE_LIMIT_WINDOW_MS } from '@/lib/rate-limiter';
@@ -10,6 +10,15 @@ import { resolveReferralCode } from '@/lib/billing/sellers';
 
 export async function POST(request: NextRequest) {
   try {
+    // Spec 191: no registration on the white-label brand (defence in
+    // depth — the middleware 404s this route there first).
+    if (resolveBrandFromHost(request.headers.get('host')) === 'nextrise') {
+      return NextResponse.json(
+        { error: 'Account registration is not available on this domain.' },
+        { status: 403 }
+      );
+    }
+
     // 0. Server-side registration pause guard
     if (!isSignupEnabled()) {
       return NextResponse.json(

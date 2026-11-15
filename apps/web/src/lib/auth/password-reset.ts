@@ -185,6 +185,8 @@ export async function resetUserPasswordWithOtp(params: {
         subdomain: rawSubdomain,
         role: 'user',
         status: 'active',
+        // The local fallback store only ever holds our-brand users.
+        brand: 'fbuploadpro',
       };
       localUserStore.set(canonicalEmail, existing);
     } else {

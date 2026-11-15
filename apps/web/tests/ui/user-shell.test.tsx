@@ -69,6 +69,7 @@ function paidEntitlement(): EntitlementResponse {
 function renderShell() {
   return render(
     <UserShell
+      brand="fbuploadpro"
       subdomain="acme"
       useCleanPaths={false}
       user={{ name: 'Owner', email: 'owner@example.com' }}

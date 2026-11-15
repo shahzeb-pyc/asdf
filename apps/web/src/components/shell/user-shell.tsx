@@ -12,7 +12,7 @@ import { WorkspaceBreadcrumb } from '@/components/workspace/workspace-breadcrumb
 import { CommandPaletteHost } from '@/components/shell/command-palette-host';
 import { TopbarPlanPill } from '@/components/shell/topbar-plan-pill';
 import { WorkspaceLifecycleGuard } from '@/components/workspace/workspace-lifecycle-guard';
-import type { EntitlementResponse } from '@fbuploadpro/contracts';
+import type { Brand, EntitlementResponse } from '@fbuploadpro/contracts';
 import { FreePlanGate } from '@/components/billing/free-plan-gate';
 import { EntitlementProvider } from '@/components/billing/entitlement-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
@@ -52,6 +52,8 @@ export interface UserShellProps {
    * fetches once from the API route on mount instead.
    */
   initialEntitlement?: EntitlementResponse | null | undefined;
+  /** White-label brand of the request (spec 191). */
+  brand: Brand;
   children: React.ReactNode;
 }
 
@@ -83,6 +85,7 @@ export function UserShell({
   sessionUserId,
   sessionEmail,
   initialEntitlement,
+  brand,
   children,
 }: Readonly<UserShellProps>) {
   return (
@@ -106,9 +109,10 @@ export function UserShell({
         {/* PostHog identify: tenant shell already holds the session. */}
         <PostHogIdentify userId={sessionUserId} tenantId={subdomain} />
         <AppSidebar
-          sections={getUserSections(subdomain, useCleanPaths)}
+          sections={getUserSections(subdomain, useCleanPaths, brand)}
           headerWord={<UserHeaderWord />}
           brandingHref={buildTenantHref(subdomain, '/', useCleanPaths)}
+          brand={brand}
           collapsible="icon"
           normalizePath={(path: string) => normalizeTenantPath(path, subdomain)}
           showGoldActiveBar
@@ -168,7 +172,7 @@ export function UserShell({
                 to this layout).
               */}
               <div className="ml-auto flex shrink-0 items-center gap-2">
-                <TopbarPlanPill subdomain={subdomain} useCleanPaths={useCleanPaths} />
+                <TopbarPlanPill subdomain={subdomain} useCleanPaths={useCleanPaths} brand={brand} />
                 <CommandPaletteHost subdomain={subdomain} useCleanPaths={useCleanPaths} />
               </div>
             </header>
@@ -184,6 +188,7 @@ export function UserShell({
               subdomain={subdomain}
               useCleanPaths={useCleanPaths}
               isAdmin={false}
+              brand={brand}
             >
               {children}
             </FreePlanGate>

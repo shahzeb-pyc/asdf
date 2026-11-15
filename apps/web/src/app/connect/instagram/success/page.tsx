@@ -4,6 +4,7 @@ import React, { Suspense } from 'react';
 import { useSearchParams, type ReadonlyURLSearchParams } from 'next/navigation';
 
 import { ConnectStatusLayout } from '@/components/accounts/connect-status-layout';
+import { useBrandConfig } from '@/components/brand';
 
 export interface InstagramConnectSuccessParams {
   alreadyConnected?: boolean | undefined;
@@ -19,7 +20,7 @@ export interface InstagramConnectSuccessParams {
  * is never reported as a plain success, and every variant names the
  * account. Confirmation copy is name + connected only.
  */
-export function getInstagramConnectSuccessCopy(params: InstagramConnectSuccessParams): {
+export function getInstagramConnectSuccessCopy(params: InstagramConnectSuccessParams, brandName = 'FBUploadPro'): {
   variant: 'success' | 'error';
   title: string;
   description: string;
@@ -38,7 +39,7 @@ export function getInstagramConnectSuccessCopy(params: InstagramConnectSuccessPa
       variant: 'success',
       title: `${name} already connected — session refreshed`,
       description:
-        "You're all set! You can close this tab and return to your FBUploadPro dashboard.",
+        `You're all set! You can close this tab and return to your ${brandName} dashboard.`,
     };
   }
   const name = params.accountName;
@@ -46,14 +47,16 @@ export function getInstagramConnectSuccessCopy(params: InstagramConnectSuccessPa
     variant: 'success',
     title: name ? `${name} connected` : 'Instagram account connected',
     description:
-      "You're all set! You can close this tab and return to your FBUploadPro dashboard.",
+      `You're all set! You can close this tab and return to your ${brandName} dashboard.`,
   };
 }
 
 export function InstagramConnectSuccessView({
   params,
 }: Readonly<{ params: InstagramConnectSuccessParams }>) {
-  const { variant, title, description } = getInstagramConnectSuccessCopy(params);
+  // Spec 191: the dashboard name follows the request's brand.
+  const brandConfig = useBrandConfig();
+  const { variant, title, description } = getInstagramConnectSuccessCopy(params, brandConfig.shortName);
   return (
     <ConnectStatusLayout
       testId="instagram-magic-connect-success"
@@ -62,7 +65,7 @@ export function InstagramConnectSuccessView({
       description={description}
     >
       <div className="rounded-sm bg-subtle px-3.5 py-2.5 text-metadata text-ink-dim">
-        Linked to FBUploadPro via Instagram.
+        Linked to {brandConfig.shortName} via Instagram.
       </div>
     </ConnectStatusLayout>
   );

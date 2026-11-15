@@ -2,6 +2,8 @@
 
 import React from 'react';
 import { buildWhatsAppSupportUrl } from '@/lib/whatsapp';
+import { getBrandConfig } from '@/lib/brand';
+import { useBrand } from '@/components/brand';
 import {
   Tooltip,
   TooltipContent,
@@ -34,10 +36,17 @@ export function WhatsAppSupportButton({
   phoneNumber,
   defaultMessage,
 }: Readonly<WhatsAppSupportButtonProps>) {
-  const phone = phoneNumber ?? process.env.NEXT_PUBLIC_WHATSAPP_SUPPORT_NUMBER ?? '';
+  // Spec 191: the support number and greeting follow the request's
+  // brand. Explicit props still win (the signup-paused card passes
+  // its own message); our brand keeps the env fallbacks exactly.
+  const brand = useBrand();
+  const brandConfig = getBrandConfig(brand);
+  const phone = phoneNumber ?? brandConfig.whatsappNumber;
+  const message =
+    defaultMessage ?? (brand === 'nextrise' ? brandConfig.whatsappMessage : undefined);
   const url = buildWhatsAppSupportUrl({
     phone,
-    message: defaultMessage,
+    message,
   });
 
   if (!url) {

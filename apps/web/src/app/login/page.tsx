@@ -41,6 +41,7 @@ import { AuthSplitLayout } from '@/components/auth/auth-split-layout';
 import { LoginShowcasePanel } from '@/components/auth/login-showcase-panel';
 import { PasswordInput } from '@/components/auth/password-input';
 import { OldUsersNoticeBanner } from '@/components/shared/old-users-notice-banner';
+import { useBrand } from '@/components/brand';
 import {
   Form,
   FormControl,
@@ -127,6 +128,9 @@ const FIELD_IDS: Record<LoginFieldName, string> = {
 
 export default function LoginPage({ initialResetSuccess = false }: LoginPageProps = {}) {
   const [returnUrl, setReturnUrl] = useState<string | undefined>(undefined);
+  // Spec 191: no signup link, no forgot-password link, no old-users
+  // banner on the white-label brand.
+  const brand = useBrand();
   const [isResetSuccess, setIsResetSuccess] = useState(initialResetSuccess);
   const [infoBanner, setInfoBanner] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
@@ -243,18 +247,20 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
       description="Welcome back. Sign in to your workspace."
       showcase={<LoginShowcasePanel />}
       footer={
-        <span className="text-metadata text-ink-sub">
-          Don&apos;t have an account?{' '}
-          <Link
-            href={returnUrl ? `/signup?returnUrl=${encodeURIComponent(returnUrl)}` : '/signup'}
-            className="font-semibold text-primary no-underline"
-          >
-            Create one
-          </Link>
-        </span>
+        brand === 'nextrise' ? undefined : (
+          <span className="text-metadata text-ink-sub">
+            Don&apos;t have an account?{' '}
+            <Link
+              href={returnUrl ? `/signup?returnUrl=${encodeURIComponent(returnUrl)}` : '/signup'}
+              className="font-semibold text-primary no-underline"
+            >
+              Create one
+            </Link>
+          </span>
+        )
       }
     >
-      <OldUsersNoticeBanner />
+      {brand !== 'nextrise' && <OldUsersNoticeBanner />}
       <Form {...form}>
         <form
           noValidate
@@ -315,12 +321,14 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
               <FormItem id={FIELD_IDS.password}>
                 <div className="flex items-center justify-between">
                   <FormLabel>Password</FormLabel>
-                  <Link
-                    href="/forgot-password"
-                    className="text-body font-medium text-link hover:underline"
-                  >
-                    Forgot password?
-                  </Link>
+                  {brand !== 'nextrise' && (
+                    <Link
+                      href="/forgot-password"
+                      className="text-body font-medium text-link hover:underline"
+                    >
+                      Forgot password?
+                    </Link>
+                  )}
                 </div>
                 <FormControl>
                   <PasswordInput

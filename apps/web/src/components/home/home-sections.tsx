@@ -172,11 +172,20 @@ export function PaidPlanCard({
   billingHref,
   billingPurchaseHref,
   paymentsHref,
+  supportHref,
 }: {
   data: HomePaidData;
   billingHref: string;
   billingPurchaseHref: string;
   paymentsHref: string;
+  /**
+   * WhatsApp support URL for the white-label brand. When set, the
+   * billing buttons are replaced by a single Contact support action:
+   * there is no billing section on that brand, so Renew / View My
+   * Plan / View Payments would all be dead ends. Our brand never
+   * passes this, so its buttons render exactly as before.
+   */
+  supportHref?: string | null;
 }) {
   const daysLeft = daysLeftUntil(data.periodEndsAt, new Date());
   const platformCounts = data.platformCounts ?? ZERO_PLATFORM_COUNTS;
@@ -195,7 +204,11 @@ export function PaidPlanCard({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-body leading-heading font-bold text-ink">Paid plan</h2>
-          <p className="text-body leading-body text-ink-sub">Monthly plan · Unlimited posts</p>
+          {supportHref ? null : (
+            <p className="text-body leading-body text-ink-sub">
+              Monthly plan · Unlimited posts
+            </p>
+          )}
         </div>
         <span className="flex shrink-0 items-center gap-2 text-body font-semibold text-ink">
           <span
@@ -214,15 +227,17 @@ export function PaidPlanCard({
         <p className="text-2xl font-bold tracking-tight text-ink">
           {data.units.toLocaleString()} pages or accounts
         </p>
-        <p className="text-body text-ink-sub">
-          {pricePkr.toLocaleString()} PKR / month · {SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR per
-          page or account
-        </p>
+        {supportHref ? null : (
+          <p className="text-body text-ink-sub">
+            {pricePkr.toLocaleString()} PKR / month · {SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR per
+            page or account
+          </p>
+        )}
       </div>
 
       <div className="divide-y divide-line border-y border-line">
         <PlanRow label="Period">
-          {SUBSCRIPTION_PERIOD_DAYS}-day period
+          {supportHref ? null : <>{SUBSCRIPTION_PERIOD_DAYS}-day period</>}
           <span className="block text-body font-normal text-ink-sub">
             Ends {formatExpiryDateLong(data.periodEndsAt)} ·{' '}
             {daysLeft === 0 ? 'Expires today' : `${daysLeft.toLocaleString()} days left`}
@@ -275,17 +290,27 @@ export function PaidPlanCard({
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <Button asChild className="max-sm:w-full">
-          <Link href={billingPurchaseHref}>Renew</Link>
-        </Button>
-        <Button asChild variant="outline" className="max-sm:w-full">
-          <Link href={billingHref}>View My Plan</Link>
-        </Button>
-        <Button asChild variant="outline" className="max-sm:w-full">
-          <Link href={paymentsHref}>View Payments</Link>
-        </Button>
-      </div>
+      {supportHref ? (
+        <div className="flex flex-wrap gap-2">
+          <Button asChild className="max-sm:w-full">
+            <a href={supportHref} target="_blank" rel="noopener noreferrer">
+              Contact support
+            </a>
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button asChild className="max-sm:w-full">
+            <Link href={billingPurchaseHref}>Renew</Link>
+          </Button>
+          <Button asChild variant="outline" className="max-sm:w-full">
+            <Link href={billingHref}>View My Plan</Link>
+          </Button>
+          <Button asChild variant="outline" className="max-sm:w-full">
+            <Link href={paymentsHref}>View Payments</Link>
+          </Button>
+        </div>
+      )}
     </Card>
   );
 }
@@ -397,16 +422,37 @@ export function MuseAssistantCard({ museHref }: { museHref: string }) {
   );
 }
 
-export function ExpiredBanner({ billingPurchaseHref }: { billingPurchaseHref: string }) {
+export function ExpiredBanner({
+  billingPurchaseHref,
+  supportHref,
+}: {
+  billingPurchaseHref: string;
+  /**
+   * WhatsApp support URL for the white-label brand. When set, the
+   * Renew button is replaced by a Contact support action: renewals
+   * go through the brand's support channel, and the Purchase page
+   * does not exist on that brand. Our brand never passes this, so
+   * its Renew button renders exactly as before.
+   */
+  supportHref?: string | null;
+}) {
   return (
     <Banner
       data-testid="plan-banner"
       variant="critical"
       title="Your plan has expired"
-      description="Renew to post and schedule again."
+      description={
+        supportHref ? 'Contact support to renew your plan.' : 'Renew to post and schedule again.'
+      }
       action={
         <Button asChild variant="outline">
-          <Link href={billingPurchaseHref}>Renew</Link>
+          {supportHref ? (
+            <a href={supportHref} target="_blank" rel="noopener noreferrer">
+              Contact support
+            </a>
+          ) : (
+            <Link href={billingPurchaseHref}>Renew</Link>
+          )}
         </Button>
       }
     />

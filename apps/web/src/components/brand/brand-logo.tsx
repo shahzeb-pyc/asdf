@@ -1,10 +1,14 @@
 import React from 'react';
+import Image from 'next/image';
+import { NEXTRISE_LOGO_PATH, NEXTRISE_DISPLAY_NAME, type Brand } from '@fbuploadpro/contracts';
 import { PALETTE } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
 export interface BrandMarkProps extends React.SVGProps<SVGSVGElement> {
   size?: number;
   className?: string;
+  /** White-label brand: renders the brand's logo image instead of our mark. */
+  brand?: Brand;
 }
 
 /**
@@ -21,8 +25,20 @@ export interface BrandMarkProps extends React.SVGProps<SVGSVGElement> {
 export const BrandMark: React.FC<BrandMarkProps> = ({
   size = 32,
   className,
+  brand = 'fbuploadpro',
   ...props
 }) => {
+  if (brand === 'nextrise') {
+    return (
+      <Image
+        src={NEXTRISE_LOGO_PATH}
+        width={size}
+        height={size}
+        alt={NEXTRISE_DISPLAY_NAME}
+        className={cn('inline-block shrink-0', className)}
+      />
+    );
+  }
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -63,6 +79,8 @@ export interface BrandLogoProps {
   subtitle?: string;
   className?: string;
   style?: React.CSSProperties;
+  /** White-label brand: renders the brand's logo and short name. */
+  brand?: Brand;
 }
 
 /**
@@ -74,14 +92,16 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   subtitle,
   className,
   style,
+  brand = 'fbuploadpro',
 }) => {
+  const wordmark = brand === 'nextrise' ? 'NextRise' : 'FBUploadPro';
   return (
     <div className={cn('inline-flex items-center gap-2', className)} style={style}>
-      <BrandMark size={markSize} />
+      <BrandMark size={markSize} brand={brand} />
       {showWordmark && (
         <div className="flex min-w-0 flex-col">
           <span className="text-body leading-heading font-bold tracking-caption text-ink">
-            FBUploadPro
+            {wordmark}
           </span>
           {subtitle && (
             <span className="text-xs leading-heading text-ink-dim">{subtitle}</span>

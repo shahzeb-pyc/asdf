@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import React, { Suspense } from 'react';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { getBrandTenantRoot, resolveBrandFromHost } from '@fbuploadpro/contracts';
 import { shouldUseCleanTenantPaths } from '@/lib/tenant-href';
 import { getServerSessionContext } from '@/lib/auth';
 import { TenantShellContent } from './tenant-shell-content';
@@ -77,7 +78,10 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
     // Outside a request scope (tests, static generation): fall back to prefixed URLs.
     hostHeader = null;
   }
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com';
+  const rootDomain = getBrandTenantRoot(
+    resolveBrandFromHost(hostHeader),
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com'
+  );
   const useCleanPaths = shouldUseCleanTenantPaths(hostHeader, subdomain, rootDomain);
 
   const user = {
@@ -103,6 +107,7 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
         useCleanPaths={useCleanPaths}
         session={session}
         user={user}
+        brand={resolveBrandFromHost(hostHeader)}
       >
         {children}
       </TenantShellContent>

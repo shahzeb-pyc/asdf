@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { Brand } from '@fbuploadpro/contracts';
 import type { AuthenticatedUserContext } from '@/lib/auth';
 import { UserShell } from '@/components/shell/user-shell';
 import { getCachedEntitlement } from '@/lib/billing/entitlement';
@@ -17,6 +18,8 @@ interface TenantShellContentProps {
     name: string;
     email: string;
   };
+  /** White-label brand of the request (spec 191). */
+  brand: Brand;
   children: React.ReactNode;
 }
 
@@ -46,6 +49,7 @@ export async function TenantShellContent({
   useCleanPaths,
   session,
   user,
+  brand,
   children,
 }: Readonly<TenantShellContentProps>) {
   // H5/M9: resolve the display name server-side so the sidebar and
@@ -81,6 +85,7 @@ export async function TenantShellContent({
       sessionUserId={session.userId}
       sessionEmail={session.email}
       initialEntitlement={initialEntitlement}
+      brand={brand}
     >
       {children}
     </UserShell>

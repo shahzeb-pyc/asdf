@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import type { Brand } from '@fbuploadpro/contracts';
 import { useSharedEntitlement } from '@/components/billing/entitlement-provider';
 import { planWordFromEntitlement } from '@/components/workspace/plan-word';
 import { buildTenantHref } from '@/lib/tenant-href';
@@ -9,6 +10,8 @@ import { buildTenantHref } from '@/lib/tenant-href';
 export interface TopbarPlanPillProps {
   subdomain: string;
   useCleanPaths?: boolean | undefined;
+  /** White-label brand (spec 191): plain text, never a link; Free renders nothing. */
+  brand?: Brand | undefined;
 }
 
 const MS_PER_DAY = 86_400_000;
@@ -52,10 +55,16 @@ export function calendarDaysLeft(periodEndsAt: string, today: Date = new Date())
  * or a failed check that cleared the proven value): nothing — a
  * stale or placeholder count must never flash. Admin: nothing;
  * admins never render UserShell.
+ *
+ * Spec 191 (white-label brand): the pill is plain text, never a
+ * link — My Plan and Purchase do not exist there. Expired renders
+ * plain "Expired"; a Free account renders nothing at all, never an
+ * Upgrade link.
  */
 export function TopbarPlanPill({
   subdomain,
   useCleanPaths = false,
+  brand = 'fbuploadpro',
 }: Readonly<TopbarPlanPillProps>) {
   const { entitlement } = useSharedEntitlement();
   if (entitlement === null) return null;
@@ -63,7 +72,23 @@ export function TopbarPlanPill({
   const planWord = planWordFromEntitlement(entitlement, false);
   if (planWord === null || planWord === 'Admin') return null;
 
+  // Plain-text pill (white-label): same frame as the link, without
+  // hover/focus affordances — a span can never be focused.
+  const plainClassName =
+    'flex h-control shrink-0 items-center gap-2 rounded-sm border border-line bg-panel px-3 text-body font-medium';
+
   if (planWord === 'Expired') {
+    if (brand === 'nextrise') {
+      return (
+        <span
+          aria-label="Plan expired"
+          data-testid="topbar-plan-pill"
+          className={`${plainClassName} text-signal-critical`}
+        >
+          Expired
+        </span>
+      );
+    }
     return (
       <Link
         href={buildTenantHref(subdomain, '/my-plan', useCleanPaths)}
@@ -77,6 +102,9 @@ export function TopbarPlanPill({
   }
 
   if (planWord === 'Free') {
+    // Spec 191: no Upgrade link on the white-label brand — a Free
+    // account renders nothing.
+    if (brand === 'nextrise') return null;
     return (
       <Link
         href={buildTenantHref(subdomain, '/purchase', useCleanPaths)}
@@ -98,6 +126,13 @@ export function TopbarPlanPill({
   const baseClassName =
     'flex h-control shrink-0 items-center gap-2 rounded-sm border border-line bg-panel px-3 text-body font-medium outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link';
   if (entitlement.periodEndsAt === null) {
+    if (brand === 'nextrise') {
+      return (
+        <span aria-label="Paid plan" data-testid="topbar-plan-pill" className={`${plainClassName} text-ink`}>
+          Paid
+        </span>
+      );
+    }
     return (
       <Link href={href} aria-label="Paid plan, open My Plan" data-testid="topbar-plan-pill" className={`${baseClassName} text-ink`}>
         Paid
@@ -106,6 +141,13 @@ export function TopbarPlanPill({
   }
   const days = calendarDaysLeft(entitlement.periodEndsAt);
   if (days === null || days < 0) {
+    if (brand === 'nextrise') {
+      return (
+        <span aria-label="Paid plan" data-testid="topbar-plan-pill" className={`${plainClassName} text-ink`}>
+          Paid
+        </span>
+      );
+    }
     return (
       <Link href={href} aria-label="Paid plan, open My Plan" data-testid="topbar-plan-pill" className={`${baseClassName} text-ink`}>
         Paid
@@ -116,7 +158,20 @@ export function TopbarPlanPill({
   // 7 exactly stays green: the rule is "less than 7", not "<= 7".
   const paidColourClass = days < 7 ? 'text-signal-critical' : 'text-brand-emerald';
   const paidClassName = `${baseClassName} ${paidColourClass}`;
+  const paidPlainClassName = `${plainClassName} ${paidColourClass}`;
   if (days === 0) {
+    if (brand === 'nextrise') {
+      return (
+        <span
+          aria-label="Paid plan, expires today"
+          data-testid="topbar-plan-pill"
+          className={paidPlainClassName}
+        >
+          <span>Paid ·</span>
+          <span>Expires today</span>
+        </span>
+      );
+    }
     return (
       <Link
         href={href}
@@ -127,6 +182,22 @@ export function TopbarPlanPill({
         <span>Paid ·</span>
         <span>Expires today</span>
       </Link>
+    );
+  }
+  if (brand === 'nextrise') {
+    return (
+      <span
+        aria-label={`Paid plan, ${days} days left`}
+        data-testid="topbar-plan-pill"
+        className={paidPlainClassName}
+      >
+        {/* Desktop: full wording. Phone (below sm, the search button's
+            own breakpoint): numeric counts only shorten to "Nd left";
+            the "Paid ·" word drops with the full wording. */}
+        <span className="hidden sm:inline">Paid ·</span>
+        <span className="hidden sm:inline">{days} days left</span>
+        <span className="sm:hidden">{days}d left</span>
+      </span>
     );
   }
   return (

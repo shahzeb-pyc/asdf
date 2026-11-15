@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BrandSchema } from './brand.js';
 
 export const RESERVED_SUBDOMAINS = [
   'admin',
@@ -46,6 +47,8 @@ export const UserSchema = z.object({
   subdomain: SubdomainSchema.optional(),
   role: UserRoleSchema.default('user'),
   status: UserStatusSchema.default('active'),
+  /** White-label brand the account belongs to (spec 191). Defaults to ours. */
+  brand: BrandSchema.default('fbuploadpro'),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 });

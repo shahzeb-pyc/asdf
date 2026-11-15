@@ -2,24 +2,46 @@ import type { Metadata, Viewport } from 'next';
 import { Manrope } from 'next/font/google';
 import React, { type ReactNode } from 'react';
 import './globals.css';
+import { NEXTRISE_DISPLAY_NAME, NEXTRISE_LOGO_PATH } from '@fbuploadpro/contracts';
 import { DesktopTitleBar } from '@/components/desktop';
 import { DeferredWhatsAppSupportButton } from '@/components/support/deferred-whatsapp-support-button';
+import { BrandProvider } from '@/components/brand';
+import { getRequestBrand } from '@/lib/brand-server';
 import { Analytics } from '@vercel/analytics/next';
 import { PostHogProvider } from '@/components/posthog-provider';
 import { fontSansClassName } from './fonts';
 
-export const metadata: Metadata = {
-  title: 'FBUploadPro',
-  description: 'publishing automation platform',
-  icons: {
-    icon: [
-      { url: '/icon.svg?v=3', type: 'image/svg+xml' },
-      { url: '/favicon.ico?v=3', sizes: 'any' },
-    ],
-    shortcut: '/favicon.ico?v=3',
-    apple: '/icon.svg?v=3',
-  },
-};
+/**
+ * Spec 191: the document title and icon follow the request's brand.
+ * Our brand keeps today's metadata exactly; the white-label brand
+ * gets its own name and logo.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const brand = await getRequestBrand();
+  if (brand === 'nextrise') {
+    return {
+      title: NEXTRISE_DISPLAY_NAME,
+      description: 'publishing automation platform',
+      icons: {
+        icon: [{ url: NEXTRISE_LOGO_PATH, type: 'image/svg+xml' }],
+        shortcut: NEXTRISE_LOGO_PATH,
+        apple: NEXTRISE_LOGO_PATH,
+      },
+    };
+  }
+  return {
+    title: 'FBUploadPro',
+    description: 'publishing automation platform',
+    icons: {
+      icon: [
+        { url: '/icon.svg?v=3', type: 'image/svg+xml' },
+        { url: '/favicon.ico?v=3', sizes: 'any' },
+      ],
+      shortcut: '/favicon.ico?v=3',
+      apple: '/icon.svg?v=3',
+    },
+  };
+}
 
 /**
  * Viewport (spec 142, F03): `viewportFit: 'cover'` opts the page into the
@@ -74,11 +96,14 @@ const themeInitScript = `
   })();
 `;
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: ReactNode;
 }>) {
+  // Spec 191: the brand comes from the request host and is provided
+  // to every client component below.
+  const brand = await getRequestBrand();
   return (
     <html lang="en" suppressHydrationWarning className={manrope.variable}>
       <head>
@@ -89,9 +114,11 @@ export default function RootLayout({
           apiKey={process.env.POSTHOG_KEY}
           host={process.env.POSTHOG_HOST || 'https://us.i.posthog.com'}
         >
-          <DesktopTitleBar />
-          <main>{children}</main>
-          <DeferredWhatsAppSupportButton />
+          <BrandProvider brand={brand}>
+            <DesktopTitleBar />
+            <main>{children}</main>
+            <DeferredWhatsAppSupportButton />
+          </BrandProvider>
           <Analytics />
         </PostHogProvider>
       </body>

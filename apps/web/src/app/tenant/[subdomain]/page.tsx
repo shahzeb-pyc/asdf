@@ -22,6 +22,7 @@ import {
   UpgradeCard,
 } from '@/components/home/home-sections';
 import { buildTenantHref, shouldUseCleanTenantPaths } from '@/lib/tenant-href';
+import { buildBrandWhatsAppSupportUrl, getRequestBrandFromHost } from '@/lib/brand';
 
 import { getWorkspaceDisplayName } from './workspace-display-name';
 
@@ -72,6 +73,15 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
   }
   const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com';
   const useCleanPaths = shouldUseCleanTenantPaths(hostHeader, subdomain, rootDomain);
+  // Spec 191: the old-users banner is our brand's notice — it never
+  // shows on the white-label brand.
+  const brand = getRequestBrandFromHost(hostHeader);
+  // Spec 191 (Home buttons fix): on the white-label brand there is
+  // no billing section, so every billing action on Home is replaced
+  // by the brand's WhatsApp support link (renewals go through the
+  // friend) or hidden. Our brand never sets this, so its buttons
+  // render exactly as before.
+  const supportHref = brand === 'nextrise' ? buildBrandWhatsAppSupportUrl(brand) : null;
   const href = (path: string) => buildTenantHref(subdomain, path, useCleanPaths);
 
   // Admins never land on Home: a direct load that reaches this page
@@ -94,6 +104,9 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
   const billingHref = href('/my-plan');
   const billingPurchaseHref = href('/purchase');
   const paymentsHref = href('/payments');
+  // Spec 191 (Home buttons fix): quick links carry no Billing row on
+  // the white-label brand — the page does not exist there.
+  const billingHrefForLinks = brand === 'nextrise' ? undefined : billingHref;
 
   const data = await loadHomeData(subdomain);
 
@@ -110,22 +123,24 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
         }
         promptsHref={promptsHref}
       />
-      <HomeOldUsersBanner />
+      {brand !== 'nextrise' && <HomeOldUsersBanner />}
 
       {data.kind === 'error' ? <HomeErrorCard message={data.message} /> : null}
 
       {data.kind === 'admin' ? <AdminPanelCard billingHref={billingHref} /> : null}
 
       {data.kind === 'expired' ? (
-        <ExpiredBanner billingPurchaseHref={billingPurchaseHref} />
+        <ExpiredBanner billingPurchaseHref={billingPurchaseHref} supportHref={supportHref} />
       ) : null}
 
       {data.kind === 'free' ? (
         <div className="grid items-start gap-6 lg:grid-cols-3">
           <main className="space-y-6 lg:col-span-2">
             <FreePlanCard />
-            <UpgradeCard billingPurchaseHref={billingPurchaseHref} billingHref={billingHref} />
-            <QuickLinks links={buildFreeQuickLinks({ promptsHref, billingHref })} />
+            {brand !== 'nextrise' ? (
+              <UpgradeCard billingPurchaseHref={billingPurchaseHref} billingHref={billingHref} />
+            ) : null}
+            <QuickLinks links={buildFreeQuickLinks({ promptsHref, billingHref: billingHrefForLinks })} />
           </main>
           <aside>
             <MuseAssistantCard museHref={museHref} />
@@ -141,6 +156,7 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
               billingHref={billingHref}
               billingPurchaseHref={billingPurchaseHref}
               paymentsHref={paymentsHref}
+              supportHref={supportHref}
             />
             <QuickLinks
               links={buildPaidQuickLinks({
@@ -148,7 +164,7 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
                 creatorFinderHref,
                 accountsHref,
                 inAppScheduleHref,
-                billingHref,
+                billingHref: billingHrefForLinks,
               })}
             />
           </main>

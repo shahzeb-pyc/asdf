@@ -6,6 +6,7 @@ import {
   verifySessionToken,
 } from '@fbuploadpro/contracts';
 import { sanitizeAuthErrorMessage } from '@/lib/auth-errors';
+import { getRequestBrandRoot } from '@/lib/brand';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -31,7 +32,7 @@ export async function handleInitiateInstagramOAuth(
   dbClient?: DatabaseClient | SupabaseClient
 ): Promise<NextResponse> {
   const sessionSecret = getSessionSecret();
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || '';
+  const rootDomain = getRequestBrandRoot(request);
   const appUrlFallback =
     process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 

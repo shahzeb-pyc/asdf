@@ -17,19 +17,21 @@ import {
 import { apiGet, buildTenantApiPath, getErrorMessage } from '@/lib/api';
 import { MuseActivityResponseSchema } from '@/lib/api/schemas/muse';
 import { MuseConnectDialog } from '@/components/muse/muse-connect-dialog';
+import { useBrandConfig } from '@/components/brand';
 
 /**
  * Muse page — separated, plain-language copy.
  *
  * The key route is Media Library only: Today's work lists only
  * media Muse added with a key. The browser route is separate:
- * a user can also tell Muse to sign in to FBUploadPro in the
+ * a user can also tell Muse to sign in to the brand in the
  * browser and do things on their behalf. This page never lists
  * posts, scheduled items, or published content.
  */
 export function MusePage({
   subdomain,
 }: Readonly<{ subdomain: string }>) {
+  const brandName = useBrandConfig().displayName;
   const [connectOpen, setConnectOpen] = React.useState(false);
   const [activity, setActivity] = React.useState<MuseActivityResponse | null>(
     null
@@ -70,7 +72,7 @@ export function MusePage({
           <p className="m-0 max-w-2xl text-body text-ink-sub">
             Tell Muse what you want. Muse adds your media to your
             Media Library. You can also ask Muse how to use
-            FBUploadPro, or tell Muse to sign in to FBUploadPro in
+            {brandName}, or tell Muse to sign in to {brandName} in
             your browser and do things for you, on your behalf —
             whatever you ask. This page only lists media Muse added.
             It does not list posts, scheduled items, or published
@@ -94,7 +96,7 @@ export function MusePage({
           <li>Add a new video to my Media Library.</li>
           <li>Show me how to schedule a post, step by step.</li>
           <li>
-            Sign in to FBUploadPro in my browser and publish this post
+            Sign in to {brandName} in my browser and publish this post
             with Publish Now.
           </li>
           <li>Check my Page and tell me what needs attention.</li>

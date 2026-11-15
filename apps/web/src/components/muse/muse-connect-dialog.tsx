@@ -2,10 +2,11 @@
 
 import React from 'react';
 import {
-  MUSE_CONNECT_PROMPT,
+  buildMuseConnectPrompt,
   type AgentKey,
   type AgentKeyCreateResponse,
 } from '@fbuploadpro/contracts';
+import { useBrandConfig } from '@/components/brand';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,7 +47,7 @@ import {
  *
  * Flow, in order: create a key, copy the prompt and give it to
  * Muse the first time, Muse asks for the key, then reads the
- * entire guide, then asks for FBUploadPro sign-in. The key
+ * entire guide, then asks for the brand sign-in. The key
  * itself is never pasted in chat, and is shown exactly once
  * after creation.
  */
@@ -59,6 +60,10 @@ export function MuseConnectDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }>) {
+  const brandConfig = useBrandConfig();
+  // The prompt names the brand and its guide address — NextRise
+  // Digital on the white-label brand, FBUploadPro on ours.
+  const museConnectPrompt = buildMuseConnectPrompt(brandConfig.brand);
   const [keys, setKeys] = React.useState<AgentKey[]>([]);
   const [keysError, setKeysError] = React.useState<string | null>(null);
   const [name, setName] = React.useState('');
@@ -190,15 +195,15 @@ export function MuseConnectDialog({
               <p className="text-ink-sub text-sm">
                 Copy this prompt and give it to Muse the first time.
                 Muse will first ask for your key, then read the entire
-                guide, then ask for your FBUploadPro sign-in.
+                guide, then ask for your {brandConfig.displayName} sign-in.
               </p>
               <p className="mt-2 text-sm leading-relaxed">
-                {MUSE_CONNECT_PROMPT}
+                {museConnectPrompt}
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Button
                   onClick={() =>
-                    void copyText(MUSE_CONNECT_PROMPT, 'Prompt copied.')
+                    void copyText(museConnectPrompt, 'Prompt copied.')
                   }
                 >
                   Copy prompt

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getSessionSecret, verifySessionToken } from '@fbuploadpro/contracts';
+import { getSessionSecret, resolveBrandFromHost, verifySessionToken } from '@fbuploadpro/contracts';
 import { validateSessionDetailed } from '@/lib/auth/session';
 
 /**
@@ -44,6 +44,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Spec 191: a session belongs to one brand. A token minted for the
+  // other brand is dead on this host — in both modes, before any
+  // database read.
+  const requestBrand = resolveBrandFromHost(request.headers.get('host'));
+  if ((session.brand ?? 'fbuploadpro') !== requestBrand) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   // Spec 152 O4 — token-only proof: the status claim is part of
   // the signed token, so a suspended session is dead here without
   // any database read. Password-change / deactivation detection
@@ -55,7 +63,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const verdict = await validateSessionDetailed(session);
+  const verdict = await validateSessionDetailed(session, requestBrand);
   if (verdict === 'active') {
     return NextResponse.json({ active: true }, { status: 200 });
   }

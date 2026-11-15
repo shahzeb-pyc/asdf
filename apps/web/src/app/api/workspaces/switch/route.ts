@@ -1,7 +1,9 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
   asWorkspaceIdClaim,
+  getBrandTenantRoot,
   getSessionSecret,
+  resolveBrandFromHost,
   SwitchWorkspaceRequestSchema,
   verifySessionToken,
   signSessionToken,
@@ -27,6 +29,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (limited) return limited;
   const session = await extractSession(request);
   if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  // Spec 191: a session belongs to one brand. A token minted for the
+  // other brand is not a session on this host.
+  const requestBrand = resolveBrandFromHost(request.headers.get('host'));
+  if ((session.brand ?? 'fbuploadpro') !== requestBrand) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -105,12 +113,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         allowedSubdomains,
         role: session.role,
         status: session.status,
+        ...(session.brand ? { brand: session.brand } : {}),
         ...(claimedWorkspaceId ? { workspaceId: claimedWorkspaceId } : {}),
       },
       secret
     );
 
-    const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';
+    const rootDomain = getBrandTenantRoot(
+      requestBrand,
+      process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000'
+    );
     const redirectUrl = buildTenantUrl(subdomain, '/', request.url, rootDomain).toString();
 
     const response = NextResponse.json({

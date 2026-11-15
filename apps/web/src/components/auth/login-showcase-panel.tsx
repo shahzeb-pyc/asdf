@@ -50,7 +50,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { ClockIcon, LayoutGridIcon, LockIcon } from 'lucide-react';
-import { BrandMark } from '@/components/brand';
+import { BrandMark, useBrandConfig } from '@/components/brand';
 
 interface FeatureItem {
   icon: React.ReactNode;
@@ -77,6 +77,8 @@ const FEATURES: readonly FeatureItem[] = [
 ] as const;
 
 export function AuthShowcasePanel() {
+  // Spec 191: the brand row follows the request's brand.
+  const brandConfig = useBrandConfig();
   return (
     <div className="w-full max-w-165">
       {/* Centred block (centred by the layout wrapper): brand,
@@ -84,11 +86,15 @@ export function AuthShowcasePanel() {
           inside this 660px block (max-w-165). */}
       {/* Brand row — mark + name only; the tagline repeated the headline. */}
       <Link href="/login" className="inline-flex items-center gap-3 self-start no-underline">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-xs border border-line bg-subtle">
-          <BrandMark size={28} />
-        </div>
+        {brandConfig.brand === 'nextrise' ? (
+          <BrandMark size={40} brand="nextrise" className="rounded-xs" />
+        ) : (
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xs border border-line bg-subtle">
+            <BrandMark size={28} />
+          </div>
+        )}
         <span className="text-lg leading-heading font-bold tracking-h3 text-ink">
-          FBUploadPro
+          {brandConfig.shortName}
         </span>
       </Link>
 

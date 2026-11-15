@@ -6,6 +6,13 @@ import {
   getTenantRewriteUrl,
   verifySessionToken,
   canAccessTenant,
+  resolveBrandFromHost,
+  getBrandTenantRoot,
+  getBrandGatewayHost,
+  isWhiteLabelBlockedApiPath,
+  isWhiteLabelBlockedAuthPath,
+  isWhiteLabelBlockedTenantPath,
+  type Brand,
   type SessionPayload,
 } from '@fbuploadpro/contracts';
 import {
@@ -42,12 +49,21 @@ function extractToken(request: NextRequest): string | null {
 
 async function resolveSession(
   request: NextRequest,
-  sessionSecret: string
+  sessionSecret: string,
+  expectedBrand?: Brand
 ): Promise<SessionPayload | null> {
   const token = extractToken(request);
   if (!token) return null;
   try {
-    return await verifySessionToken(token, sessionSecret);
+    const payload = await verifySessionToken(token, sessionSecret);
+    // Spec 191: a session belongs to one brand. A token minted for
+    // the other brand (or minted before brands existed, which means
+    // our brand) is not a session on this host — it is null, never
+    // a cross-brand login.
+    if (expectedBrand && (payload.brand ?? 'fbuploadpro') !== expectedBrand) {
+      return null;
+    }
+    return payload;
   } catch {
     return null;
   }
@@ -288,8 +304,15 @@ function handleDirectTenantPathOnApex(
   pathSubdomain: string,
   pathname: string,
   session: SessionPayload | null,
-  nonce: string
+  nonce: string,
+  brand: Brand
 ): NextResponse {
+  // Spec 191: billing pages do not exist on the white-label
+  // brand — they 404 for everyone, authenticated or not.
+  if (isWhiteLabelBlockedTenantPath(brand, pathname)) {
+    return NextResponse.rewrite(new URL('/_not-found', request.url));
+  }
+
   if (!session) {
     return buildLoginRedirectWithCleanReturn(request);
   }
@@ -363,7 +386,15 @@ function handleDirectTenantPathOnApex(
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
   const host = request.headers.get('host') || '';
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';
+  // Spec 191: the brand comes from the request host. All routing
+  // below uses the brand's tenant root and gateway host, so the
+  // white-label brand's hosts are <workspace>.app.nextrisehq.com
+  // and app.nextrisehq.com, and our brand keeps its configured root
+  // exactly as before.
+  const brand = resolveBrandFromHost(host);
+  const configuredRoot = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';
+  const rootDomain = getBrandTenantRoot(brand, configuredRoot);
+  const gatewayHost = getBrandGatewayHost(brand, configuredRoot);
   const sessionSecret = getSessionSecret();
 
   // System API routes and public static bypass tenant rewriting.
@@ -394,6 +425,14 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     // as before. Nothing in an API route reads x-nonce (grep:
     // only lib/csp.ts and middleware reference it).
     if (isApiRoute) {
+      // Spec 191: signup, password-reset and billing APIs do not
+      // exist on the white-label brand — they 404 before any origin
+      // or auth check.
+      if (isWhiteLabelBlockedApiPath(brand, pathname)) {
+        return applyNoStoreHeaders(
+          NextResponse.json({ error: 'Not found' }, { status: 404 })
+        );
+      }
       if (MUTATING_METHODS.has(request.method.toUpperCase())) {
         const origin = request.headers.get('origin');
         if (origin && !isAllowedApiOrigin(origin, host, rootDomain)) {
@@ -441,16 +480,26 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     if (isApex && pathname.startsWith('/tenant/')) {
       const pathSubdomain = pathname.split('/')[2];
       if (pathSubdomain) {
-        const session = await resolveSession(request, sessionSecret);
+        const session = await resolveSession(request, sessionSecret, brand);
         return applyCspHeaders(
-          handleDirectTenantPathOnApex(request, pathSubdomain, pathname, session, nonce),
+          handleDirectTenantPathOnApex(request, pathSubdomain, pathname, session, nonce, brand),
           nonce
         );
       }
     }
 
     if (subdomain === 'app' || isApex) {
-      const session = await resolveSession(request, sessionSecret);
+      const session = await resolveSession(request, sessionSecret, brand);
+      // Spec 191: no registration or password reset on the
+      // white-label brand. Blocked entry paths go to the login page.
+      // The Muse guide is served on every brand (owner reversal
+      // 2026-11-15: NextRise students use Muse).
+      if (brand === 'nextrise' && isWhiteLabelBlockedAuthPath(brand, pathname)) {
+        return applyCspHeaders(
+          NextResponse.redirect(new URL('/login', request.url), 307),
+          nonce
+        );
+      }
       const isLogoutSuccess = request.nextUrl.searchParams.get('logout') === 'success';
       // Sellers have no workspace: seller sessions on the app
       // host that are not already on /seller belong on /seller
@@ -634,15 +683,24 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 
   if (isAuthRoute) {
     const gatewayUrl = new URL(request.url);
-    gatewayUrl.host = `app.${rootDomain}`;
+    gatewayUrl.host = gatewayHost;
     return applyCspHeaders(NextResponse.redirect(gatewayUrl, 307), nonce);
   }
 
-  const session = await resolveSession(request, sessionSecret);
+  // Spec 191: billing pages do not exist on the white-label
+  // brand — they 404 for everyone, authenticated or not.
+  if (isWhiteLabelBlockedTenantPath(brand, pathname)) {
+    return applyCspHeaders(
+      NextResponse.rewrite(new URL('/_not-found', request.url)),
+      nonce
+    );
+  }
+
+  const session = await resolveSession(request, sessionSecret, brand);
 
   if (!session) {
     return applyCspHeaders(
-      buildLoginRedirectWithCleanReturn(request, `app.${rootDomain}`),
+      buildLoginRedirectWithCleanReturn(request, gatewayHost),
       nonce
     );
   }
@@ -661,7 +719,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   // workspace that does not exist).
   if (session.role === 'seller') {
     const sellerUrl = new URL(request.url);
-    sellerUrl.host = `app.${rootDomain}`;
+    sellerUrl.host = gatewayHost;
     sellerUrl.pathname = '/seller';
     sellerUrl.search = '';
     sellerUrl.hash = '';
