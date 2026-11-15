@@ -307,7 +307,7 @@ function handleDirectTenantPathOnApex(
   nonce: string,
   brand: Brand
 ): NextResponse {
-  // Spec 191: billing and Muse pages do not exist on the white-label
+  // Spec 191: billing pages do not exist on the white-label
   // brand — they 404 for everyone, authenticated or not.
   if (isWhiteLabelBlockedTenantPath(brand, pathname)) {
     return NextResponse.rewrite(new URL('/_not-found', request.url));
@@ -687,7 +687,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return applyCspHeaders(NextResponse.redirect(gatewayUrl, 307), nonce);
   }
 
-  // Spec 191: billing and Muse pages do not exist on the white-label
+  // Spec 191: billing pages do not exist on the white-label
   // brand — they 404 for everyone, authenticated or not.
   if (isWhiteLabelBlockedTenantPath(brand, pathname)) {
     return applyCspHeaders(

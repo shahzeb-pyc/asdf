@@ -50,6 +50,8 @@ describe('PaidPlanCard', () => {
     expect(screen.getByText('21 pages or accounts')).toBeTruthy();
     expect(screen.getByText(/1,470 PKR \/ month/)).toBeTruthy();
     expect(screen.getByText(/70 PKR per page or account/)).toBeTruthy();
+    expect(screen.getByText('Monthly plan · Unlimited posts')).toBeTruthy();
+    expect(screen.getByText(/30-day period/)).toBeTruthy();
     expect(screen.getByText('12 pages')).toBeTruthy();
     expect(screen.getByText('4 accounts')).toBeTruthy();
     expect(screen.getByText('0 accounts')).toBeTruthy();
@@ -98,8 +100,9 @@ describe('PaidPlanCard', () => {
   it('on the white-label brand the billing buttons become one Contact support link', () => {
     // Spec 191 Home buttons fix: there is no billing section on the
     // NextRise brand, so Renew / View My Plan / View Payments would
-    // all be dead ends. The card keeps its plan facts; only the
-    // actions change, to the brand's WhatsApp support link.
+    // all be dead ends. The actions change to the brand's WhatsApp
+    // support link, and the price / plan-length lines are hidden too
+    // (they state our price and period, not theirs).
     const supportHref =
       'https://wa.me/923429469500?text=Hi!%20I%20need%20assistance%20with%20my%20NextRise%20account.';
     render(
@@ -117,9 +120,17 @@ describe('PaidPlanCard', () => {
     const support = screen.getByRole('link', { name: 'Contact support' });
     expect(support.getAttribute('href')).toBe(supportHref);
     expect(support.getAttribute('target')).toBe('_blank');
-    // The plan facts themselves are unchanged on the white-label brand.
+    // Spec 191 Home buttons fix, round 2: the price and plan-length
+    // lines state OUR price (70 PKR per unit) and OUR 30-day period.
+    // NextRise students pay the friend a flat fee on 1/3/6-month
+    // periods, so those lines must not render on their brand at all.
+    // The true facts stay: the unit count and the real end date.
     expect(screen.getByText('21 pages or accounts')).toBeTruthy();
-    expect(screen.getByText(/1,470 PKR \/ month/)).toBeTruthy();
+    expect(screen.queryByText(/1,470 PKR \/ month/)).toBeNull();
+    expect(screen.queryByText(/70 PKR per page or account/)).toBeNull();
+    expect(screen.queryByText('Monthly plan · Unlimited posts')).toBeNull();
+    expect(screen.queryByText(/30-day period/)).toBeNull();
+    expect(screen.getByText(/Ends Wednesday, 2 December 2026/)).toBeTruthy();
   });
 });
 

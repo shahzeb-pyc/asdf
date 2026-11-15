@@ -204,7 +204,11 @@ export function PaidPlanCard({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-body leading-heading font-bold text-ink">Paid plan</h2>
-          <p className="text-body leading-body text-ink-sub">Monthly plan · Unlimited posts</p>
+          {supportHref ? null : (
+            <p className="text-body leading-body text-ink-sub">
+              Monthly plan · Unlimited posts
+            </p>
+          )}
         </div>
         <span className="flex shrink-0 items-center gap-2 text-body font-semibold text-ink">
           <span
@@ -223,15 +227,17 @@ export function PaidPlanCard({
         <p className="text-2xl font-bold tracking-tight text-ink">
           {data.units.toLocaleString()} pages or accounts
         </p>
-        <p className="text-body text-ink-sub">
-          {pricePkr.toLocaleString()} PKR / month · {SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR per
-          page or account
-        </p>
+        {supportHref ? null : (
+          <p className="text-body text-ink-sub">
+            {pricePkr.toLocaleString()} PKR / month · {SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR per
+            page or account
+          </p>
+        )}
       </div>
 
       <div className="divide-y divide-line border-y border-line">
         <PlanRow label="Period">
-          {SUBSCRIPTION_PERIOD_DAYS}-day period
+          {supportHref ? null : <>{SUBSCRIPTION_PERIOD_DAYS}-day period</>}
           <span className="block text-body font-normal text-ink-sub">
             Ends {formatExpiryDateLong(data.periodEndsAt)} ·{' '}
             {daysLeft === 0 ? 'Expires today' : `${daysLeft.toLocaleString()} days left`}
