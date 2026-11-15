@@ -37,16 +37,21 @@ jobs:
       - name: Run Turbo test with Vitest coverage
         run: pnpm turbo run test -- --coverage
 
-      - name: ADU scraper tests (standalone VPS service, outside the pnpm workspace)
+      - name: ADU scraper lint & tests (standalone VPS service, outside the pnpm workspace)
         # The scraper is excluded from the pnpm workspace, so the root
         # install does not provide its deps — and the scrapers tests
         # (spec 158) import patchright/dotenv, which the dep-free
         # discovery tests never needed. Install them here (exact pins
         # in apps/adu-scraper/package.json; no lockfile, no scripts,
-        # no browser downloads) and run both suites.
+        # no browser downloads) and run the package's own lint/test
+        # scripts, whose file lists are the source of truth — the
+        # claim-rotation and tiktok-pool suites live at the package
+        # root, outside the discovery/ and scrapers/ globs, and a
+        # hardcoded glob here silently missed them.
         run: |
           npm install --prefix apps/adu-scraper --no-save --no-package-lock --ignore-scripts
-          node --test apps/adu-scraper/discovery/*.test.js apps/adu-scraper/scrapers/*.test.js
+          npm --prefix apps/adu-scraper run lint
+          npm --prefix apps/adu-scraper test
 
       - name: ADU downloader tests (standalone VPS service, pure functions only)
         run: |

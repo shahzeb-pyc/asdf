@@ -43,6 +43,7 @@ import { discoverReelIdsWithYtdlp } from './discovery/ytdlp.js';
 import { discoverYoutubeShorts, quotaParkRetryAt, requeueDueQuotaParkedConfigs } from './discovery/youtube-api.js';
 import { logTikwmPrimaryStatus } from './discovery/tikwm.js';
 import { createTikTokPool } from './tiktok-pool.js';
+import { PLATFORM_ORDER, PENDING_PLATFORM_ORDER } from './claim-rotation.js';
 import { acquireWorkerTab, releaseWorkerTab } from './browser-tabs.js';
 import { markSyncStatus, upsertReelsAndMarkSynced } from './jobs.js';
 
@@ -156,15 +157,6 @@ const PLATFORM_HANDLERS = {
     scrape: scrapeFacebookProfile,
   },
 };
-
-const PLATFORM_ORDER = ['instagram', 'tiktok', 'youtube', 'facebook'];
-
-// The TikTok worker pool (tiktok-pool.js) owns TikTok `pending`
-// claims, so the main loop's `pending` rotation EXCLUDES tiktok
-// while the pool runs. `browser_pending` keeps the full rotation —
-// the TikTok browser fallback still uses the shared Puppeteer page
-// on the main loop.
-const PENDING_PLATFORM_ORDER = ['instagram', 'youtube', 'facebook'];
 
 const CLAIM_RPC = {
   pending: 'get_next_pending_adu_config',
@@ -413,6 +405,13 @@ async function processTikTokPendingJob(job) {
 
 async function main() {
   console.log('🚀 Starting Multi-Platform Scraper Orchestrator (yt-dlp + browser)...');
+
+  // Instagram discovery DISABLED — code-level block, owner order
+  // 2026-11-16 (temporary stop, not a removal). The claim rotation
+  // in claim-rotation.js has no 'instagram', so no Instagram config
+  // is ever claimed, even if re-queued to pending. Re-enable by
+  // re-adding 'instagram' to both rotation arrays.
+  console.log("⛔ Instagram discovery DISABLED — code-level block, owner order 2026-11-16 (re-enable by re-adding 'instagram' to the claim rotation).");
 
   // ONE loud ERROR when TIKWMAPI_KEYS_SCRAPER is unset (TikWM
   // PRIMARY disabled, backup-only TikTok discovery); the scraper
