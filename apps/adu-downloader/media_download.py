@@ -1,13 +1,16 @@
 import json
 import logging
 import os
+import random
 import subprocess
 import tempfile
+import urllib.parse
 import uuid
 
 from caption_utils import DEFAULT_REEL_CAPTION, caption_from_yt_dlp_info, normalize_reel_caption
 from config import (
     DATACENTER_PROXY,
+    INSTAGRAM_PROXY_POOL,
     RESOLVE_PROXY_URL,
     YT_VIDEO_DOWNLOAD_API_KEY,
     aria2_cli_args,
@@ -426,6 +429,55 @@ def download_youtube_reel(
     return result.filepath, title or DEFAULT_REEL_CAPTION
 
 
+# Instagram metadata: distinct pool members tried per reel before
+# giving up (spec 195). One member per attempt; a 429 moves to the
+# next member instead of waiting out the throttle on one exit.
+INSTAGRAM_POOL_MAX_MEMBERS_PER_REEL = 3
+
+
+def _proxy_host(proxy_url: str) -> str:
+    """Host of a proxy URL, for failure logs — never the URL or its
+    credentials."""
+    try:
+        return urllib.parse.urlparse(proxy_url).hostname or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _is_http_429(exc: Exception) -> bool:
+    """True when a metadata failure is Instagram throttling (HTTP 429)."""
+    message = str(exc)
+    return "429" in message and ("Too Many Requests" in message or "HTTP Error" in message)
+
+
+def _fetch_instagram_metadata_with_pool(url: str, profile: dict) -> dict:
+    """Instagram metadata via the proxy pool (spec 195): a random
+    member per attempt, up to INSTAGRAM_POOL_MAX_MEMBERS_PER_REEL
+    distinct members; a 429 moves to the next member. After the
+    budget is spent the last failure surfaces — never a silent fall
+    back to the rotating proxy for this reel."""
+    members = random.sample(
+        INSTAGRAM_PROXY_POOL,
+        min(len(INSTAGRAM_PROXY_POOL), INSTAGRAM_POOL_MAX_MEMBERS_PER_REEL),
+    )
+    last_error: RuntimeError | None = None
+    for proxy in members:
+        try:
+            return fetch_metadata(url, proxy, profile)
+        except RuntimeError as exc:
+            if _is_http_429(exc):
+                log.warning(
+                    "Instagram metadata 429 via pool host %s; trying another pool member",
+                    _proxy_host(proxy),
+                )
+                last_error = exc
+                continue
+            raise
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Instagram metadata failed via the proxy pool")
+
+
 def download_reel_media(platform: str, url: str, *, reel_external_id: str | None = None) -> tuple[str, str]:
     """Download reel to a temp file; returns (absolute_path, caption). Caller must delete the file."""
     platform = (platform or "instagram").lower()
@@ -438,23 +490,31 @@ def download_reel_media(platform: str, url: str, *, reel_external_id: str | None
         profile = PLATFORM_PROFILES[platform]
 
         if platform == "instagram":
-            # Metadata via the resolve proxy, then direct CDN fetch via
-            # aria2 (spec 194). A missing proxy is a config error raised
-            # before any subprocess runs — a direct metadata fetch is
-            # what Instagram refuses with a confusing empty response.
-            if not RESOLVE_PROXY_URL:
-                raise RuntimeError(
-                    "RESOLVE_PROXY_URL is not set: Instagram metadata must go "
-                    "through the resolve proxy — add it to the downloader environment"
+            # Metadata via the proxy pool when configured (spec 195),
+            # else the resolve proxy (spec 194 fallback). A missing
+            # proxy is a config error raised before any subprocess
+            # runs — a direct metadata fetch is what Instagram refuses
+            # with a confusing empty response. The file fetch is
+            # always direct via aria2.
+            if INSTAGRAM_PROXY_POOL:
+                info = _fetch_instagram_metadata_with_pool(url, profile)
+                filename, description = download_from_metadata_info(
+                    info, tmp_dir, unique_id, reel_external_id=reel_external_id
                 )
-            filename, description = download_via_metadata_then_aria2(
-                url,
-                profile,
-                RESOLVE_PROXY_URL,
-                tmp_dir,
-                unique_id,
-                reel_external_id=reel_external_id,
-            )
+            else:
+                if not RESOLVE_PROXY_URL:
+                    raise RuntimeError(
+                        "RESOLVE_PROXY_URL is not set: Instagram metadata must go "
+                        "through the resolve proxy — add it to the downloader environment"
+                    )
+                filename, description = download_via_metadata_then_aria2(
+                    url,
+                    profile,
+                    RESOLVE_PROXY_URL,
+                    tmp_dir,
+                    unique_id,
+                    reel_external_id=reel_external_id,
+                )
         elif platform == "youtube":
             # Video Download Api first (1080, merged), direct yt-dlp
             # fallback with no proxy (spec 157).
