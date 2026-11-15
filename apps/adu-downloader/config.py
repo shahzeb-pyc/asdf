@@ -109,13 +109,36 @@ def direct_env() -> dict:
     return env
 
 # Owner-supplied rotating residential proxy for TikTok resolve +
-# Countik calls and Instagram metadata ONLY (never downloads: it
-# fetches links, the file download stays direct). The value lives in
-# the server .env (mode 600) and is never recorded anywhere else.
-# Empty means TikTok claiming is disabled (the worker logs loudly and
-# claims zero TikTok rows) and Instagram downloads fail loudly with a
-# config error — the other platforms keep running.
+# Countik calls ONLY (never downloads: it fetches links, the file
+# download stays direct). The value lives in the server .env (mode
+# 600) and is never recorded anywhere else. Empty means TikTok
+# claiming is disabled (the worker logs loudly and claims zero TikTok
+# rows) — the other platforms keep running. Instagram metadata uses
+# it only as the fallback when INSTAGRAM_PROXY_POOL is empty
+# (spec 194 behaviour); with a pool configured, Instagram metadata
+# never touches this proxy.
 RESOLVE_PROXY_URL = os.environ.get("RESOLVE_PROXY_URL", "").strip() or None
+
+# Instagram metadata proxy pool: owner-supplied residential proxies
+# (Doppler secret INSTAGRAM_PROXIES in prd, comma-separated proxy
+# URLs), Instagram metadata ONLY — TikTok resolve stays on
+# RESOLVE_PROXY_URL above. The value lives in the server .env (mode
+# 600) and is never recorded anywhere else. Unset -> empty pool and
+# the Instagram branch falls back to RESOLVE_PROXY_URL (spec 194).
+def parse_instagram_proxy_pool(raw: str) -> list[str]:
+    """Parse the INSTAGRAM_PROXIES value: split on commas, strip
+    whitespace, drop empties. A value that is set but parses to
+    nothing is a config error — fail loud, naming the variable."""
+    pool = [part.strip() for part in raw.split(",") if part.strip()]
+    if raw and not pool:
+        raise RuntimeError(
+            "INSTAGRAM_PROXIES is set but contains no usable proxy URLs: "
+            "use comma-separated http://user:pass@host:port values, or unset it"
+        )
+    return pool
+
+
+INSTAGRAM_PROXY_POOL = parse_instagram_proxy_pool(os.environ.get("INSTAGRAM_PROXIES", ""))
 
 # Resolve pacing (shared across all TikTok worker threads): minimum
 # interval between resolve API calls, and the backoff armed after a 429.
