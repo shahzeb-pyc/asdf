@@ -19,9 +19,10 @@
  * (see tiktok-pool.js; the main loop's `pending` rotation excludes
  * tiktok while the pool runs, `browser_pending` keeps it), Puppeteer logged-in path for Instagram and TikTok
  * (YouTube discovery moved to the official Data API, spec 154 — no
- * browser, no login; Facebook discovery runs its own no-login
- * Patchright headless-shell session per job, spec 158 — no login at
- * all), the pending -> processing ->
+ * browser, no login; Facebook discovery runs in the shared logged-in
+ * Puppeteer browser, spec scraper-fb-loggedin-route — the session
+ * lives in the persistent profile, the scraper never logs in), the
+ * pending -> processing ->
  * synced | error | browser_pending state machine, the 60s idle sleep,
  * the 500-job browser restart, the manual startup logins (Instagram
  * and TikTok only) — is the old code.
@@ -42,6 +43,7 @@ import { discoverReelIdsWithYtdlp } from './discovery/ytdlp.js';
 import { discoverYoutubeShorts, quotaParkRetryAt, requeueDueQuotaParkedConfigs } from './discovery/youtube-api.js';
 import { logTikwmPrimaryStatus } from './discovery/tikwm.js';
 import { createTikTokPool } from './tiktok-pool.js';
+import { acquireWorkerTab, releaseWorkerTab } from './browser-tabs.js';
 import { markSyncStatus, upsertReelsAndMarkSynced } from './jobs.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -147,8 +149,10 @@ const PLATFORM_HANDLERS = {
     scrape: scrapeTikTokProfile,
   },
   facebook: {
-    // No login handler: Facebook discovery runs its own no-login
-    // Patchright session (spec 158) — see scrapeWithBrowser.
+    // No login handler: Facebook discovery runs in the shared
+    // logged-in browser (spec scraper-fb-loggedin-route) — the
+    // session lives in the persistent profile, so there is no
+    // startup login prompt for Facebook.
     scrape: scrapeFacebookProfile,
   },
 };
@@ -219,17 +223,10 @@ async function claimNextJob(claimSource, platformRotationStart, platformOrder = 
 }
 
 async function scrapeWithBrowser(page, platform, sourceUsername) {
-  // Facebook is special-cased: it does NOT receive the shared headed
-  // Puppeteer page. scrapeFacebookProfile (spec 158) launches and
-  // closes its own no-login Patchright headless-shell session per job.
-  if (platform === 'facebook') {
-    const scrapedData = await scrapeFacebookProfile(sourceUsername);
-    if (!scrapedData?.uniqueLinks?.length) {
-      return null;
-    }
-    return scrapedData.uniqueLinks;
-  }
-
+  // Every platform runs in the shared headed Puppeteer page, Facebook
+  // included since spec scraper-fb-loggedin-route: its session lives
+  // in the persistent profile, and the route fails loudly when the
+  // session is dead instead of discovering logged-out.
   const handlers = PLATFORM_HANDLERS[platform];
   if (!handlers) {
     throw new Error(`Unsupported platform: ${platform}`);
@@ -414,24 +411,6 @@ async function processTikTokPendingJob(job) {
   }
 }
 
-async function getActivePage(b, existingPage) {
-  try {
-    if (existingPage && !existingPage.isClosed()) {
-      await existingPage.evaluate(() => true);
-      return existingPage;
-    }
-  } catch (_) {
-    try {
-      if (existingPage && !existingPage.isClosed()) {
-        await existingPage.close().catch(() => {});
-      }
-    } catch (_) {}
-  }
-  const newPage = await b.newPage();
-  await applyDetectionHardening(newPage);
-  return newPage;
-}
-
 async function main() {
   console.log('🚀 Starting Multi-Platform Scraper Orchestrator (yt-dlp + browser)...');
 
@@ -441,7 +420,6 @@ async function main() {
   logTikwmPrimaryStatus();
 
   let browser = null;
-  let page = null;
   let jobsProcessed = 0;
   const maxJobsPerSession = 500;
   let nextPlatformIndex = 0;
@@ -488,36 +466,47 @@ async function main() {
 
     browser = await puppeteer.launch(launchOptions);
 
-    page = await browser.newPage();
-    await applyDetectionHardening(page);
-
+    // No persistent page is kept: every browser job — including a
+    // startup login prompt — opens a fresh worker tab through
+    // acquireWorkerTab, which keeps the blank anchor tab and closes
+    // strays (see browser-tabs.js).
     try {
       if (LOGIN_CONFIG.SKIP_STARTUP_LOGINS) {
         console.log('⏭️  SKIP_STARTUP_LOGINS=true, skipping manual login prompts for all platforms.');
       } else {
         for (const [platform, handlers] of Object.entries(PLATFORM_HANDLERS)) {
-          // Platforms with no login handler (Facebook, spec 158:
-          // no-login discovery) are skipped — no prompt, no page.
+          // Platforms with no login handler (Facebook: its session
+          // lives in the persistent profile; YouTube: Data API) are
+          // skipped — no prompt, no page.
           if (typeof handlers.login !== 'function') {
-            console.log(`⏭️ Skipping manual login for ${platform} (no-login discovery).`);
+            console.log(`⏭️ Skipping manual login for ${platform} (no startup login).`);
             continue;
           }
-          page = await getActivePage(browser, page);
-          await handlers.login(page);
+          const loginPage = await acquireWorkerTab(browser);
+          if (!loginPage) {
+            console.error(`❌ Could not open a tab for the ${platform} login step — skipping it; the session must already be in the profile.`);
+            continue;
+          }
+          try {
+            await applyDetectionHardening(loginPage);
+            await handlers.login(loginPage);
 
-          const readline = (await import('readline')).createInterface({
-            input: process.stdin,
-            output: process.stdout,
-          });
-
-          await new Promise((resolve) => {
-            readline.question(`👉 Press Enter AFTER you have successfully logged in to ${platform}...`, () => {
-              readline.close();
-              resolve();
+            const readline = (await import('readline')).createInterface({
+              input: process.stdin,
+              output: process.stdout,
             });
-          });
 
-          console.log(`✅ ${platform} login step completed.`);
+            await new Promise((resolve) => {
+              readline.question(`👉 Press Enter AFTER you have successfully logged in to ${platform}...`, () => {
+                readline.close();
+                resolve();
+              });
+            });
+
+            console.log(`✅ ${platform} login step completed.`);
+          } finally {
+            await releaseWorkerTab(loginPage);
+          }
         }
       }
 
@@ -525,8 +514,6 @@ async function main() {
       console.log('✅ Proceeding after manual login checks for all platforms.');
     } catch (e) {
       console.error('❌ Initial platform login setup failed:', e);
-    } finally {
-      page = await getActivePage(browser, page);
     }
 
     jobsProcessed = 0;
@@ -594,9 +581,28 @@ async function main() {
 
     const { job, platform, claimSource } = selection;
 
+    // Browser jobs run in a worker tab, closed when the job ends (or
+    // blanked for reuse if the close fails — browser-tabs.js: blank
+    // anchor + one worker tab, at most; extra tabs are reclaimed,
+    // jobs are never skipped because of tabs).
+    // YouTube (Data API) and TikTok pending jobs (yt-dlp, on the pool)
+    // never touch the browser, so they get no tab at all.
+    const needsBrowser =
+      platform !== 'youtube' && !(claimSource === 'pending' && supportsYtdlpDiscovery(platform));
+    let workerPage = null;
     try {
-      page = await getActivePage(browser, page);
-      await processJob(page, job, platform, claimSource);
+      if (needsBrowser) {
+        // acquireWorkerTab returns null only when the browser itself
+        // is unreachable — never because of tab count. Failing loud
+        // here lets the catch below mark the config error, exactly
+        // like any other job failure.
+        workerPage = await acquireWorkerTab(browser);
+        if (!workerPage) {
+          throw new Error(`could not acquire a worker tab for ${job.source_username}: browser unreachable`);
+        }
+        await applyDetectionHardening(workerPage);
+      }
+      await processJob(workerPage, job, platform, claimSource);
       jobsProcessed += 1;
     } catch (err) {
       console.error(`❌ Error processing ${job.source_username}:`, err);
@@ -616,6 +622,12 @@ async function main() {
       }
 
       await sleep(5000);
+    } finally {
+      // The worker tab is closed when the job ends, success or
+      // failure — the next job gets a fresh one.
+      if (workerPage) {
+        await releaseWorkerTab(workerPage);
+      }
     }
   }
 

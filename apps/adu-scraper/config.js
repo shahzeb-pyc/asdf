@@ -28,12 +28,9 @@ export const SUPABASE_CONFIG = {
 };
 
 export const FACEBOOK_CONFIG = {
-    // Stall limit from the no-login spike (spec 158): stop scrolling
-    // after this many consecutive scrolls with no new reels.
+    // Stall limit from the logged-in sweep (spec scraper-fb-loggedin-route):
+    // stop scrolling after this many consecutive scrolls with no new reels.
     STALL_LIMIT: 5,
-    // Optional override for the headless-shell executable (spec 158).
-    // Unset = Patchright's bundled chrome-headless-shell.
-    EXECUTABLE_PATH: process.env.FACEBOOK_HEADLESS_SHELL_PATH || null,
 };
 
 export const SCRAPER_CONFIG = {
