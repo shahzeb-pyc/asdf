@@ -13,7 +13,10 @@ import {
   type Database,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
-import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
+import {
+  assertFeatureAddWithinCap,
+  registerUsage,
+} from '@/lib/billing/entitlement';
 import {
   getBillingAdminClient,
   subscriptionGateResponse,
@@ -1171,23 +1174,85 @@ export async function handleImportPages(
   // on destination + time, so a retry can never duplicate a
   // posting time. The schedule is skipped entirely when absent, so
   // the legacy import path is unchanged.
+  const scheduleTargets = importedList.filter(
+    (page) => page.isNew || page.isReactivated
+  );
+  const createdTargets = importedList.filter((page) => page.isNew);
+  const reactivatedTargets = importedList.filter(
+    (page) => page.isReactivated
+  );
+  // Spec 193: snapshots are taken before registration, not inside
+  // the schedule block — the registration failure below rolls back
+  // through the same snapshots, so a reactivated page is fully
+  // restored even when no schedule was supplied. The schedule
+  // block reuses these snapshots unchanged.
+  const reactivatedSnapshots =
+    await snapshotReactivated(reactivatedTargets);
+
+  // Spec 193: register every imported Schedule page toward the paid
+  // cap at import time. Before this, registration happened only at
+  // first queue (destination-queue/route.ts:292), so an
+  // imported-but-never-queued page was never counted (23 such rows
+  // found live, 2026-11-15). The cap gate above (3b) already
+  // refused a genuinely over-cap import; registration re-checks
+  // fresh inside registerUsage, so a concurrent import that
+  // consumed the last unit lands here as SUBSCRIPTION_CAP_REACHED.
+  // Sequential, not parallel: each register re-reads the count, so
+  // within one batch the cap is enforced exactly. Every imported
+  // page is registered uniformly — a re-import resolves to
+  // already-used via the unique index, never a second unit, and a
+  // paused (disconnected) page's row does not count at read time.
+  // This runs on the no-schedule (legacy) import path too, by
+  // design: it sits before the schedule block, not inside it.
+  // Admins are never gated (same rule as the 3b gate and the queue
+  // route); a missing billing client is logged and skipped, never
+  // invented (same rule as both gates).
+  if (session.role !== 'admin') {
+    const billingClient = getBillingAdminClient();
+    if (billingClient) {
+      try {
+        for (const page of importedList) {
+          await registerUsage(
+            billingClient,
+            session.userId,
+            'facebook',
+            String(page.fbPageId),
+            'destination-queue',
+            page.id
+          );
+        }
+      } catch (err) {
+        // A registration failure is a real failure, not a skip:
+        // roll back what this call imported so "failure leaves
+        // nothing finished" holds. The schedule has not been
+        // applied yet, so the rollback restores exactly what the
+        // upserts changed. A usage row written for a page before
+        // the failure is inert: it links to a destination the
+        // rollback just disconnected, and disconnected-linked rows
+        // are subtracted at read time; a retry resolves to
+        // already-used.
+        await rollbackScheduleTargets(createdTargets, reactivatedSnapshots);
+        const gateResponse = subscriptionGateResponse(err);
+        if (gateResponse) return gateResponse;
+        throw err;
+      }
+    } else {
+      logServerError(
+        '[billing] pages import usage registration skipped: no billing client',
+        null,
+        { source: 'billing' }
+      );
+    }
+  }
+
   const SCHEDULE_FAILED_MESSAGE =
     "Couldn't save the posting times — try again, your timezone and times are kept";
   if (timezone && postingTimes) {
-    const scheduleTargets = importedList.filter(
-      (page) => page.isNew || page.isReactivated
-    );
-    const createdTargets = importedList.filter((page) => page.isNew);
-    const reactivatedTargets = importedList.filter(
-      (page) => page.isReactivated
-    );
     // Snapshots are taken before any schedule write, so a failure
     // anywhere in the batch can restore every reactivated page.
     // If a snapshot could not be taken, the schedule is not
     // applied at all: that page's status is still restored to
     // disconnected by the rollback below.
-    const reactivatedSnapshots =
-      await snapshotReactivated(reactivatedTargets);
     const snapshotIncomplete = [...reactivatedSnapshots.values()].some(
       (snapshot) => !snapshot.complete
     );
