@@ -8,6 +8,7 @@ import uuid
 from caption_utils import DEFAULT_REEL_CAPTION, caption_from_yt_dlp_info, normalize_reel_caption
 from config import (
     DATACENTER_PROXY,
+    RESOLVE_PROXY_URL,
     YT_VIDEO_DOWNLOAD_API_KEY,
     aria2_cli_args,
     direct_env,
@@ -222,10 +223,12 @@ def download_from_metadata_info(
         subprocess.run(
             ["aria2c", "-q", *aria2_cli_args(), "--user-agent", user_agent, v_url, "-o", f"{unique_id}_v.mp4", "-d", tmp_dir],
             check=True,
+            env=direct_env(),
         )
         subprocess.run(
             ["aria2c", "-q", *aria2_cli_args(), "--user-agent", user_agent, a_url, "-o", f"{unique_id}_a.m4a", "-d", tmp_dir],
             check=True,
+            env=direct_env(),
         )
         filename = os.path.join(tmp_dir, f"{unique_id}.mp4")
         run_ffmpeg("-y", "-i", v_path, "-i", a_path, "-c", "copy", "-f", "mp4", filename)
@@ -237,6 +240,7 @@ def download_from_metadata_info(
         subprocess.run(
             ["aria2c", "-q", *aria2_cli_args(), "--user-agent", user_agent, url_to_dl, "-o", f"{unique_id}.mp4", "-d", tmp_dir],
             check=True,
+            env=direct_env(),
         )
     return filename, description
 
@@ -434,11 +438,19 @@ def download_reel_media(platform: str, url: str, *, reel_external_id: str | None
         profile = PLATFORM_PROFILES[platform]
 
         if platform == "instagram":
-            # Metadata via yt-dlp (optional datacenter proxy), then direct CDN fetch via aria2.
+            # Metadata via the resolve proxy, then direct CDN fetch via
+            # aria2 (spec 194). A missing proxy is a config error raised
+            # before any subprocess runs — a direct metadata fetch is
+            # what Instagram refuses with a confusing empty response.
+            if not RESOLVE_PROXY_URL:
+                raise RuntimeError(
+                    "RESOLVE_PROXY_URL is not set: Instagram metadata must go "
+                    "through the resolve proxy — add it to the downloader environment"
+                )
             filename, description = download_via_metadata_then_aria2(
                 url,
                 profile,
-                DATACENTER_PROXY,
+                RESOLVE_PROXY_URL,
                 tmp_dir,
                 unique_id,
                 reel_external_id=reel_external_id,
