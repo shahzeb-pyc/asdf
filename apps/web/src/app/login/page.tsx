@@ -16,7 +16,8 @@
  * sanitized, so only safe in-app paths are ever followed.
  *
  * Behaviour preserved from the hand-rolled form it replaces: the
- * Gmail-only email rule and its wording, the OTP-pending redirect, the
+ * Gmail-only email rule and its wording on fbuploadpro (spec 199:
+ * the white label accepts any email), the OTP-pending redirect, the
  * suspended-account redirect, server 400 field errors mapped inline,
  * the reset-success / signed-out / password-changed banners, the email
  * prefill parameter, and the password field's show/hide toggle +
@@ -59,7 +60,7 @@ import { completeAuthRedirect } from '@/lib/auth-broadcast';
 import { api, isApiError } from '@/lib/api';
 import { LoginSuccessResponseSchema, type LoginErrorBody } from '@/lib/api/schemas/auth';
 import { reportError } from '@/lib/report-error';
-import { loginFormSchema, type LoginFormValues } from './login-form-schema';
+import { createLoginFormSchema, type LoginFormValues } from './login-form-schema';
 
 /** Spec §3.1's exact notice copy. */
 export const SESSION_EXPIRED_NOTICE =
@@ -135,7 +136,7 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
   const [serverError, setServerError] = useState<string | null>(null);
 
   const form = useForm<LoginFormValues>({
-    resolver: zodResolver(loginFormSchema),
+    resolver: zodResolver(createLoginFormSchema(brand)),
     mode: 'onTouched',
     shouldFocusError: false,
     defaultValues: { email: '', password: '' },
@@ -298,14 +299,18 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
                 <FormControl>
                   <Input
                     type="email"
-                    placeholder="you@gmail.com"
+                    placeholder={brand === 'nextrise' ? 'you@example.com' : 'you@gmail.com'}
                     autoComplete="username"
                     required
                     disabled={isSubmitting}
                     {...field}
                   />
                 </FormControl>
-                <FormDescription>Only @gmail.com (or @googlemail.com) accounts are supported.</FormDescription>
+                {/* Spec 199: the Gmail-only note is fbuploadpro-only; the
+                    white label accepts any email, so it shows nothing. */}
+                {brand !== 'nextrise' && (
+                  <FormDescription>Only @gmail.com (or @googlemail.com) accounts are supported.</FormDescription>
+                )}
                 <FormMessage />
               </FormItem>
             )}
