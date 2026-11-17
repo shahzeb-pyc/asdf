@@ -9,6 +9,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { getRequestBrandRoot } from '@/lib/brand';
+import { REQUIRED_FACEBOOK_SCOPES } from '@/lib/facebook-permissions';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveWorkspaceFacebookCredentials } from '@/lib/server/byoc-resolver';
 
@@ -88,9 +89,10 @@ export async function handleConnectFacebook(
     sessionSecret
   );
 
-  // 4. Construct Facebook OAuth Dialog URL (Graph API v26.0)
-  const scopes =
-    'pages_show_list,pages_read_engagement,pages_manage_posts,pages_manage_engagement,business_management';
+  // 4. Construct Facebook OAuth Dialog URL (Graph API v26.0).
+  // The scope string comes from the canonical required list so the
+  // dialog and the callback check can never drift apart.
+  const scopes = REQUIRED_FACEBOOK_SCOPES.join(',');
   const oauthUrl = new URL('https://www.facebook.com/v26.0/dialog/oauth');
   oauthUrl.searchParams.set('client_id', effectiveAppId);
   oauthUrl.searchParams.set('redirect_uri', redirectUri);

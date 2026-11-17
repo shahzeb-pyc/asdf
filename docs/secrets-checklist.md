@@ -85,7 +85,7 @@ FBUploadPro operates on a pure HTTPS REST database architecture via `@supabase/s
     https://app.fbuploadpro.com/api/auth/facebook/callback
     http://localhost:3000/api/auth/facebook/callback (for local testing)
     ```
-  - App Permissions in App Review: `pages_manage_posts`, `pages_read_engagement`, `pages_show_list`.
+  - App Permissions in App Review: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `pages_manage_engagement`, `business_management`, `read_insights`, `public_profile`.
   - Future X (Twitter) and TikTok platform integrations will utilize platform-provided credentials rather than BYOC.
 
 ---

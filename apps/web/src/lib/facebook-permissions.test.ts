@@ -1,7 +1,7 @@
 /**
  * Facebook scope check — the comparison behind hard scope rejection.
  *
- * An account must grant all five requested scopes before anything is
+ * An account must grant all seven requested scopes before anything is
  * saved; a declined, absent, or oddly-statused scope is missing, and
  * the rejection names the missing scope in plain language.
  */
@@ -19,10 +19,12 @@ const ALL_GRANTED = [
   { permission: 'pages_manage_posts', status: 'granted' },
   { permission: 'pages_manage_engagement', status: 'granted' },
   { permission: 'business_management', status: 'granted' },
+  { permission: 'read_insights', status: 'granted' },
+  { permission: 'public_profile', status: 'granted' },
 ];
 
 describe('findMissingScopes', () => {
-  it('reports nothing missing when all five scopes are granted', () => {
+  it('reports nothing missing when all seven scopes are granted', () => {
     expect(findMissingScopes(ALL_GRANTED)).toEqual([]);
   });
 
@@ -51,12 +53,30 @@ describe('findMissingScopes', () => {
     expect(findMissingScopes(permissions)).toEqual(['pages_show_list']);
   });
 
+  it('reports a declined read_insights as missing', () => {
+    const permissions = ALL_GRANTED.map((entry) =>
+      entry.permission === 'read_insights'
+        ? { ...entry, status: 'declined' }
+        : entry
+    );
+    expect(findMissingScopes(permissions)).toEqual(['read_insights']);
+  });
+
+  it('reports a declined public_profile as missing', () => {
+    const permissions = ALL_GRANTED.map((entry) =>
+      entry.permission === 'public_profile'
+        ? { ...entry, status: 'declined' }
+        : entry
+    );
+    expect(findMissingScopes(permissions)).toEqual(['public_profile']);
+  });
+
   it('ignores unrelated permissions and treats a missing list as all missing', () => {
     expect(
-      findMissingScopes([{ permission: 'public_profile', status: 'granted' }])
-    ).toHaveLength(5);
-    expect(findMissingScopes(null)).toHaveLength(5);
-    expect(findMissingScopes(undefined)).toHaveLength(5);
+      findMissingScopes([{ permission: 'user_likes', status: 'granted' }])
+    ).toHaveLength(7);
+    expect(findMissingScopes(null)).toHaveLength(7);
+    expect(findMissingScopes(undefined)).toHaveLength(7);
   });
 });
 
@@ -72,6 +92,15 @@ describe('buildScopeRejectionMessage', () => {
       buildScopeRejectionMessage(['pages_show_list', 'business_management'])
     ).toBe(
       'This Facebook account was not connected. Required permissions — viewing your Pages and managing your business — were declined. Please reconnect and allow all requested permissions to continue.'
+    );
+  });
+
+  it('names the new scopes in plain language when they are declined', () => {
+    expect(buildScopeRejectionMessage(['read_insights'])).toBe(
+      'This Facebook account was not connected. A required permission — reading Page insights — was declined. Please reconnect and allow all requested permissions to continue.'
+    );
+    expect(buildScopeRejectionMessage(['public_profile'])).toBe(
+      'This Facebook account was not connected. A required permission — viewing your public profile — was declined. Please reconnect and allow all requested permissions to continue.'
     );
   });
 });

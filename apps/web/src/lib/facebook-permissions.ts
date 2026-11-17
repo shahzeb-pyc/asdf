@@ -1,7 +1,7 @@
 /**
  * Facebook account-connect scope check (Facebook App settings fixes).
  *
- * The connect initiators request exactly these five scopes; the
+ * The connect initiators request exactly these seven scopes; the
  * callback must refuse to save an account that did not grant all of
  * them. This module is pure (no fetch, no DB) so the comparison and
  * the user-facing copy are unit-testable: the callback owns the
@@ -20,6 +20,8 @@ export const REQUIRED_FACEBOOK_SCOPES = [
   'pages_manage_posts',
   'pages_manage_engagement',
   'business_management',
+  'read_insights',
+  'public_profile',
 ] as const;
 
 export type RequiredFacebookScope = (typeof REQUIRED_FACEBOOK_SCOPES)[number];
@@ -31,6 +33,8 @@ export const FACEBOOK_SCOPE_PLAIN_NAMES: Record<RequiredFacebookScope, string> =
   pages_manage_posts: 'posting to Pages',
   pages_manage_engagement: 'managing Page engagement',
   business_management: 'managing your business',
+  read_insights: 'reading Page insights',
+  public_profile: 'viewing your public profile',
 };
 
 export interface FacebookPermissionEntry {
@@ -46,7 +50,7 @@ function isRequiredScope(value: unknown): value is RequiredFacebookScope {
 }
 
 /**
- * Scopes from the required five that are not granted in the
+ * Scopes from the required seven that are not granted in the
  * /me/permissions list. Entries for other permissions are ignored;
  * duplicates do not change the result.
  */
