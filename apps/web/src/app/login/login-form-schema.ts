@@ -14,11 +14,11 @@ import type { Brand } from '@fbuploadpro/contracts';
  * - `fbuploadpro` (unchanged behaviour): a Gmail address — the domain
  *   must be gmail.com or googlemail.com (case-insensitive). The value
  *   is trimmed before submit; the server canonicalizes it.
- * - `nextrise` (white label): any syntactically valid email address.
- *   The white label only uses login, and its students do not all have
- *   Gmail addresses. The server route mirrors this with its own
- *   brand-aware schema; the contracts `LoginRequestSchema` stays
- *   Gmail-only for fbuploadpro.
+ * - `nextrise` (white label): every syntactically valid email
+ *   address is accepted. The white label only uses login, and its
+ *   students do not all have Gmail addresses. The server route
+ *   mirrors this with its own brand-aware schema; the contracts
+ *   `LoginRequestSchema` stays Gmail-only for fbuploadpro.
  */
 const loginFormPassword = z.string().min(1, 'Please enter your password.');
 
