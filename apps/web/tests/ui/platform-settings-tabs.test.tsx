@@ -32,6 +32,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { InstagramSettingsView } from '@/components/settings/instagram-settings-view';
 import { ThreadsSettingsView } from '@/components/settings/threads-settings-view';
+import { BrandProvider } from '@/components/brand';
 import { createPlatformConnectFormSchema } from '@/components/settings/platform/platform-connect-form';
 import { formatPlatformConnectedDate } from '@/components/settings/platform/platform-credentials-helpers';
 import {
@@ -1319,4 +1320,55 @@ describe('plain-language lint over user-facing copy (§5.3/§5.4)', () => {
       expect(text).not.toMatch(/\bapi\b/);
     }
   });
+});
+
+describe('Privacy Policy URL on the white-label brand (spec 205)', () => {
+  function renderNextriseView(c: PlatformCase, seed?: PlatformPayload) {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: 60_000 },
+        mutations: { retry: false },
+      },
+    });
+    if (seed) {
+      queryClient.setQueryData(
+        queryKeys.tenant(SUBDOMAIN).settings.platformCredentials(c.platform),
+        seed
+      );
+    }
+    const View = c.View;
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BrandProvider brand="nextrise">
+          <View subdomain={SUBDOMAIN} />
+        </BrandProvider>
+        <Toast />
+      </QueryClientProvider>
+    );
+    return queryClient;
+  }
+
+  it.each(PLATFORM_CASES)(
+    'shows the white-label privacy URL for $displayName, not fbuploadpro.com',
+    async (c) => {
+      renderNextriseView(c, notConnectedPayload(c.platform));
+
+      // Threads exposes the URL under a testid; Instagram renders it
+      // as plain text (no testid exists there).
+      if (c.platform === 'instagram') {
+        expect(
+          await screen.findByText('https://acme.app.sajidaliai.online/privacy')
+        ).toBeTruthy();
+      } else {
+        const testId = `${c.platform}-privacy-url`;
+        expect(await screen.findByTestId(testId)).toBeTruthy();
+        expect(screen.getByTestId(testId).textContent).toBe(
+          'https://acme.app.sajidaliai.online/privacy'
+        );
+      }
+      expect(document.body.textContent).not.toContain(
+        'https://acme.fbuploadpro.com/privacy'
+      );
+    }
+  );
 });
