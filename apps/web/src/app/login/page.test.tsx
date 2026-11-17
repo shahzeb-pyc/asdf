@@ -80,16 +80,14 @@ describe("login form (form standard reference conversion)", () => {
     expect(screen.queryByText(SESSION_EXPIRED_NOTICE)).toBeNull();
   });
 
-  it('shows the old-users migration notice above the sign-in form, text only', () => {
+  // Spec 198: the notice is gone from login — this inverts the deleted
+  // presence test, so a re-introduced notice fails here.
+  it("does not render the removed notice above the sign-in form", () => {
     render(<LoginPage />);
-    const banner = screen.getByTestId('old-users-notice-banner');
-    expect(banner.textContent).toContain(
-      'Old fbuploadpro users, new account create karein aur mujhe WhatsApp par message karein jo neechay show ho raha hai, main aapke tokens idhar transfer karta hoon.'
-    );
-    expect(banner.querySelector('a')).toBeNull();
-    expect(banner.querySelector('button')).toBeNull();
-    // The form itself is untouched and still present below the banner.
-    expect(screen.getByRole('button', { name: 'Sign In' })).toBeTruthy();
+    expect(screen.queryByTestId("old-users-notice-banner")).toBeNull();
+    expect(screen.queryByText(/Old fbuploadpro users/)).toBeNull();
+    // The form itself is untouched and still present.
+    expect(screen.getByRole("button", { name: "Sign In" })).toBeTruthy();
   });
 
   it("validates on blur: a non-Gmail address errors inline without a submit or a request", async () => {

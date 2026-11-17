@@ -40,7 +40,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { AuthSplitLayout } from '@/components/auth/auth-split-layout';
 import { LoginShowcasePanel } from '@/components/auth/login-showcase-panel';
 import { PasswordInput } from '@/components/auth/password-input';
-import { OldUsersNoticeBanner } from '@/components/shared/old-users-notice-banner';
 import { useBrand } from '@/components/brand';
 import {
   Form,
@@ -128,8 +127,7 @@ const FIELD_IDS: Record<LoginFieldName, string> = {
 
 export default function LoginPage({ initialResetSuccess = false }: LoginPageProps = {}) {
   const [returnUrl, setReturnUrl] = useState<string | undefined>(undefined);
-  // Spec 191: no signup link, no forgot-password link, no old-users
-  // banner on the white-label brand.
+  // Spec 191: no signup link, no forgot-password link on the white-label brand.
   const brand = useBrand();
   const [isResetSuccess, setIsResetSuccess] = useState(initialResetSuccess);
   const [infoBanner, setInfoBanner] = useState<string | null>(null);
@@ -260,7 +258,6 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
         )
       }
     >
-      {brand !== 'nextrise' && <OldUsersNoticeBanner />}
       <Form {...form}>
         <form
           noValidate

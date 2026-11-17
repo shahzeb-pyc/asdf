@@ -209,15 +209,14 @@ test.describe('login', () => {
   });
 });
 
-test.describe('old-users migration notice at 360px', () => {
+test.describe('login without the removed notice at 360px', () => {
   test.use({ viewport: { width: 360, height: 720 } });
 
-  test('login shows the migration notice above the form, no overflow', async ({ page }) => {
+  test('login shows no notice above the form, no overflow', async ({ page }) => {
     await page.goto('/login');
-    await expect(page.getByTestId('old-users-notice-banner')).toBeVisible();
-    await expect(page.getByTestId('old-users-notice-banner')).toContainText(
-      'Old fbuploadpro users'
-    );
+    // Spec 198: inversion of the deleted presence test — the notice
+    // must not render on login.
+    await expect(page.getByTestId('old-users-notice-banner')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
     await expectNoDocumentOverflow(page);
   });

@@ -15,7 +15,6 @@ import {
   FreePlanCard,
   HomeErrorCard,
   HomeHeader,
-  HomeOldUsersBanner,
   MuseAssistantCard,
   PaidPlanCard,
   QuickLinks,
@@ -41,12 +40,12 @@ interface TenantIndexPageProps {
  * posts, or links to Queue or Calendar.
  *
  * Sections by plan (Home stays exempt from the free-plan dialog):
- * - Paid: header, old-users banner, paid plan card, quick links
+ * - Paid: header, paid plan card, quick links
  *   (Media Library, Creator Finder, Facebook Accounts, Facebook
  *   Pages, Billing), Muse Assistant rail card.
- * - Free: header, old-users banner, free plan card, upgrade card,
+ * - Free: header, free plan card, upgrade card,
  *   Prompt Library + Billing links only, Muse Assistant rail card.
- * - Expired: header, old-users banner, expired banner and renew only.
+ * - Expired: header, expired banner and renew only.
  * - Admin: redirected to the admin section (/admin/subscriptions)
  *   before render, so the admin branch below is only a fallback and
  *   never the landing an admin sees.
@@ -73,8 +72,6 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
   }
   const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com';
   const useCleanPaths = shouldUseCleanTenantPaths(hostHeader, subdomain, rootDomain);
-  // Spec 191: the old-users banner is our brand's notice — it never
-  // shows on the white-label brand.
   const brand = getRequestBrandFromHost(hostHeader);
   // Spec 191 (Home buttons fix): on the white-label brand there is
   // no billing section, so every billing action on Home is replaced
@@ -123,7 +120,6 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
         }
         promptsHref={promptsHref}
       />
-      {brand !== 'nextrise' && <HomeOldUsersBanner />}
 
       {data.kind === 'error' ? <HomeErrorCard message={data.message} /> : null}
 
