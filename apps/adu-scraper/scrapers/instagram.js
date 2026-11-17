@@ -1,6 +1,16 @@
 import { INSTAGRAM_CONFIG, SCRAPER_CONFIG } from "../config.js";
+import { isProxyFailure, redactInstagramProxyCredentials } from "../instagram-browser.js";
 
 const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+// A proxy failure, thrown (never returned as null) so the caller can
+// retry it on the same proxy. The message is redacted at the source:
+// proxy credentials must never reach a log line.
+function proxyFailure(message, proxy) {
+    const error = new Error(redactInstagramProxyCredentials(message, proxy));
+    error.isProxyFailure = true;
+    return error;
+}
 
 /**
  * Navigates to Instagram for manual login.
@@ -17,12 +27,21 @@ export async function loginToInstagram(page) {
  * Scrapes the Instagram profile of a target user.
  * @param {import("puppeteer").Page} page - The logged-in Puppeteer page object.
  * @param {string} targetUser - The username of the Instagram profile to scrape.
+ * @param {object} [options] - Optional run options.
+ * @param {object} [options.proxy] - The parsed single residential proxy
+ *   (for redacting it out of any thrown/logged error).
  * @returns {Promise<object>} An object containing the scraped data.
+ * @throws {Error} With `isProxyFailure = true` on a proxy failure
+ *   (connect failure, timeout, HTTP 429) so the caller can retry it.
+ *   Any other failure still returns null, as before.
  */
-export async function scrapeInstagramProfile(page, targetUser) {
+export async function scrapeInstagramProfile(page, targetUser, { proxy } = {}) {
     try {
         const reelsUrl = `https://www.instagram.com/${targetUser}/reels/`;
-        await page.goto(reelsUrl, { waitUntil: "networkidle2" });
+        const response = await page.goto(reelsUrl, { waitUntil: "networkidle2" });
+        if (response && response.status() === 429) {
+            throw proxyFailure('Instagram returned HTTP 429 (rate limited via the residential proxy)', proxy);
+        }
         console.log(`📍 Navigated to ${reelsUrl}`);
         await sleep(5000);
 
@@ -81,7 +100,13 @@ export async function scrapeInstagramProfile(page, targetUser) {
             uniqueLinks: Array.from(uniqueLinks),
         };
     } catch (error) {
-        console.error("❌ An error occurred during scraping:", error);
+        // A proxy failure is THROWN (classified + redacted) so the
+        // caller retries it on the same proxy. Every other failure
+        // keeps the old behaviour: log and return null.
+        if (isProxyFailure(error)) {
+            throw proxyFailure(`Instagram proxy failure: ${error.message || error}`, proxy);
+        }
+        console.error("❌ An error occurred during scraping:", redactInstagramProxyCredentials(error?.message || error, proxy));
         return null;
     }
 }
