@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ACTIVE_USER_STORAGE_KEY,
   AUTH_EVENT_STORAGE_KEY,
   AUTH_LOGOUT_STORAGE_KEY,
   broadcastAuthEvent,
+  completeAuthRedirect,
   subscribeAuthEvents,
   type AuthBroadcastPayload,
 } from '@/lib/auth-broadcast';
@@ -232,5 +233,104 @@ describe('subscribeAuthEvents', () => {
     vi.stubGlobal('window', undefined);
     const unsubscribe = subscribeAuthEvents(vi.fn());
     expect(() => unsubscribe()).not.toThrow();
+  });
+});
+
+describe('completeAuthRedirect — brand-aware redirect (spec 204)', () => {
+  const originalRootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN;
+  const originalVercelUrl = process.env.VERCEL_URL;
+
+  beforeEach(() => {
+    // Production-like roots: the fbuploadpro root comes from env, the
+    // white-label root is the contracts constant.
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN = 'fbuploadpro.com';
+    delete process.env.VERCEL_URL;
+  });
+
+  afterEach(() => {
+    if (originalRootDomain === undefined) {
+      delete process.env.NEXT_PUBLIC_ROOT_DOMAIN;
+    } else {
+      process.env.NEXT_PUBLIC_ROOT_DOMAIN = originalRootDomain;
+    }
+    if (originalVercelUrl === undefined) {
+      delete process.env.VERCEL_URL;
+    } else {
+      process.env.VERCEL_URL = originalVercelUrl;
+    }
+  });
+
+  function stubBrowserWindow(hostname: string) {
+    const storage = fakeStorage();
+    const location = {
+      hostname,
+      host: hostname,
+      origin: `https://${hostname}`,
+      href: '',
+    };
+    vi.stubGlobal('BroadcastChannel', MockBroadcastChannel);
+    vi.stubGlobal('localStorage', storage);
+    vi.stubGlobal('window', { localStorage: storage, location });
+    return location;
+  }
+
+  it('keeps a white-label login on the white-label tenant host', () => {
+    const location = stubBrowserWindow('app.sajidaliai.online');
+    completeAuthRedirect('https://sajidali.app.sajidaliai.online/', {
+      id: 'u1',
+      email: 'sajidali@protonsemail.com',
+      subdomain: 'sajidali',
+    });
+    expect(location.href).toBe('https://sajidali.app.sajidaliai.online/');
+  });
+
+  it('honours a white-label returnUrl path on the white-label host', () => {
+    const location = stubBrowserWindow('app.sajidaliai.online');
+    completeAuthRedirect('https://sajidali.app.sajidaliai.online/schedule', {
+      id: 'u1',
+      email: 'sajidali@protonsemail.com',
+      subdomain: 'sajidali',
+    });
+    expect(location.href).toBe('https://sajidali.app.sajidaliai.online/schedule');
+  });
+
+  it('builds a white-label tenant URL from a relative redirect', () => {
+    const location = stubBrowserWindow('app.sajidaliai.online');
+    completeAuthRedirect('/schedule', {
+      id: 'u1',
+      email: 'sajidali@protonsemail.com',
+      subdomain: 'sajidali',
+    });
+    expect(location.href).toBe('https://sajidali.app.sajidaliai.online/schedule');
+  });
+
+  it('rejects a fbuploadpro returnUrl on a white-label login', () => {
+    const location = stubBrowserWindow('app.sajidaliai.online');
+    completeAuthRedirect('https://sajidali.fbuploadpro.com/', {
+      id: 'u1',
+      email: 'sajidali@protonsemail.com',
+      subdomain: 'sajidali',
+    });
+    expect(location.href).toBe('https://sajidali.app.sajidaliai.online/');
+  });
+
+  it('keeps a fbuploadpro login on the fbuploadpro tenant host', () => {
+    const location = stubBrowserWindow('app.fbuploadpro.com');
+    completeAuthRedirect('https://sajidali.fbuploadpro.com/', {
+      id: 'u1',
+      email: 'sajidali@fbuploadpro.com',
+      subdomain: 'sajidali',
+    });
+    expect(location.href).toBe('https://sajidali.fbuploadpro.com/');
+  });
+
+  it('rejects a white-label returnUrl on a fbuploadpro login', () => {
+    const location = stubBrowserWindow('app.fbuploadpro.com');
+    completeAuthRedirect('https://sajidali.app.sajidaliai.online/', {
+      id: 'u1',
+      email: 'sajidali@fbuploadpro.com',
+      subdomain: 'sajidali',
+    });
+    expect(location.href).toBe('https://sajidali.fbuploadpro.com/');
   });
 });
