@@ -326,8 +326,8 @@ describe('Auth Hardening Contracts (Spec 014)', () => {
     });
   });
 
-  describe('SessionPayloadSchema hardening (ISSUE-29)', () => {
-    it('accepts and canonicalizes valid Gmail address in session payload', () => {
+  describe('SessionPayloadSchema hardening (ISSUE-29, spec 202)', () => {
+    it('accepts a valid Gmail address in session payload without canonicalizing it', () => {
       const valid = {
         userId: '11111111-1111-4111-a111-111111111111',
         email: 'John.Doe+promo@googlemail.com',
@@ -341,23 +341,30 @@ describe('Auth Hardening Contracts (Spec 014)', () => {
       const result = SessionPayloadSchema.safeParse(valid);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.email).toBe('johndoe@gmail.com');
+        // Spec 202: the session is brand-agnostic and never
+        // canonicalizes — the address is preserved exactly as minted.
+        expect(result.data.email).toBe('John.Doe+promo@googlemail.com');
       }
     });
 
-    it('rejects non-gmail domains in SessionPayloadSchema', () => {
-      const invalid = {
+    it('accepts non-gmail domains in SessionPayloadSchema (spec 202)', () => {
+      const valid = {
         userId: '11111111-1111-4111-a111-111111111111',
-        email: 'user@yahoo.com',
-        name: 'Yahoo User',
-        subdomain: 'yahoouser',
+        email: 'sajidali@protonsemail.com',
+        name: 'Sajid Ali',
+        subdomain: 'sajidali',
         role: 'user',
         status: 'active',
+        brand: 'nextrise',
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
       };
-      const result = SessionPayloadSchema.safeParse(invalid);
-      expect(result.success).toBe(false);
+      const result = SessionPayloadSchema.safeParse(valid);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.email).toBe('sajidali@protonsemail.com');
+        expect(result.data.brand).toBe('nextrise');
+      }
     });
   });
 });

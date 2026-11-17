@@ -50,6 +50,63 @@ describe('Session Authentication Contracts (SessionPayload & Web Crypto Tokens)'
     expect(decoded.status).toBe(mockUserSession.status);
   });
 
+  describe('non-Gmail white-label sessions (spec 202)', () => {
+    const whiteLabelSession = {
+      ...mockUserSession,
+      userId: '1d368841-93ca-4882-8632-e1102e2441e0',
+      email: 'sajidali@protonsemail.com',
+      name: 'Sajid Ali',
+      subdomain: 'sajidali',
+      brand: 'nextrise' as const,
+    };
+
+    it('mints a session token for a non-Gmail white-label email', async () => {
+      const token = await signSessionToken(whiteLabelSession, TEST_SESSION_SECRET);
+      expect(typeof token).toBe('string');
+      expect(token.split('.')).toHaveLength(3);
+    });
+
+    it('verifies a non-Gmail white-label session round-trip', async () => {
+      const token = await signSessionToken(whiteLabelSession, TEST_SESSION_SECRET);
+      const decoded = await verifySessionToken(token, TEST_SESSION_SECRET);
+      expect(decoded.email).toBe('sajidali@protonsemail.com');
+      expect(decoded.brand).toBe('nextrise');
+      expect(decoded.subdomain).toBe('sajidali');
+      expect(decoded.userId).toBe(whiteLabelSession.userId);
+    });
+
+    it('still mints and verifies a Gmail fbuploadpro session', async () => {
+      const gmailSession = {
+        ...mockUserSession,
+        email: 'client@gmail.com',
+        brand: 'fbuploadpro' as const,
+      };
+      const token = await signSessionToken(gmailSession, TEST_SESSION_SECRET);
+      const decoded = await verifySessionToken(token, TEST_SESSION_SECRET);
+      expect(decoded.email).toBe('client@gmail.com');
+      expect(decoded.brand).toBe('fbuploadpro');
+    });
+
+    it('rejects a malformed email at mint time', async () => {
+      await expect(
+        signSessionToken({ ...whiteLabelSession, email: 'not-an-email' }, TEST_SESSION_SECRET)
+      ).rejects.toThrow(DomainError);
+      await expect(
+        signSessionToken({ ...whiteLabelSession, email: 'a'.repeat(250) + '@example.com' }, TEST_SESSION_SECRET)
+      ).rejects.toThrow(DomainError);
+    });
+
+    it('negative control: the old Gmail-only rule rejects the white-label address', async () => {
+      // The pre-202 SessionPayloadSchema.email was GmailSchema, so
+      // minting this session threw "Only @gmail.com ... are
+      // permitted" — the exact live 400. The new schema must accept
+      // it (proven by the round-trip tests above); this assertion
+      // pins the old rule as the rejected one.
+      const { GmailSchema } = await import('../src/domain/auth');
+      expect(GmailSchema.safeParse('sajidali@protonsemail.com').success).toBe(false);
+    });
+  });
+
   it('signs and verifies session token preserving allowedSubdomains', async () => {
     const sessionWithAllowed = {
       ...mockUserSession,

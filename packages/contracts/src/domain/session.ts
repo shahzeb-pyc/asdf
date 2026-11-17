@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { SubdomainSchema, UserRoleSchema, UserStatusSchema } from './user.js';
 import { BrandSchema } from './brand.js';
-import { GmailSchema } from './auth.js';
 import { DomainError, DomainErrorCode } from '../errors/domain-error.js';
 
 export const SessionHeaderSchema = z.object({
@@ -13,7 +12,22 @@ export type SessionHeader = z.infer<typeof SessionHeaderSchema>;
 
 export const SessionPayloadSchema = z.object({
   userId: z.string().uuid(),
-  email: GmailSchema,
+  /**
+   * Spec 202: the session is brand-agnostic, so the email is any
+   * syntactically valid address — a white-label account holds a
+   * non-Gmail address, and minting must accept it. The Gmail-only
+   * rule lives on the fbuploadpro-only request schemas
+   * (`LoginRequestSchema` etc.) and stays there; the session schema
+   * never decides which domains may log in. Shape mirrors the
+   * white-label login request schema (trim + email + max 255).
+   * Pre-202 tokens carry canonical Gmail addresses, which still
+   * parse — this change is backwards compatible.
+   */
+  email: z
+    .string()
+    .trim()
+    .email('Valid email address is required')
+    .max(255, 'Email cannot exceed 255 characters'),
   name: z.string().max(100).nullable().optional(),
   subdomain: SubdomainSchema,
   // S3: id of the workspace named by `subdomain`, for role === 'user'
