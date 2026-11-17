@@ -484,7 +484,7 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ id: 'fb-john', name: 'John Doe' }))
       )
-      // 4. /me/permissions — hard scope check: all five requested
+      // 4. /me/permissions — hard scope check: all seven requested
       // scopes granted, so the reconnect proceeds (inserted by the
       // Facebook settings fixes; without it the accounts response
       // below would be consumed here and misread as no scopes granted).
@@ -497,6 +497,8 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
               { permission: 'pages_manage_posts', status: 'granted' },
               { permission: 'pages_manage_engagement', status: 'granted' },
               { permission: 'business_management', status: 'granted' },
+              { permission: 'read_insights', status: 'granted' },
+              { permission: 'public_profile', status: 'granted' },
             ],
           })
         )
@@ -707,6 +709,8 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
     { permission: 'pages_manage_posts', status: 'granted' },
     { permission: 'pages_manage_engagement', status: 'granted' },
     { permission: 'business_management', status: 'granted' },
+    { permission: 'read_insights', status: 'granted' },
+    { permission: 'public_profile', status: 'granted' },
   ];
 
   function tablesTouched(mockSupabase: SupabaseClient<Database>): string[] {
@@ -756,6 +760,94 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
     // Nothing saved, and the save / refresh paths were never entered:
     // no social_accounts table access (lookup or upsert) and no
     // destinations access (page-token refresh).
+    expect(storedAccounts.size).toBe(0);
+    expect(storedPages.size).toBe(0);
+    expect(tablesTouched(mockSupabase)).not.toContain('social_accounts');
+    expect(tablesTouched(mockSupabase)).not.toContain('destinations');
+  });
+
+  it('rejects a first connect when read_insights is declined: nothing saved, redirect names read_insights', async () => {
+    const statePayload = {
+      tenantSubdomain: 'acme',
+      userId,
+      nonce: 'nonce_scope_rejected_read_insights',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 600,
+    };
+    const validState = await signOAuthState(statePayload, TEST_SECRET);
+    const { storedAccounts, storedPages, mockSupabase } = createMockAccountStore();
+
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'short_declined_ri', token_type: 'bearer' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'long_declined_ri', token_type: 'bearer', expires_in: 5184000 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'fb_user_declined_ri', name: 'Declined Profile' })))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: ALL_SCOPES_GRANTED.map((entry) =>
+              entry.permission === 'read_insights'
+                ? { ...entry, status: 'declined' }
+                : entry
+            ),
+          })
+        )
+      );
+
+    const req = new NextRequest(
+      `http://localhost:3000/api/auth/facebook/callback?code=code_declined_ri&state=${validState}`,
+      { headers: { cookie: validSessionCookie } }
+    );
+    const res = await handleFacebookCallback(req, mockSupabase);
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe(
+      'http://localhost:3000/tenant/acme/accounts?error=scope_rejected&missing=read_insights'
+    );
+    expect(storedAccounts.size).toBe(0);
+    expect(storedPages.size).toBe(0);
+    expect(tablesTouched(mockSupabase)).not.toContain('social_accounts');
+    expect(tablesTouched(mockSupabase)).not.toContain('destinations');
+  });
+
+  it('rejects a first connect when public_profile is declined: nothing saved, redirect names public_profile', async () => {
+    const statePayload = {
+      tenantSubdomain: 'acme',
+      userId,
+      nonce: 'nonce_scope_rejected_public_profile',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 600,
+    };
+    const validState = await signOAuthState(statePayload, TEST_SECRET);
+    const { storedAccounts, storedPages, mockSupabase } = createMockAccountStore();
+
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'short_declined_pp', token_type: 'bearer' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'long_declined_pp', token_type: 'bearer', expires_in: 5184000 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'fb_user_declined_pp', name: 'Declined Profile' })))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: ALL_SCOPES_GRANTED.map((entry) =>
+              entry.permission === 'public_profile'
+                ? { ...entry, status: 'declined' }
+                : entry
+            ),
+          })
+        )
+      );
+
+    const req = new NextRequest(
+      `http://localhost:3000/api/auth/facebook/callback?code=code_declined_pp&state=${validState}`,
+      { headers: { cookie: validSessionCookie } }
+    );
+    const res = await handleFacebookCallback(req, mockSupabase);
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe(
+      'http://localhost:3000/tenant/acme/accounts?error=scope_rejected&missing=public_profile'
+    );
     expect(storedAccounts.size).toBe(0);
     expect(storedPages.size).toBe(0);
     expect(tablesTouched(mockSupabase)).not.toContain('social_accounts');

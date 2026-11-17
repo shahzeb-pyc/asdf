@@ -869,12 +869,14 @@ export async function handleFacebookCallback(
     const meProfile = FacebookUserProfileResponseSchema.parse(meJson);
 
     // 4b. Hard scope rejection: before saving anything, confirm the
-    // account granted all five requested scopes. A missing or
+    // account granted all seven requested scopes. A missing or
     // declined scope saves nothing and redirects to the rejection
     // banner. If the permissions check itself fails, the outcome is
     // unknown — connect as before, but log loudly, never silently.
     // Already-connected accounts are untouched by this check: it
-    // runs only on a fresh connect, and never disconnects anyone.
+    // runs at connect time only (fresh connect or reconnect), before
+    // any save, and never disconnects anyone — a rejected reconnect
+    // leaves the saved account exactly as it was.
     let scopeCheckUnknown = false;
     try {
       const permissionsUrl = new URL(
