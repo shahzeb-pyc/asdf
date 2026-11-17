@@ -56,9 +56,13 @@ const LOGIN_RESULT = {
 };
 
 function request(host: string, body: unknown): NextRequest {
+  // NextRequest does not derive the host header from the URL in the
+  // test runtime, so the brand's host is passed explicitly — the
+  // route resolves the brand from this header, exactly as in
+  // production.
   return new NextRequest(`http://${host}/api/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', host },
     body: JSON.stringify(body),
   });
 }
@@ -125,7 +129,7 @@ describe('POST /api/auth/login brand-aware email rule (spec 199)', () => {
   it('fbuploadpro host still accepts a Gmail address', async () => {
     const response = await POST(
       request('app.fbuploadpro.com', {
-        email: 'owner@gmail.com',
+        email: 'owneruser@gmail.com',
         password: 'correct-password-1',
       })
     );
@@ -134,7 +138,7 @@ describe('POST /api/auth/login brand-aware email rule (spec 199)', () => {
     expect(mocks.loginTenantUser).toHaveBeenCalledTimes(1);
     // The contracts schema canonicalizes the Gmail address.
     expect(mocks.loginTenantUser).toHaveBeenCalledWith(
-      expect.objectContaining({ email: 'owner@gmail.com' })
+      expect.objectContaining({ email: 'owneruser@gmail.com' })
     );
   });
 
