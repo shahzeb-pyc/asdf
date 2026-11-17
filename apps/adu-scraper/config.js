@@ -1,4 +1,6 @@
 import dotenv from 'dotenv';
+import { INSTAGRAM_DEFAULT_USER_DATA_DIR, parseInstagramProxyPool } from './instagram-browser.js';
+
 dotenv.config();
 
 const toBoolean = (value) => ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
@@ -74,7 +76,20 @@ export const BROWSER_CONFIG = {
   USER_DATA_DIR: userDataDir,
   PROFILE_DIRECTORY: profileDirectory,
   USER_AGENT: process.env.BROWSER_USER_AGENT || 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+  // Dedicated Instagram browser profile (spec
+  // scraper-ig-residential-proxies): its own userDataDir — it cannot
+  // share the shared browser's profile dir (Chrome locks it).
+  IG_USER_DATA_DIR: process.env.BROWSER_IG_USER_DATA_DIR || INSTAGRAM_DEFAULT_USER_DATA_DIR,
 };
+
+// Instagram proxy pool (spec scraper-ig-residential-proxies): parsed
+// once at startup. Only the FIRST entry of INSTAGRAM_PROXIES is ever
+// used — no rotation, no fallback. A bad pool ({ ok: false }) is
+// logged loudly at startup in index.js and makes Instagram jobs fail
+// loud; it NEVER takes down the whole scraper and NEVER falls back
+// to direct or to the rotating proxy. The parsed proxy object holds
+// credentials — it must never be logged.
+export const INSTAGRAM_PROXY = parseInstagramProxyPool(process.env.INSTAGRAM_PROXIES);
 
 export const LOGIN_CONFIG = {
   SKIP_STARTUP_LOGINS: toBoolean(process.env.SKIP_STARTUP_LOGINS),

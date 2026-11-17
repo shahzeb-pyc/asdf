@@ -21,7 +21,11 @@
  * (YouTube discovery moved to the official Data API, spec 154 — no
  * browser, no login; Facebook discovery runs in the shared logged-in
  * Puppeteer browser, spec scraper-fb-loggedin-route — the session
- * lives in the persistent profile, the scraper never logs in), the
+ * lives in the persistent profile, the scraper never logs in;
+ * Instagram discovery runs in its OWN headed Puppeteer browser
+ * behind ONE residential proxy — the first entry of
+ * INSTAGRAM_PROXIES — spec scraper-ig-residential-proxies, never the
+ * shared browser, never direct, never the rotating proxy), the
  * pending -> processing ->
  * synced | error | browser_pending state machine, the 60s idle sleep,
  * the 500-job browser restart, the manual startup logins (Instagram
@@ -37,13 +41,14 @@ import { supabase } from './db.js';
 import { loginToInstagram, scrapeInstagramProfile } from './scrapers/instagram.js';
 import { loginToTikTok, scrapeTikTokProfile } from './scrapers/tiktok.js';
 import { scrapeFacebookProfile } from './scrapers/facebook.js';
-import { BROWSER_CONFIG, LOGIN_CONFIG, SCRAPER_CONFIG } from './config.js';
+import { BROWSER_CONFIG, INSTAGRAM_PROXY, LOGIN_CONFIG, SCRAPER_CONFIG } from './config.js';
 import { supportsYtdlpDiscovery } from './discovery/profile-urls.js';
 import { discoverReelIdsWithYtdlp } from './discovery/ytdlp.js';
 import { discoverYoutubeShorts, quotaParkRetryAt, requeueDueQuotaParkedConfigs } from './discovery/youtube-api.js';
 import { logTikwmPrimaryStatus } from './discovery/tikwm.js';
 import { createTikTokPool } from './tiktok-pool.js';
 import { PLATFORM_ORDER, PENDING_PLATFORM_ORDER } from './claim-rotation.js';
+import { InstagramBrowserManager, buildInstagramLaunchOptions, redactInstagramProxyCredentials, runInstagramJobWithRetries } from './instagram-browser.js';
 import { acquireWorkerTab, releaseWorkerTab } from './browser-tabs.js';
 import { markSyncStatus, upsertReelsAndMarkSynced } from './jobs.js';
 
@@ -215,10 +220,13 @@ async function claimNextJob(claimSource, platformRotationStart, platformOrder = 
 }
 
 async function scrapeWithBrowser(page, platform, sourceUsername) {
-  // Every platform runs in the shared headed Puppeteer page, Facebook
-  // included since spec scraper-fb-loggedin-route: its session lives
-  // in the persistent profile, and the route fails loudly when the
-  // session is dead instead of discovering logged-out.
+  // Every platform EXCEPT Instagram runs in the shared headed
+  // Puppeteer page, Facebook included since spec
+  // scraper-fb-loggedin-route: its session lives in the persistent
+  // profile, and the route fails loudly when the session is dead
+  // instead of discovering logged-out. Instagram has its own
+  // browser (processInstagramJob below) and never reaches this
+  // function.
   const handlers = PLATFORM_HANDLERS[platform];
   if (!handlers) {
     throw new Error(`Unsupported platform: ${platform}`);
@@ -230,6 +238,53 @@ async function scrapeWithBrowser(page, platform, sourceUsername) {
   }
 
   return scrapedData.uniqueLinks;
+}
+
+// Instagram discovery (spec scraper-ig-residential-proxies): runs in
+// the dedicated Instagram browser behind the single residential
+// proxy — never the shared browser, never direct, never the rotating
+// proxy. A proxy failure retries on the SAME proxy (up to 3 attempts
+// with a short backoff); any other failure throws at once. Throws on
+// failure — it never marks status itself; the main loop's catch marks
+// the config error, exactly like the shared-browser path.
+async function processInstagramJob(job, instagramBrowserManager, instagramProxy) {
+  if (!instagramProxy.ok) {
+    throw new Error(`Instagram proxy pool unusable: ${instagramProxy.reason} — refusing to run Instagram direct or on the rotating proxy.`);
+  }
+  const proxy = instagramProxy.proxy;
+  const safeUser = String(job.source_username || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128);
+
+  const ids = await runInstagramJobWithRetries(async () => {
+    const igBrowser = await instagramBrowserManager.getBrowser();
+    const page = await acquireWorkerTab(igBrowser);
+    if (!page) {
+      throw new Error(`could not acquire a worker tab for ${job.source_username}: Instagram browser unreachable`);
+    }
+    try {
+      await applyDetectionHardening(page);
+      // Proxy auth for this page only — the credentials are never
+      // logged anywhere on this path.
+      await page.authenticate({ username: proxy.username, password: proxy.password });
+      const scrapedData = await scrapeInstagramProfile(page, job.source_username, { proxy });
+      return scrapedData?.uniqueLinks?.length ? scrapedData.uniqueLinks : null;
+    } finally {
+      await releaseWorkerTab(page);
+    }
+  });
+
+  // A completed attempt counts toward the IG browser's 500-job
+  // session limit (same discipline as the shared browser).
+  instagramBrowserManager.noteJobCompleted();
+
+  if (ids?.length) {
+    console.log(`✅ Instagram browser scraped ${ids.length} item(s).`);
+    await upsertReelsAndMarkSynced(job, 'instagram', ids);
+    console.log(`💾 Synced ${job.source_username} (Instagram browser).`);
+    return;
+  }
+
+  console.warn(`⚠️ No items found for ${job.source_username} (Instagram browser).`);
+  throw new Error(`Instagram discovery found no reels for ${safeUser}`);
 }
 
 async function runYtdlpDiscovery(platform, sourceUsername) {
@@ -406,12 +461,19 @@ async function processTikTokPendingJob(job) {
 async function main() {
   console.log('🚀 Starting Multi-Platform Scraper Orchestrator (yt-dlp + browser)...');
 
-  // Instagram discovery DISABLED — code-level block, owner order
-  // 2026-11-16 (temporary stop, not a removal). The claim rotation
-  // in claim-rotation.js has no 'instagram', so no Instagram config
-  // is ever claimed, even if re-queued to pending. Re-enable by
-  // re-adding 'instagram' to both rotation arrays.
-  console.log("⛔ Instagram discovery DISABLED — code-level block, owner order 2026-11-16 (re-enable by re-adding 'instagram' to the claim rotation).");
+  // Instagram discovery runs in its own headed Puppeteer browser
+  // behind ONE residential proxy — the first entry of
+  // INSTAGRAM_PROXIES (spec scraper-ig-residential-proxies). A bad
+  // pool is logged loudly here but NEVER takes down the scraper:
+  // other platforms keep running, and an Instagram job attempted
+  // with a bad pool fails loud with a clear reason instead of
+  // falling back to direct or to the rotating proxy. Only the proxy
+  // host is named — never credentials.
+  if (INSTAGRAM_PROXY.ok) {
+    console.log(`🌐 Instagram discovery via residential proxy ${INSTAGRAM_PROXY.proxy.host} (first pool entry only — no rotation, no fallback).`);
+  } else {
+    console.error(`❌ Instagram proxy pool unusable: ${INSTAGRAM_PROXY.reason} — Instagram jobs will fail; other platforms are unaffected.`);
+  }
 
   // ONE loud ERROR when TIKWMAPI_KEYS_SCRAPER is unset (TikWM
   // PRIMARY disabled, backup-only TikTok discovery); the scraper
@@ -422,6 +484,27 @@ async function main() {
   let jobsProcessed = 0;
   const maxJobsPerSession = 500;
   let nextPlatformIndex = 0;
+
+  // Dedicated Instagram browser (spec scraper-ig-residential-proxies):
+  // launched lazily on the first Instagram job and kept alive across
+  // jobs — never relaunched per job, restarted on death / after 500
+  // jobs, same discipline as the shared browser. Its session lives in
+  // its own profile dir, so it survives restarts. The launch throws
+  // loud when the proxy pool is bad — an Instagram job then fails
+  // loud instead of running direct or on the rotating proxy.
+  const instagramBrowserManager = new InstagramBrowserManager({
+    launch: async () => {
+      if (!INSTAGRAM_PROXY.ok) {
+        throw new Error(`Instagram proxy pool unusable: ${INSTAGRAM_PROXY.reason} — refusing to run Instagram direct or on the rotating proxy.`);
+      }
+      console.log(`🌏 Launching Instagram browser via residential proxy ${INSTAGRAM_PROXY.proxy.host}...`);
+      return puppeteer.launch(buildInstagramLaunchOptions({
+        userDataDir: BROWSER_CONFIG.IG_USER_DATA_DIR,
+        proxy: INSTAGRAM_PROXY.proxy,
+        executablePath: BROWSER_CONFIG.EXECUTABLE_PATH,
+      }));
+    },
+  });
 
   async function verifyDatabaseConnection() {
     console.log('🩺 Checking database connection...');
@@ -474,6 +557,15 @@ async function main() {
         console.log('⏭️  SKIP_STARTUP_LOGINS=true, skipping manual login prompts for all platforms.');
       } else {
         for (const [platform, handlers] of Object.entries(PLATFORM_HANDLERS)) {
+          // Instagram has its own browser (spec
+          // scraper-ig-residential-proxies): its login happens there,
+          // not in the shared browser — the owner logs in again
+          // himself after deploy. Never open the Instagram login in
+          // the shared profile.
+          if (platform === 'instagram') {
+            console.log('⏭️ Skipping Instagram startup login — it uses the dedicated Instagram browser (owner logs in after deploy).');
+            continue;
+          }
           // Platforms with no login handler (Facebook: its session
           // lives in the persistent profile; YouTube: Data API) are
           // skipped — no prompt, no page.
@@ -580,31 +672,43 @@ async function main() {
 
     const { job, platform, claimSource } = selection;
 
-    // Browser jobs run in a worker tab, closed when the job ends (or
-    // blanked for reuse if the close fails — browser-tabs.js: blank
-    // anchor + one worker tab, at most; extra tabs are reclaimed,
-    // jobs are never skipped because of tabs).
+    // Instagram jobs run in the dedicated Instagram browser
+    // (processInstagramJob), never in the shared browser — the
+    // shared browser never sees an Instagram job. Browser jobs run
+    // in a worker tab, closed when the job ends (or blanked for
+    // reuse if the close fails — browser-tabs.js: blank anchor +
+    // one worker tab, at most; extra tabs are reclaimed, jobs are
+    // never skipped because of tabs).
     // YouTube (Data API) and TikTok pending jobs (yt-dlp, on the pool)
     // never touch the browser, so they get no tab at all.
     const needsBrowser =
       platform !== 'youtube' && !(claimSource === 'pending' && supportsYtdlpDiscovery(platform));
     let workerPage = null;
     try {
-      if (needsBrowser) {
-        // acquireWorkerTab returns null only when the browser itself
-        // is unreachable — never because of tab count. Failing loud
-        // here lets the catch below mark the config error, exactly
-        // like any other job failure.
-        workerPage = await acquireWorkerTab(browser);
-        if (!workerPage) {
-          throw new Error(`could not acquire a worker tab for ${job.source_username}: browser unreachable`);
+      if (platform === 'instagram') {
+        await processInstagramJob(job, instagramBrowserManager, INSTAGRAM_PROXY);
+      } else {
+        if (needsBrowser) {
+          // acquireWorkerTab returns null only when the browser itself
+          // is unreachable — never because of tab count. Failing loud
+          // here lets the catch below mark the config error, exactly
+          // like any other job failure.
+          workerPage = await acquireWorkerTab(browser);
+          if (!workerPage) {
+            throw new Error(`could not acquire a worker tab for ${job.source_username}: browser unreachable`);
+          }
+          await applyDetectionHardening(workerPage);
         }
-        await applyDetectionHardening(workerPage);
+        await processJob(workerPage, job, platform, claimSource);
+        jobsProcessed += 1;
       }
-      await processJob(workerPage, job, platform, claimSource);
-      jobsProcessed += 1;
     } catch (err) {
-      console.error(`❌ Error processing ${job.source_username}:`, err);
+      // Instagram errors are logged redacted: the error can carry
+      // proxy text, and proxy credentials must never reach a log line.
+      const detail = platform === 'instagram'
+        ? redactInstagramProxyCredentials(err?.stack || err, INSTAGRAM_PROXY.ok ? INSTAGRAM_PROXY.proxy : null)
+        : err;
+      console.error(`❌ Error processing ${job.source_username}:`, detail);
 
       if (claimSource === 'pending' && supportsYtdlpDiscovery(platform) && platform !== 'tiktok') {
         try {
