@@ -45,6 +45,11 @@
  * The panel follows the theme (bg-canvas on the showcase section in
  * auth-split-layout.tsx): it is never forced black and carries no
  * glow/halo, so it reads in both light and dark themes.
+ *
+ * Spec 200: the gold text (eyebrow, headline segment, feature icons)
+ * is theme-aware — bronze on light theme, bright gold on dark. Pure
+ * gold on the light canvas measured 1.05:1 (invisible); bronze
+ * measures 5.70:1. Token-backed utilities only, no literals.
  */
 
 import React from 'react';
@@ -60,17 +65,17 @@ interface FeatureItem {
 
 const FEATURES: readonly FeatureItem[] = [
   {
-    icon: <ClockIcon className="mt-0.5 size-5.5 shrink-0 text-primary" aria-hidden="true" />,
+    icon: <ClockIcon className="mt-0.5 size-5.5 shrink-0 text-brand-bronze dark:text-primary" aria-hidden="true" />,
     title: 'Post from anywhere',
     desc: 'Schedule from your phone or laptop; publishing runs in the cloud.',
   },
   {
-    icon: <LayoutGridIcon className="mt-0.5 size-5.5 shrink-0 text-primary" aria-hidden="true" />,
+    icon: <LayoutGridIcon className="mt-0.5 size-5.5 shrink-0 text-brand-bronze dark:text-primary" aria-hidden="true" />,
     title: 'Every platform, one dashboard',
     desc: 'Connect each account once, then run everything from a single place.',
   },
   {
-    icon: <LockIcon className="mt-0.5 size-5.5 shrink-0 text-primary" aria-hidden="true" />,
+    icon: <LockIcon className="mt-0.5 size-5.5 shrink-0 text-brand-bronze dark:text-primary" aria-hidden="true" />,
     title: 'Your accounts stay yours',
     desc: 'You sign in on each platform itself, so we never see your passwords.',
   },
@@ -101,7 +106,7 @@ export function AuthShowcasePanel() {
       {/* Showcase content */}
       <div className="mt-9">
         {/* Eyebrow */}
-        <div className="mb-9 text-metadata font-semibold tracking-widest text-primary uppercase">
+        <div className="mb-9 text-metadata font-semibold tracking-widest text-brand-bronze dark:text-primary uppercase">
           CREATE · SCHEDULE · GROW
         </div>
 
@@ -111,7 +116,7 @@ export function AuthShowcasePanel() {
         <h1 className="mb-4 text-xxxl leading-heading font-bold tracking-h1 text-ink 2xl:text-4xl">
           Your pages, posting themselves —
           <br />
-          <span className="text-primary">100% on the cloud.</span>
+          <span className="text-brand-bronze dark:text-primary">100% on the cloud.</span>
         </h1>
 
         {/* Subhead */}

@@ -250,7 +250,7 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
             Don&apos;t have an account?{' '}
             <Link
               href={returnUrl ? `/signup?returnUrl=${encodeURIComponent(returnUrl)}` : '/signup'}
-              className="font-semibold text-primary no-underline"
+              className="font-semibold text-brand-bronze dark:text-primary no-underline"
             >
               Create one
             </Link>
