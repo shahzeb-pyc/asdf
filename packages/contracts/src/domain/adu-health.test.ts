@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  ADU_INVALID_TOKEN_DECISION,
   evaluateAduPublishError,
   type AduPublishErrorDecision,
 } from './adu-health.js';
@@ -25,6 +26,7 @@ describe('evaluateAduPublishError — invalid token', () => {
       aduStatus: 'invalid_token',
       cascadeInvalidToken: true,
       destinationStatus: 'error',
+      destinationFbStatus: 'invalid_token',
       accountStatus: 'expired',
       userMessage: 'real',
     });
@@ -93,6 +95,7 @@ describe('evaluateAduPublishError — rate limited', () => {
       aduStatus: 'fb_rate_limited',
       cascadeInvalidToken: false,
       destinationStatus: 'rate_limited',
+      destinationFbStatus: null,
       accountStatus: null,
       userMessage: 'real',
     });
@@ -197,6 +200,7 @@ describe('evaluateAduPublishError — no status, post fails, real reason', () =>
       aduStatus: null,
       cascadeInvalidToken: false,
       destinationStatus: null,
+      destinationFbStatus: undefined,
       accountStatus: null,
       userMessage: 'real',
     });
@@ -243,6 +247,7 @@ describe('evaluateAduPublishError — app bugs (regressions)', () => {
       aduStatus: null,
       cascadeInvalidToken: false,
       destinationStatus: null,
+      destinationFbStatus: undefined,
       accountStatus: null,
       userMessage: 'generic-backend',
     });
@@ -261,5 +266,46 @@ describe('evaluateAduPublishError — unknown / missing error facts', () => {
     expect(decide(null).aduStatus).toBeNull();
     expect(decide(undefined).userMessage).toBe('real');
     expect(decide(99999).aduStatus).toBeNull();
+  });
+});
+
+describe('evaluateAduPublishError — destinationFbStatus marker (spec 204)', () => {
+  it('368/4854002 stamps checkpoint (the Nov 9 identity-checkpoint failure)', () => {
+    const result = decide(368, 4854002);
+    expect(result.destinationStatus).toBe('error');
+    expect(result.destinationFbStatus).toBe('checkpoint');
+  });
+
+  it('generic 190 stamps invalid_token', () => {
+    const result = decide(190);
+    expect(result.destinationStatus).toBe('error');
+    expect(result.destinationFbStatus).toBe('invalid_token');
+  });
+
+  it('the shared invalid-token decision carries invalid_token', () => {
+    expect(ADU_INVALID_TOKEN_DECISION.destinationFbStatus).toBe('invalid_token');
+  });
+
+  it('default 368 clears a stale marker on the rate-limited flip', () => {
+    const result = decide(368);
+    expect(result.destinationStatus).toBe('rate_limited');
+    expect(result.destinationFbStatus).toBeNull();
+  });
+
+  it('config-only flips leave the marker untouched (no destination flip)', () => {
+    // 190/492 flips only the config; 200 missing_permission,
+    // 368/1404112 account_suspended and HTTP 404 page_not_accessible
+    // likewise. Stamping a reason onto a destination that keeps its
+    // status would assert a cause the record does not state.
+    expect(decide(190, 492).destinationFbStatus).toBeUndefined();
+    expect(decide(200).destinationFbStatus).toBeUndefined();
+    expect(decide(368, 1404112).destinationFbStatus).toBeUndefined();
+    expect(decide('http_404').destinationFbStatus).toBeUndefined();
+  });
+
+  it('content and transient failures leave the marker untouched', () => {
+    expect(decide(506).destinationFbStatus).toBeUndefined();
+    expect(decide(500).destinationFbStatus).toBeUndefined();
+    expect(decide(99999).destinationFbStatus).toBeUndefined();
   });
 });

@@ -1,4 +1,5 @@
 import type { AduConfigStatus } from './adu.js';
+import type { DestinationFbStatusMarker } from './facebook-page-status.js';
 
 /**
  * ADU publish-error mapper (spec §3.1 — the mapping table is the
@@ -12,7 +13,10 @@ import type { AduConfigStatus } from './adu.js';
  * outcome's `targetDestinationStatus` / `targetAccountStatus` —
  * those belong to the Pages queue settle path). Retry disposition is
  * deliberately NOT part of this decision — the publisher and the
- * tick's retry budget own it.
+ * tick's retry budget own it. The decision also carries the
+ * `metadata.fb_status` detail marker (`destinationFbStatus`) the
+ * tick stamps on the destination, so ADU shows the same error
+ * detail Schedule does (spec 204).
  *
  * `userMessage: 'generic-backend'` is for the two app-bug codes
  * (190/2069032, 3): the user sees only {@link ADU_GENERIC_BACKEND_MESSAGE}
@@ -37,6 +41,15 @@ export interface AduPublishErrorDecision {
   cascadeInvalidToken: boolean;
   /** Destination status to set, or null when it keeps its status. */
   destinationStatus: 'error' | 'rate_limited' | null;
+  /**
+   * `metadata.fb_status` marker to stamp on the destination (spec
+   * 204) — the specific error detail the ADU card and detail page
+   * read. `undefined` = do not touch the marker (no destination
+   * flip); `null` = clear it (rate-limited flip — rate-limited rows
+   * carry the anchor, not the marker); a marker string = stamp it.
+   * Only ever set together with `destinationStatus`.
+   */
+  destinationFbStatus: DestinationFbStatusMarker | null | undefined;
   /** Account status to set, or null when it keeps its status. */
   accountStatus: 'expired' | null;
   /** Which message the user sees for this failure. */
@@ -69,11 +82,42 @@ function parseHttpCode(value: string | number | null | undefined): number | unde
   return undefined;
 }
 
+/**
+ * The `metadata.fb_status` marker for a config status the mapper
+ * sets (spec 204): the marker is the stored spelling of the same
+ * reason — `fb_verification_required` stores as `checkpoint`, the
+ * rest pass through. `fb_rate_limited` clears the marker
+ * (rate-limited rows carry the anchor, not the marker). Any other
+ * status carries no marker decision — the marker rides the
+ * destination flip, so config-only flips (`statusOnly`) never
+ * stamp one.
+ */
+function markerForAduStatus(
+  aduStatus: AduConfigStatus | null,
+): DestinationFbStatusMarker | null | undefined {
+  switch (aduStatus) {
+    case 'fb_verification_required':
+      return 'checkpoint';
+    case 'invalid_token':
+    case 'missing_page_access':
+    case 'check_developer_app':
+    case 'account_suspended':
+    case 'page_not_accessible':
+    case 'missing_permission':
+      return aduStatus;
+    case 'fb_rate_limited':
+      return null;
+    default:
+      return undefined;
+  }
+}
+
 function noFlip(userMessage: 'real' | 'generic-backend' = 'real'): AduPublishErrorDecision {
   return {
     aduStatus: null,
     cascadeInvalidToken: false,
     destinationStatus: null,
+    destinationFbStatus: undefined,
     accountStatus: null,
     userMessage,
   };
@@ -84,6 +128,10 @@ function statusOnly(aduStatus: AduConfigStatus): AduPublishErrorDecision {
     aduStatus,
     cascadeInvalidToken: false,
     destinationStatus: null,
+    // Config-only flip: the destination keeps its status, so the
+    // marker is untouched — stamping a reason onto an active
+    // destination would assert a cause the record does not state.
+    destinationFbStatus: undefined,
     accountStatus: null,
     userMessage: 'real',
   };
@@ -105,6 +153,7 @@ export const ADU_INVALID_TOKEN_DECISION: AduPublishErrorDecision = {
   aduStatus: 'invalid_token',
   cascadeInvalidToken: true,
   destinationStatus: 'error',
+  destinationFbStatus: 'invalid_token',
   accountStatus: 'expired',
   userMessage: 'real',
 };
@@ -114,6 +163,7 @@ function verificationRequired(): AduPublishErrorDecision {
     aduStatus: 'fb_verification_required',
     cascadeInvalidToken: false,
     destinationStatus: 'error',
+    destinationFbStatus: markerForAduStatus('fb_verification_required'),
     accountStatus: null,
     userMessage: 'real',
   };
@@ -124,6 +174,7 @@ function rateLimited(): AduPublishErrorDecision {
     aduStatus: 'fb_rate_limited',
     cascadeInvalidToken: false,
     destinationStatus: 'rate_limited',
+    destinationFbStatus: markerForAduStatus('fb_rate_limited'),
     accountStatus: null,
     userMessage: 'real',
   };

@@ -61,6 +61,8 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
     status: 'active',
     syncStatus: 'synced',
     displayStatus: 'Active posting',
+    destinationStatus: 'active',
+    destinationFbStatus: null,
     alert: null,
     followersCount: 1000,
     followersGained: 5000,
@@ -90,14 +92,14 @@ interface FetchCall {
   body?: unknown;
 }
 
-/** `failPatch`: a config PATCH (e.g. the automation switch) 500s. */
-function setupFetch(opts: { failPatch?: boolean } = {}) {
+/** `failPatch`: a config PATCH (e.g. the automation switch) 500s. `config`: overrides for the fetched config. */
+function setupFetch(opts: { failPatch?: boolean; config?: Record<string, unknown> } = {}) {
   const calls: FetchCall[] = [];
   const fetchMock = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     const method = init?.method ?? 'GET';
     calls.push({ url, method, body: init?.body ? JSON.parse(init.body) : undefined });
     if (url === BASE && method === 'GET') {
-      return jsonResponse({ config: makeConfig() });
+      return jsonResponse({ config: makeConfig(opts.config ?? {}) });
     }
     if (url === BASE && method === 'PATCH') {
       if (opts.failPatch) return jsonResponse({ error: 'Boom.' }, false, 500);
@@ -328,5 +330,43 @@ describe('AduDetailPage (adu-opt-c)', { timeout: 20000 }, () => {
     const expected = '/tenant/testws/auto-download-upload';
     expect(screen.getByRole('link', { name: 'Auto Download/Upload' }).getAttribute('href')).toBe(expected);
     expect(screen.getByRole('button', { name: 'Back to Hub' }).closest('a')?.getAttribute('href')).toBe(expected);
+  });
+
+  it('Spec 204: an error destination with a checkpoint marker shows the verification alert even when the config is active', async () => {
+    // The beekainternational shape: the config was reactivated, so
+    // the config alone reads active — the destination's marker is
+    // the only record of the checkpoint.
+    setupFetch({
+      config: {
+        status: 'active',
+        syncStatus: 'synced',
+        destinationStatus: 'error',
+        destinationFbStatus: 'checkpoint',
+      },
+    });
+    renderPage();
+    // Copy from the detail page's own local alert switch
+    // (getAduDetailStatusAlert in adu-detail-page.tsx), not the
+    // contracts copy — the component renders the local one.
+    await screen.findByText('Facebook Verification Required');
+    expect(
+      screen.getByText(
+        'Complete identity or phone verification in the Meta app on your mobile device. This is not a token error — do not reconnect. After verification, turn automation on using the toggle.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('Spec 204: an error destination with no marker shows no alert when the config is active (no fabricated reason)', async () => {
+    setupFetch({
+      config: {
+        status: 'active',
+        syncStatus: 'synced',
+        destinationStatus: 'error',
+        destinationFbStatus: null,
+      },
+    });
+    renderPage();
+    await screen.findByText('Ellie Blossom');
+    expect(screen.queryByText('Facebook Verification Required')).not.toBeInTheDocument();
   });
 });

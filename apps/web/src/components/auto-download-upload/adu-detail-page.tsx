@@ -5,6 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { PlayIcon, XIcon } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { destinationFbStatusToAduStatus } from '@fbuploadpro/contracts';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -65,6 +66,12 @@ interface ConfigView {
   status: string;
   syncStatus: string;
   displayStatus: string;
+  /** The destination's coarse status (spec 204) — the alert reads
+   *  the destination's reason, not just the config's. */
+  destinationStatus: string;
+  /** The destination's `metadata.fb_status` detail marker (spec
+   *  204), or null when the destination carries none. */
+  destinationFbStatus: string | null;
   alert: string | null;
   followersCount: number;
   followersGained: number;
@@ -671,7 +678,21 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   // starting baseline; net gained is current minus starting.
   const currentFollowers = config.followersGained;
   const netGained = currentFollowers - config.followersCount;
-  const statusAlert = getAduDetailStatusAlert(config.status, config.syncStatus);
+  // Spec 204: the alert reads the destination's reason, like the
+  // Schedule detail does — the marker maps to the config-style key
+  // the local alert switch already handles. A destination in error
+  // with no marker falls back to the config status (a config that
+  // does hold the reason still shows its alert); a rate-limited
+  // destination shows the rate-limit alert. Sync-error keeps
+  // priority inside getAduDetailStatusAlert (the setup status shows
+  // only on a failed scrape).
+  const alertStatus =
+    config.destinationStatus === 'error'
+      ? (destinationFbStatusToAduStatus(config.destinationFbStatus) ?? config.status)
+      : config.destinationStatus === 'rate_limited'
+        ? 'fb_rate_limited'
+        : config.status;
+  const statusAlert = getAduDetailStatusAlert(alertStatus, config.syncStatus);
   const hubHref = `/tenant/${subdomain}/auto-download-upload${hubQuery ? `?${hubQuery}` : ''}`;
 
   const metaItems: React.ReactNode[] = [
