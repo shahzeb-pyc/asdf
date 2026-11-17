@@ -157,7 +157,7 @@ What Home shows depends on the plan:
 - Paid: the paid plan card (total pages and accounts, price, 30-day period with end date and days left — 0 days left reads "Expires today" — per-platform rows, storage used and quota with a progress bar, "Unlimited use" for Prompt Library and Creator Finder, and Auto Download/Upload and TikTok Repost listed as included), quick links in this order — Media Library, Creator Finder, Facebook Accounts, Facebook In-App Schedule, Billing — and a Muse Assistant rail card.
 - Free: the free plan card at 0 PKR, "Prompt Library only", with posting, scheduling, Auto Download/Upload, and Auto Repost shown as not included, an Upgrade card, and quick links for Prompt Library and Billing only.
 - Expired: a banner that the plan has expired, with a Renew button only.
-- Home also shows a banner for old FBUploadPro users, and the Muse Assistant rail card.
+- Home also shows the Muse Assistant rail card.
 
 Home shows no queue data and no post counts. It does not count scheduled, published, or failed posts, and it does not link to Queue or Calendar. If Home fails to load, it shows a visible error card and never invented numbers — report the error, do not fill in numbers yourself.
 
@@ -550,10 +550,6 @@ const NEXTRISE_REPLACEMENTS: ReadonlyArray<readonly [string, string]> = [
   [
     '- Expired: a banner that the plan has expired, with a Renew button only.',
     '- Expired: a banner that the plan has expired, with a Contact support button only, which opens WhatsApp support to renew the plan.',
-  ],
-  [
-    'Home also shows a banner for old FBUploadPro users, and the Muse Assistant rail card.',
-    'Home also shows the Muse Assistant rail card.',
   ],
   [
     'Home is exempt from the Free-plan dialogue described under Limits. A Free user can still open Home, Prompt Library, and the Billing leaves.',

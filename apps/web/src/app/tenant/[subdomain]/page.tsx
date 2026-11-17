@@ -15,7 +15,6 @@ import {
   FreePlanCard,
   HomeErrorCard,
   HomeHeader,
-  HomeOldUsersBanner,
   MuseAssistantCard,
   PaidPlanCard,
   QuickLinks,
@@ -73,8 +72,6 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
   }
   const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com';
   const useCleanPaths = shouldUseCleanTenantPaths(hostHeader, subdomain, rootDomain);
-  // Spec 191: the old-users banner is our brand's notice — it never
-  // shows on the white-label brand.
   const brand = getRequestBrandFromHost(hostHeader);
   // Spec 191 (Home buttons fix): on the white-label brand there is
   // no billing section, so every billing action on Home is replaced
@@ -123,7 +120,6 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
         }
         promptsHref={promptsHref}
       />
-      {brand !== 'nextrise' && <HomeOldUsersBanner />}
 
       {data.kind === 'error' ? <HomeErrorCard message={data.message} /> : null}
 

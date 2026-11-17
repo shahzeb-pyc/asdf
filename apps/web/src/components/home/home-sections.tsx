@@ -46,7 +46,6 @@ import {
   formatStorageGbOneDecimal,
   STORAGE_BYTES_PER_UNIT,
 } from '@/lib/billing/storage-display';
-import { OLD_USERS_NOTICE_TEXT } from '@/components/shared/old-users-notice-banner';
 
 import type { HomePaidData } from './home-data';
 import type { HomeQuickLink } from './home-helpers';
@@ -146,24 +145,6 @@ export function HomeHeader({
         <Link href={promptsHref}>Go to Prompt Library</Link>
       </Button>
     </header>
-  );
-}
-
-/**
- * Old-users notice as approved for the redesigned Home: a heading
- * plus the verbatim notice body. The text comes from the shared
- * constant — this does not edit the shared banner component, which
- * the login page still uses unchanged. Text only: no number, no
- * link, no button.
- */
-export function HomeOldUsersBanner() {
-  return (
-    <Banner
-      data-testid="old-users-notice-banner"
-      variant="warning"
-      title="For old FBUploadPro users"
-      description={OLD_USERS_NOTICE_TEXT}
-    />
   );
 }
 

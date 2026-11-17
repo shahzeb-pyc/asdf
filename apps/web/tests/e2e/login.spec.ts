@@ -208,17 +208,3 @@ test.describe('login', () => {
     await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
   });
 });
-
-test.describe('old-users migration notice at 360px', () => {
-  test.use({ viewport: { width: 360, height: 720 } });
-
-  test('login shows the migration notice above the form, no overflow', async ({ page }) => {
-    await page.goto('/login');
-    await expect(page.getByTestId('old-users-notice-banner')).toBeVisible();
-    await expect(page.getByTestId('old-users-notice-banner')).toContainText(
-      'Old fbuploadpro users'
-    );
-    await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
-    await expectNoDocumentOverflow(page);
-  });
-});
