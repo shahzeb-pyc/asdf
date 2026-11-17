@@ -235,10 +235,10 @@ describe('middleware white-label brand (spec 191)', () => {
   it('a NextRise session on the white-label gateway goes to its white-label tenant home', async () => {
     const token = await brandToken('nextrise');
     const response = await middleware(
-      requestWithCookie('https://app.nextrisehq.com/login', token)
+      requestWithCookie('https://app.sajidaliai.online/login', token)
     );
     expect(response.status).toBe(307);
-    expect(response.headers.get('location')).toBe('https://student1.app.nextrisehq.com/');
+    expect(response.headers.get('location')).toBe('https://student1.app.sajidaliai.online/');
   });
 
   it('a NextRise session on OUR gateway is not a session there — login renders, no workspace redirect', async () => {
@@ -253,7 +253,7 @@ describe('middleware white-label brand (spec 191)', () => {
   it('our session on the white-label gateway is not a session there — login renders, no workspace redirect', async () => {
     const token = await brandToken('fbuploadpro');
     const response = await middleware(
-      requestWithCookie('https://app.nextrisehq.com/login', token)
+      requestWithCookie('https://app.sajidaliai.online/login', token)
     );
     expect(response.status).toBe(200);
     expect(response.headers.get('location')).toBeNull();
@@ -262,7 +262,7 @@ describe('middleware white-label brand (spec 191)', () => {
   it('a pre-brand token (no claim) is our brand and is not a session on the white-label gateway', async () => {
     const token = await validSessionToken();
     const response = await middleware(
-      requestWithCookie('https://app.nextrisehq.com/login', token)
+      requestWithCookie('https://app.sajidaliai.online/login', token)
     );
     expect(response.status).toBe(200);
     expect(response.headers.get('location')).toBeNull();
@@ -271,10 +271,10 @@ describe('middleware white-label brand (spec 191)', () => {
   it('signup and forgot-password on the white-label gateway redirect to login', async () => {
     for (const path of ['/signup', '/forgot-password', '/reset-password', '/verify-otp']) {
       const response = await middleware(
-        requestWithCookie(`https://app.nextrisehq.com${path}`, null)
+        requestWithCookie(`https://app.sajidaliai.online${path}`, null)
       );
       expect(response.status).toBe(307);
-      expect(response.headers.get('location')).toBe('https://app.nextrisehq.com/login');
+      expect(response.headers.get('location')).toBe('https://app.sajidaliai.online/login');
     }
   });
 
@@ -282,7 +282,7 @@ describe('middleware white-label brand (spec 191)', () => {
   // white-label brand too — students use Muse there.
   it('the Muse guide serves on the white-label gateway', async () => {
     const response = await middleware(
-      requestWithCookie('https://app.nextrisehq.com/muse_guide.md', null)
+      requestWithCookie('https://app.sajidaliai.online/muse_guide.md', null)
     );
     expect(response.status).toBe(200);
     expect(rewriteTarget(response)).toBeNull();
@@ -292,10 +292,10 @@ describe('middleware white-label brand (spec 191)', () => {
     const token = await brandToken('nextrise');
     for (const path of ['/billing', '/my-plan', '/purchase', '/payments', '/refund']) {
       const response = await middleware(
-        requestWithCookie(`https://student1.app.nextrisehq.com${path}`, token)
+        requestWithCookie(`https://student1.app.sajidaliai.online${path}`, token)
       );
       expect(rewriteTarget(response)).toBe(
-        `https://student1.app.nextrisehq.com/_not-found`
+        `https://student1.app.sajidaliai.online/_not-found`
       );
     }
   });
@@ -303,28 +303,28 @@ describe('middleware white-label brand (spec 191)', () => {
   it('the Muse page passes through on a white-label tenant host, even authenticated', async () => {
     const token = await brandToken('nextrise');
     const response = await middleware(
-      requestWithCookie('https://student1.app.nextrisehq.com/muse', token)
+      requestWithCookie('https://student1.app.sajidaliai.online/muse', token)
     );
     expect(rewriteTarget(response)).toBe(
-      'https://student1.app.nextrisehq.com/tenant/student1/muse'
+      'https://student1.app.sajidaliai.online/tenant/student1/muse'
     );
   });
 
   it('billing 404s on the white-label gateway in tenant form too', async () => {
     const token = await brandToken('nextrise');
     const response = await middleware(
-      requestWithCookie('https://app.nextrisehq.com/tenant/student1/billing', token)
+      requestWithCookie('https://app.sajidaliai.online/tenant/student1/billing', token)
     );
-    expect(rewriteTarget(response)).toBe('https://app.nextrisehq.com/_not-found');
+    expect(rewriteTarget(response)).toBe('https://app.sajidaliai.online/_not-found');
   });
 
   it('an ordinary section still rewrites to the tenant path on a white-label tenant host', async () => {
     const token = await brandToken('nextrise');
     const response = await middleware(
-      requestWithCookie('https://student1.app.nextrisehq.com/schedule', token)
+      requestWithCookie('https://student1.app.sajidaliai.online/schedule', token)
     );
     expect(rewriteTarget(response)).toBe(
-      'https://student1.app.nextrisehq.com/tenant/student1/schedule'
+      'https://student1.app.sajidaliai.online/tenant/student1/schedule'
     );
   });
 
@@ -338,7 +338,7 @@ describe('middleware white-label brand (spec 191)', () => {
       '/api/tenant/student1/billing/payments',
     ]) {
       const response = await middleware(
-        requestWithCookie(`https://app.nextrisehq.com${path}`, null)
+        requestWithCookie(`https://app.sajidaliai.online${path}`, null)
       );
       expect(response.status).toBe(404);
     }
@@ -354,7 +354,7 @@ describe('middleware white-label brand (spec 191)', () => {
       '/api/tenant/student1/muse/activity',
     ]) {
       const response = await middleware(
-        requestWithCookie(`https://app.nextrisehq.com${path}`, null)
+        requestWithCookie(`https://app.sajidaliai.online${path}`, null)
       );
       expect(response.status).not.toBe(404);
     }
@@ -363,7 +363,7 @@ describe('middleware white-label brand (spec 191)', () => {
   it('login and session APIs still pass through on the white-label brand', async () => {
     for (const path of ['/api/auth/login', '/api/auth/session', '/api/auth/logout']) {
       const response = await middleware(
-        requestWithCookie(`https://app.nextrisehq.com${path}`, null)
+        requestWithCookie(`https://app.sajidaliai.online${path}`, null)
       );
       expect(response.status).not.toBe(404);
       expect(response.headers.get('location')).toBeNull();

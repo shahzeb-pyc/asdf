@@ -388,8 +388,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const host = request.headers.get('host') || '';
   // Spec 191: the brand comes from the request host. All routing
   // below uses the brand's tenant root and gateway host, so the
-  // white-label brand's hosts are <workspace>.app.nextrisehq.com
-  // and app.nextrisehq.com, and our brand keeps its configured root
+  // white-label brand's hosts are <workspace>.app.sajidaliai.online
+  // and app.sajidaliai.online, and our brand keeps its configured root
   // exactly as before.
   const brand = resolveBrandFromHost(host);
   const configuredRoot = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';

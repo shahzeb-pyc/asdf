@@ -177,7 +177,7 @@ describe('brand sweep (spec 191)', () => {
     );
     const text = document.body.textContent;
     expect(text).toContain('Connect to my NextRise Digital account');
-    expect(text).toContain('https://app.nextrisehq.com/muse_guide.md');
+    expect(text).toContain('https://app.sajidaliai.online/muse_guide.md');
     expect(text).toContain('your NextRise Digital sign-in');
     expect(text).not.toContain('FBUploadPro');
     expect(text).not.toContain('app.fbuploadpro.com');

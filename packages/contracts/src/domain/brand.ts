@@ -14,10 +14,10 @@ export const BrandSchema = z.enum(['fbuploadpro', 'nextrise']);
 export type Brand = z.infer<typeof BrandSchema>;
 
 /** Gateway host of the white-label brand. */
-export const NEXTRISE_APP_HOST = 'app.nextrisehq.com';
-/** Tenant-host suffix of the white-label brand: `<workspace>.app.nextrisehq.com`. */
-export const NEXTRISE_TENANT_ROOT = 'app.nextrisehq.com';
-/** Support number shown on the white-label brand (from nextrisehq.com). */
+export const NEXTRISE_APP_HOST = 'app.sajidaliai.online';
+/** Tenant-host suffix of the white-label brand: `<workspace>.app.sajidaliai.online`. */
+export const NEXTRISE_TENANT_ROOT = 'app.sajidaliai.online';
+/** Support number shown on the white-label brand. */
 export const NEXTRISE_WHATSAPP_NUMBER = '0342-9469500';
 /** The same number in international form, for the wa.me link. */
 export const NEXTRISE_WHATSAPP_INTERNATIONAL = '923429469500';
@@ -25,12 +25,12 @@ export const NEXTRISE_WHATSAPP_INTERNATIONAL = '923429469500';
 export const NEXTRISE_DISPLAY_NAME = 'NextRise Digital';
 /** Short name used in the sidebar wordmark and aria labels. */
 export const NEXTRISE_SHORT_NAME = 'NextRise';
-/** Public asset path of the white-label logo (SVG, copied from nextrisehq.com/icon.svg). */
+/** Public asset path of the white-label logo (SVG, copied from the white-label site's icon). */
 export const NEXTRISE_LOGO_PATH = '/brand/nextrise-logo.svg';
 
 /**
  * Resolve the brand from a request host. Case-insensitive, port-insensitive.
- * The bare white-label domain (nextrisehq.com) is NOT an app host — it
+ * The bare white-label domain (sajidaliai.online) is NOT an app host — it
  * resolves to our brand, so nothing white-label ever leaks onto it.
  */
 export function resolveBrandFromHost(host: string | null | undefined): Brand {
@@ -44,7 +44,7 @@ export function resolveBrandFromHost(host: string | null | undefined): Brand {
 /**
  * Tenant-host suffix for a brand. Our brand uses the configured root
  * (from `NEXT_PUBLIC_ROOT_DOMAIN`); the white-label brand always uses
- * `app.nextrisehq.com`, whatever the deployment's root is.
+ * `app.sajidaliai.online`, whatever the deployment's root is.
  *
  * Verbatim: the port is part of the root (`localhost:3000`), and an
  * empty root stays empty — the routing helpers resolve locally from
@@ -63,7 +63,7 @@ export function getBrandTenantRoot(brand: Brand, fallbackRoot: string): string {
 /**
  * Gateway host (the app's front door) for a brand. Our brand keeps the
  * historic `app.<root>` form exactly, port included; the white-label
- * brand is always `app.nextrisehq.com`.
+ * brand is always `app.sajidaliai.online`.
  */
 export function getBrandGatewayHost(brand: Brand, fallbackRoot: string): string {
   if (brand === 'nextrise') return NEXTRISE_APP_HOST;
@@ -138,7 +138,7 @@ export const NEXTRISE_BRAND_CONFIG: BrandConfig = {
  */
 export function brandLoginMismatchMessage(accountBrand: Brand): string {
   if (accountBrand === 'nextrise') {
-    return 'This account belongs to NextRise. Please log in at app.nextrisehq.com.';
+    return `This account belongs to NextRise. Please log in at ${NEXTRISE_APP_HOST}.`;
   }
   return 'This account belongs to FBUploadPro. Please log in at app.fbuploadpro.com.';
 }

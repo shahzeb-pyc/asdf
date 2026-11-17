@@ -243,7 +243,7 @@ export function getCookieDomain(requestHost?: string | null): string | undefined
     ?.split(':')[0] || 'localhost';
   // Spec 191: the cookie domain follows the request's brand, not the
   // configured root. Our brand keeps the configured root; the
-  // white-label brand's shared domain is .app.nextrisehq.com, and a
+  // white-label brand's shared domain is .app.sajidaliai.online, and a
   // COOKIE_DOMAIN set for our brand must never apply to it.
   const brand = resolveBrandFromHost(requestHost);
   const cleanRoot = getBrandTenantRoot(brand, configuredRoot);
