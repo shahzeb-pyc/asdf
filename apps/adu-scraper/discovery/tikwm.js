@@ -219,3 +219,210 @@ export function logTikwmPrimaryStatus() {
   console.log(`✅ TikWM primary enabled (${keys.length} key(s) configured).`);
   return true;
 }
+
+// ==========================================
+// TikWM /user/posts feed (spec 203 ranking)
+// ==========================================
+//
+// The ADU TikTok ranking enrichment: after normal discovery (up to
+// 1000 IDs), the scraper fetches the newest 60 feed videos with
+// view counts (2 pages of 30 via cursor) and sorts them by views,
+// so the most-viewed reels download and post first. Same keys as
+// the /user/info lookup (TIKWMAPI_KEYS_SCRAPER only), same
+// never-log-key-material discipline, same dependency-free
+// constraint (node builtins only) — the runtime validation below
+// mirrors the shared TikwmUserPostsResponseSchema in
+// packages/contracts (which the scraper cannot import).
+//
+// Key rotation mirrors the contracts helper
+// (callWithTikwmApiKeyRotation) as far as this runtime allows:
+// 10429 throttle -> brief backoff, next key, no pause; 10430 quota
+// exhausted / 10401 invalid key -> next key (the scraper has no
+// pause store, so no 30-day pause row is persisted here — the
+// contracts/web rotation owns persistence); transient HTTP/unreachable
+// -> next key. Non-key failures (unknown user, malformed response)
+// fail immediately: rotating keys cannot fix them. Never throws:
+// every failure is returned as { ok: false, reason } with a
+// fixed-token reason, so the caller can fall back to discovery
+// order loudly instead of failing the sync.
+
+/** Paid feed page size (the paid API caps count at 30). */
+export const TIKWM_FEED_PAGE_SIZE = 30;
+/** How many feed pages the ranking fetches (2 pages = 60 videos). */
+export const TIKWM_FEED_PAGE_COUNT = 2;
+/** Brief backoff before trying the next key after a 10429 throttle. */
+const TIKWM_FEED_THROTTLE_BACKOFF_MS = 1000;
+
+/**
+ * Validate one /user/posts response body against the shape the
+ * ranking needs. Returns { ok: true, videos, cursor, hasMore } only
+ * when code is 0 and data.videos is an array; items without a
+ * non-empty video_id are skipped (they cannot be ranked or deduped);
+ * a missing/invalid play_count becomes undefined and ranks as 0
+ * downstream. A non-zero code carries the code through so the
+ * caller can map it to a key outcome; every other shape is a
+ * lookup failure with a fixed-token reason (never provider text,
+ * never key material).
+ */
+function parseFeedPageBody(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, reason: 'tikwm_bad_response' };
+  }
+  if (body.code !== 0) {
+    return { ok: false, reason: 'tikwm_nonzero_code', code: body.code };
+  }
+  const data = body.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data) || !Array.isArray(data.videos)) {
+    return { ok: false, reason: 'tikwm_bad_response' };
+  }
+  const videos = [];
+  for (const item of data.videos) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const videoId = typeof item.video_id === 'string' ? item.video_id.trim() : '';
+    if (!videoId) continue;
+    const playCount =
+      typeof item.play_count === 'number' &&
+      Number.isFinite(item.play_count) &&
+      item.play_count >= 0
+        ? Math.floor(item.play_count)
+        : undefined;
+    videos.push({ video_id: videoId, play_count: playCount });
+  }
+  const cursor = typeof data.cursor === 'string' && data.cursor ? data.cursor : null;
+  return { ok: true, videos, cursor, hasMore: data.hasMore === true };
+}
+
+/** Map a non-zero paid-API code to a fixed-token reason + whether rotating to the next key can help. */
+function feedCodeOutcome(code) {
+  if (code === 10401) return { reason: 'tikwm_key_invalid', keyFailure: true };
+  if (code === 10429) return { reason: 'tikwm_rate_limited', keyFailure: true, throttle: true };
+  if (code === 10430) return { reason: 'tikwm_quota_exhausted', keyFailure: true };
+  return { reason: 'tikwm_feed_unavailable', keyFailure: false };
+}
+
+/**
+ * One /user/posts request with one key. Never throws: every failure
+ * is returned as { ok: false, reason } with a fixed token, and the
+ * raw detail is logged once, redacted. `fetchFn` is injectable for
+ * tests; production uses the global fetch, direct, no proxy.
+ */
+async function tryFeedPageWithKey(username, key, fetchFn, cursor) {
+  const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+  const url =
+    `${TIKWMAPI_BASE_URL}/user/posts?unique_id=${encodeURIComponent(username)}` +
+    `&count=${TIKWM_FEED_PAGE_SIZE}${cursorParam}`;
+  let res;
+  try {
+    res = await fetchFn(url, {
+      signal: AbortSignal.timeout(TIKWM_USER_INFO_TIMEOUT_MS),
+      headers: { Accept: 'application/json', 'x-tikwmapi-key': key },
+    });
+  } catch (err) {
+    const detail = redactTikwmKeys(err instanceof Error ? err.message : String(err), [key]);
+    return { ok: false, reason: 'tikwm_unreachable', keyFailure: true, detail };
+  }
+  if (!res.ok) {
+    return { ok: false, reason: `tikwm_http_${res.status}`, keyFailure: true };
+  }
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    return { ok: false, reason: 'tikwm_bad_response', keyFailure: false };
+  }
+  const parsed = parseFeedPageBody(body);
+  if (!parsed.ok) {
+    if (parsed.code !== undefined) {
+      return { ok: false, ...feedCodeOutcome(parsed.code) };
+    }
+    return { ok: false, reason: parsed.reason, keyFailure: false };
+  }
+  return { ok: true, videos: parsed.videos, cursor: parsed.cursor, hasMore: parsed.hasMore };
+}
+
+/**
+ * Fetch one /user/posts page with key rotation (same discipline as
+ * resolveSecUidWithTikwm: keys tried in rotated order starting from
+ * the round-robin start index, one request per key). Returns
+ * { ok: true, videos, cursor, hasMore } on the first success,
+ * otherwise { ok: false, reason } with the last failure's
+ * fixed-token reason. Never throws, never logs key material.
+ *
+ * @param {string} username
+ * @param {{ keys?: string[], fetchFn?: typeof fetch, cursor?: string | null, sleepFn?: (ms: number) => Promise<void> }} [options]
+ *   keys defaults to getTikwmScraperKeys(); fetchFn defaults to the
+ *   global fetch; cursor fetches page 2+; sleepFn defaults to a real
+ *   1s backoff after a 10429 throttle. All are injectable for tests.
+ */
+export async function fetchTikwmFeedPage(username, options = {}) {
+  const keys = options.keys ?? getTikwmScraperKeys();
+  const fetchFn = options.fetchFn ?? fetch;
+  const sleepFn =
+    options.sleepFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const logUser = logSafeUsername(username);
+  if (keys.length === 0) {
+    return { ok: false, reason: 'tikwm_no_keys_configured' };
+  }
+  const startIndex = tikwmKeyStartIndex++ % keys.length;
+  let lastReason = 'tikwm_no_keys_configured';
+  for (let i = 0; i < keys.length; i += 1) {
+    const keyIndex = (startIndex + i) % keys.length;
+    const result = await tryFeedPageWithKey(username, keys[keyIndex], fetchFn, options.cursor ?? null);
+    if (result.ok) {
+      return result;
+    }
+    lastReason = result.reason;
+    const detail = result.detail ? `: ${result.detail}` : '';
+    console.warn(
+      `⚠️ TikWM /user/posts failed for @${logUser} (key ${keyIndex + 1} of ${keys.length}): ${result.reason}${detail}`,
+    );
+    // A non-key failure (unknown user, malformed response) cannot
+    // be fixed by rotating: fail immediately, like the contracts
+    // rotation does.
+    if (!result.keyFailure) {
+      return { ok: false, reason: result.reason };
+    }
+    if (result.throttle) {
+      await sleepFn(TIKWM_FEED_THROTTLE_BACKOFF_MS);
+    }
+  }
+  return { ok: false, reason: lastReason };
+}
+
+/**
+ * Fetch the ranking feed: two /user/posts pages (30 + 30 via cursor)
+ * for up to 60 videos with view counts. Page 2 runs only when page 1
+ * reports hasMore with a cursor. A page-2 failure fails the whole
+ * feed — the caller falls back to discovery order instead of ranking
+ * a partial set. Videos are deduped by video_id across pages
+ * (first occurrence wins). Never throws.
+ *
+ * @param {string} username
+ * @param {{ keys?: string[], fetchFn?: typeof fetch, sleepFn?: (ms: number) => Promise<void> }} [options]
+ *   Same injection as fetchTikwmFeedPage.
+ */
+export async function fetchTikwmFeedVideos(username, options = {}) {
+  const first = await fetchTikwmFeedPage(username, options);
+  if (!first.ok) {
+    return first;
+  }
+  const videos = [...first.videos];
+  const seen = new Set(videos.map((video) => video.video_id));
+  let cursor = first.cursor;
+  let hasMore = first.hasMore;
+  for (let page = 2; page <= TIKWM_FEED_PAGE_COUNT && hasMore && cursor; page += 1) {
+    const next = await fetchTikwmFeedPage(username, { ...options, cursor });
+    if (!next.ok) {
+      return { ok: false, reason: next.reason };
+    }
+    for (const video of next.videos) {
+      if (!seen.has(video.video_id)) {
+        seen.add(video.video_id);
+        videos.push(video);
+      }
+    }
+    cursor = next.cursor;
+    hasMore = next.hasMore;
+  }
+  return { ok: true, videos };
+}

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   TIKWMAPI_BASE_URL,
+  fetchTikwmFeedPage,
+  fetchTikwmFeedVideos,
   getTikwmScraperKeys,
   logTikwmPrimaryStatus,
   parseTikwmScraperKeys,
@@ -297,4 +299,200 @@ test('logTikwmPrimaryStatus: keys configured logs the count, never a key value',
     if (saved === undefined) delete process.env.TIKWMAPI_KEYS_SCRAPER;
     else process.env.TIKWMAPI_KEYS_SCRAPER = saved;
   }
+});
+
+// --- TikWM /user/posts feed (spec 203 ranking) ---
+//
+// Two pages of 30 via cursor for up to 60 videos with view counts.
+// Same keys, same rotation discipline, same never-log-key-material
+// rule as the /user/info lookup.
+
+function feedVideo(videoId, playCount) {
+  const item = { video_id: videoId, play: 'https://example.invalid/no-wm.mp4' };
+  if (playCount !== undefined) item.play_count = playCount;
+  return item;
+}
+
+function feedPageBody(videos, cursor, hasMore) {
+  return {
+    code: 0,
+    msg: 'success',
+    data: { videos, cursor: cursor ?? undefined, hasMore: hasMore ?? false },
+  };
+}
+
+function feedPageCalls(calls) {
+  return calls.filter((call) => call.url.includes('/user/posts'));
+}
+
+test('fetchTikwmFeedPage: one page returns videos + cursor + hasMore, count=30, keyed, no cursor on page 1', async () => {
+  resetTikwmKeyRotationForTests();
+  const { fetchFn, calls } = stubFetch([
+    { status: 200, body: feedPageBody([feedVideo('v1', 100), feedVideo('v2', 50)], 'cursor-1', true) },
+  ]);
+  const result = await fetchTikwmFeedPage('courtroom62', {
+    keys: [FAKE_KEY_A],
+    fetchFn,
+  });
+  assert.deepEqual(result, {
+    ok: true,
+    videos: [
+      { video_id: 'v1', play_count: 100 },
+      { video_id: 'v2', play_count: 50 },
+    ],
+    cursor: 'cursor-1',
+    hasMore: true,
+  });
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].url.startsWith(`${TIKWMAPI_BASE_URL}/user/posts?unique_id=courtroom62&count=30`));
+  assert.ok(!calls[0].url.includes('cursor='));
+  assert.equal(calls[0].headers['x-tikwmapi-key'], FAKE_KEY_A);
+});
+
+test('fetchTikwmFeedPage: cursor is sent on page 2', async () => {
+  resetTikwmKeyRotationForTests();
+  const { fetchFn, calls } = stubFetch([
+    { status: 200, body: feedPageBody([feedVideo('v3', 7)], null, false) },
+  ]);
+  const result = await fetchTikwmFeedPage('courtroom62', {
+    keys: [FAKE_KEY_A],
+    fetchFn,
+    cursor: 'cursor-1',
+  });
+  assert.equal(result.ok, true);
+  assert.ok(calls[0].url.includes('cursor=cursor-1'));
+});
+
+test('fetchTikwmFeedVideos: two pages combine 60, deduped, stops when hasMore is false', async () => {
+  resetTikwmKeyRotationForTests();
+  const page1 = Array.from({ length: 30 }, (_, i) => feedVideo(`p1-${i}`, 1000 - i));
+  const page2 = [
+    ...Array.from({ length: 29 }, (_, i) => feedVideo(`p2-${i}`, 500 - i)),
+    feedVideo('p1-0', 9999), // duplicate of page 1: first occurrence wins
+  ];
+  const { fetchFn, calls } = stubFetch([
+    { status: 200, body: feedPageBody(page1, 'cursor-1', true) },
+    { status: 200, body: feedPageBody(page2, 'cursor-2', true) },
+  ]);
+  const result = await fetchTikwmFeedVideos('courtroom62', { keys: [FAKE_KEY_A], fetchFn });
+  assert.equal(result.ok, true);
+  assert.equal(result.videos.length, 59);
+  assert.equal(result.videos[0].video_id, 'p1-0');
+  assert.equal(result.videos[0].play_count, 1000);
+  assert.equal(feedPageCalls(calls).length, 2);
+  assert.ok(calls[1].url.includes('cursor=cursor-1'));
+});
+
+test('fetchTikwmFeedVideos: one page only when hasMore is false', async () => {
+  resetTikwmKeyRotationForTests();
+  const { fetchFn, calls } = stubFetch([
+    { status: 200, body: feedPageBody([feedVideo('v1', 10)], null, false) },
+  ]);
+  const result = await fetchTikwmFeedVideos('courtroom62', { keys: [FAKE_KEY_A], fetchFn });
+  assert.equal(result.ok, true);
+  assert.equal(result.videos.length, 1);
+  assert.equal(feedPageCalls(calls).length, 1);
+});
+
+test('fetchTikwmFeedVideos: page-2 failure fails the whole feed (no partial ranking)', async () => {
+  resetTikwmKeyRotationForTests();
+  const { fetchFn, calls } = stubFetch([
+    { status: 200, body: feedPageBody([feedVideo('v1', 10)], 'cursor-1', true) },
+    { status: 200, body: { code: 10430, msg: 'quota exhausted' } },
+  ]);
+  const result = await fetchTikwmFeedVideos('courtroom62', { keys: [FAKE_KEY_A], fetchFn });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'tikwm_quota_exhausted');
+  assert.equal(feedPageCalls(calls).length, 2);
+});
+
+test('fetchTikwmFeedPage: 10429 throttles to the next key with a backoff', async () => {
+  resetTikwmKeyRotationForTests();
+  const sleeps = [];
+  const sleepFn = async (ms) => {
+    sleeps.push(ms);
+  };
+  const { fetchFn, calls } = stubFetch([
+    { status: 200, body: { code: 10429, msg: 'slow down' } },
+    { status: 200, body: feedPageBody([feedVideo('v1', 10)], null, false) },
+  ]);
+  const result = await fetchTikwmFeedPage('courtroom62', {
+    keys: [FAKE_KEY_A, FAKE_KEY_B],
+    fetchFn,
+    sleepFn,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.videos.length, 1);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].headers['x-tikwmapi-key'], FAKE_KEY_A);
+  assert.equal(calls[1].headers['x-tikwmapi-key'], FAKE_KEY_B);
+  assert.deepEqual(sleeps, [1000]);
+});
+
+test('fetchTikwmFeedPage: 10430 moves to the next key and succeeds', async () => {
+  resetTikwmKeyRotationForTests();
+  const { fetchFn, calls } = stubFetch([
+    { status: 200, body: { code: 10430, msg: 'quota exhausted' } },
+    { status: 200, body: feedPageBody([feedVideo('v1', 10)], null, false) },
+  ]);
+  const result = await fetchTikwmFeedPage('courtroom62', {
+    keys: [FAKE_KEY_A, FAKE_KEY_B],
+    fetchFn,
+    sleepFn: async () => {},
+  });
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].headers['x-tikwmapi-key'], FAKE_KEY_B);
+});
+
+test('fetchTikwmFeedPage: unknown-user failure does NOT rotate (one key tried)', async () => {
+  resetTikwmKeyRotationForTests();
+  const { fetchFn, calls } = stubFetch([
+    { status: 200, body: { code: 10001, msg: 'user not found' } },
+  ]);
+  const result = await fetchTikwmFeedPage('ghost', {
+    keys: [FAKE_KEY_A, FAKE_KEY_B],
+    fetchFn,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'tikwm_feed_unavailable');
+  assert.equal(calls.length, 1);
+});
+
+test('fetchTikwmFeedPage: no keys fails without fetching', async () => {
+  const { fetchFn, calls } = stubFetch([]);
+  const result = await fetchTikwmFeedPage('courtroom62', { keys: [], fetchFn });
+  assert.deepEqual(result, { ok: false, reason: 'tikwm_no_keys_configured' });
+  assert.equal(calls.length, 0);
+});
+
+test('fetchTikwmFeedPage: missing play_count is kept as undefined; items without video_id are skipped', async () => {
+  resetTikwmKeyRotationForTests();
+  const { fetchFn } = stubFetch([
+    {
+      status: 200,
+      body: feedPageBody(
+        [feedVideo('v1'), { play: 'https://example.invalid/x.mp4' }, feedVideo('v2', 5)],
+        null,
+        false,
+      ),
+    },
+  ]);
+  const result = await fetchTikwmFeedPage('courtroom62', { keys: [FAKE_KEY_A], fetchFn });
+  assert.deepEqual(result.videos, [
+    { video_id: 'v1', play_count: undefined },
+    { video_id: 'v2', play_count: 5 },
+  ]);
+});
+
+test('fetchTikwmFeedPage: key value never appears in logs', async () => {
+  resetTikwmKeyRotationForTests();
+  const { fetchFn } = stubFetch([
+    new Error(`request timed out after 30000ms for key ${FAKE_KEY_A}`),
+  ]);
+  const { result, lines } = await withCapturedConsole(() =>
+    fetchTikwmFeedPage('courtroom62', { keys: [FAKE_KEY_A], fetchFn }),
+  );
+  assert.equal(result.ok, false);
+  assert.ok(lines.every((line) => !line.includes(FAKE_KEY_A)));
 });

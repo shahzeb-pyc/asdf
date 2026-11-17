@@ -3,7 +3,7 @@ import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { discoverReelIdsWithYtdlp } from './ytdlp.js';
+import { discoverReelIdsWithYtdlp, rankTikTokDiscoveryIds } from './ytdlp.js';
 
 // Dummy proxy value (TEST-NET addresses, not a real credential). The module
 // must never log it; the fake yt-dlp below records it only in its own argv
@@ -14,6 +14,34 @@ const FAKE_SECUID = 'MS4wLjABAAAA-FAKE-SECUID-VALUE-USED-ONLY-IN-THIS-TEST-01234
 const PROFILE_IDS = ['7675699705355177218', '7633716305220078871'];
 const DIRECT_IDS = ['7675699705355177219', '7633716305220078872'];
 const PROFILE_URL = 'https://www.tiktok.com/@courtroom62';
+
+// Spec 203: successful discovery returns ranked entries, not bare
+// string ids — { id, view_count }, view_count null when the view
+// count was never measured (discovery-order fallback / no feed).
+// These helpers build the expected entry shape from plain ids.
+function entriesOf(ids) {
+  return ids.map((id) => ({ id, view_count: null }));
+}
+
+function feedVideo(videoId, playCount) {
+  const item = { video_id: videoId, play: 'https://example.invalid/no-wm.mp4' };
+  if (playCount !== undefined) item.play_count = playCount;
+  return item;
+}
+
+function feedPageBody(videos, cursor, hasMore) {
+  return {
+    code: 0,
+    msg: 'success',
+    data: { videos, cursor: cursor ?? undefined, hasMore: hasMore ?? false },
+  };
+}
+
+// An empty feed page (no videos, no next page): the ranking is a
+// no-op and discovery order is preserved. Appended to the TikWM
+// queue in the paid-path tests below so the feed call the ranking
+// makes is answered explicitly instead of running the queue dry.
+const EMPTY_FEED = { status: 200, body: feedPageBody([], null, false) };
 
 // Fake yt-dlp binary (CommonJS: the file has no extension, so Node loads it
 // as CJS). It records every invocation's argv, then either fails or prints
@@ -212,7 +240,7 @@ test('profile attempt succeeds on the 3rd attempt after 2 failures — exactly 3
     const { result, lines } = await withCapturedConsole(() =>
       discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10),
     );
-    assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
+    assert.deepEqual(result, { ok: true, ids: entriesOf(PROFILE_IDS) });
 
     const invocations = readInvocations(logFile);
     assert.equal(invocations.length, 3);
@@ -254,7 +282,7 @@ test('without COUNTIK_PROXY_URL the profile attempt still runs, without --proxy'
   const { logFile, restore } = await setupFakeYtdlp({ mode: 'profile-ok', proxy: undefined });
   try {
     const result = await discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10);
-    assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
+    assert.deepEqual(result, { ok: true, ids: entriesOf(PROFILE_IDS) });
 
     const invocations = readInvocations(logFile);
     assert.equal(invocations.length, 1);
@@ -421,11 +449,11 @@ async function runFakeDiscovery({
 test('TikWM first: paid path succeeds → tiktokuser: runs first, zero profile attempts, exactly 1 invocation', async () => {
   const { logFile, restore, result, lines, calls } = await runFakeDiscovery({
     mode: 'fail-profile-direct-ok',
-    tikwmResponses: [{ status: 200, body: tikwmUserInfoBody() }],
+    tikwmResponses: [{ status: 200, body: tikwmUserInfoBody() }, EMPTY_FEED],
     tikwmKeys: [FAKE_TIKWM_KEY],
   });
   try {
-    assert.deepEqual(result, { ok: true, ids: DIRECT_IDS });
+    assert.deepEqual(result, { ok: true, ids: entriesOf(DIRECT_IDS) });
 
     // Exactly 1 yt-dlp invocation total, and it is the direct attempt.
     const invocations = readInvocations(logFile);
@@ -435,11 +463,15 @@ test('TikWM first: paid path succeeds → tiktokuser: runs first, zero profile a
     // old Countik path).
     assert.ok(!invocations[0].includes('--proxy'));
 
-    // Exactly one TikWM call, keyed, for the profile username — and it
-    // happened before any yt-dlp invocation (it is the first step).
-    assert.equal(calls.length, 1);
+    // Exactly one TikWM lookup, keyed, for the profile username — and
+    // it happened before any yt-dlp invocation (it is the first step).
+    // Plus the ranking feed call (spec 203): one empty page, so the
+    // ranking is a no-op and discovery order is preserved.
+    assert.equal(calls.length, 2);
     assert.ok(calls[0].url.includes('/user/info?unique_id=courtroom62'));
     assert.equal(calls[0].headers['x-tikwmapi-key'], FAKE_TIKWM_KEY);
+    assert.ok(calls[1].url.includes('/user/posts?unique_id=courtroom62'));
+    assert.equal(calls[1].headers['x-tikwmapi-key'], FAKE_TIKWM_KEY);
     assertTikwmKeyNeverLogged(lines);
     assertProxyValueNeverLogged(lines);
   } finally {
@@ -451,18 +483,18 @@ test('paid path fails at lookup → the 5 profile attempts run as backup', async
   const { logFile, restore, result, lines, calls } = await runFakeDiscovery({
     mode: 'fail-first-n',
     failFirst: 2,
-    tikwmResponses: [{ status: 200, body: { code: 10401, msg: 'invalid key' } }],
+    tikwmResponses: [{ status: 200, body: { code: 10401, msg: 'invalid key' } }, EMPTY_FEED],
     tikwmKeys: [FAKE_TIKWM_KEY],
   });
   try {
-    assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
+    assert.deepEqual(result, { ok: true, ids: entriesOf(PROFILE_IDS) });
 
     // No direct attempt (the lookup never resolved a secUid); the
     // backup ran and succeeded on its 3rd attempt.
     const invocations = readInvocations(logFile);
     assert.equal(invocations.length, 3);
     assert.ok(invocations.every((argv) => argv.at(-1) === PROFILE_URL));
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
     assert.ok(result.ok);
     assertTikwmKeyNeverLogged(lines);
   } finally {
@@ -473,18 +505,18 @@ test('paid path fails at lookup → the 5 profile attempts run as backup', async
 test('paid path fails at the direct attempt → the profile backup runs and recovers', async () => {
   const { logFile, restore, result, lines, calls } = await runFakeDiscovery({
     mode: 'fail-direct-profile-ok',
-    tikwmResponses: [{ status: 200, body: tikwmUserInfoBody() }],
+    tikwmResponses: [{ status: 200, body: tikwmUserInfoBody() }, EMPTY_FEED],
     tikwmKeys: [FAKE_TIKWM_KEY],
   });
   try {
-    assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
+    assert.deepEqual(result, { ok: true, ids: entriesOf(PROFILE_IDS) });
 
     // 1 direct attempt (failed) + 1 profile backup attempt (succeeded).
     const invocations = readInvocations(logFile);
     assert.equal(invocations.length, 2);
     assert.equal(invocations[0].at(-1), `tiktokuser:${FAKE_SECUID}`);
     assert.equal(invocations[1].at(-1), PROFILE_URL);
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
     assertTikwmKeyNeverLogged(lines);
   } finally {
     restore();
@@ -579,7 +611,7 @@ test('no TikWM keys configured → backup-only with a per-claim warning; TikWM n
     tikwmResponses: [{ status: 200, body: tikwmUserInfoBody() }],
   });
   try {
-    assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
+    assert.deepEqual(result, { ok: true, ids: entriesOf(PROFILE_IDS) });
     assert.ok(!result.reason, `backup success should carry no reason`);
     assert.equal(calls.length, 0);
     assert.equal(readInvocations(logFile).length, 1);
@@ -602,7 +634,7 @@ test('no TikWM keys configured → backup-only with a per-claim warning; TikWM n
 test('partial results: exit 1 with valid-IDs JSON on stdout → IDs returned, job succeeds', async () => {
   const { logFile, restore, result, lines } = await runFakeDiscovery({ mode: 'partial-ids' });
   try {
-    assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
+    assert.deepEqual(result, { ok: true, ids: entriesOf(PROFILE_IDS) });
     // Recovered on the FIRST backup attempt — no retries.
     assert.equal(readInvocations(logFile).length, 1);
     assert.ok(
@@ -618,13 +650,13 @@ test('partial results: exit 1 with valid-IDs JSON on stdout → IDs returned, jo
 test('partial results on the direct attempt: exit 1 with valid-IDs JSON → IDs returned, backup never runs', async () => {
   const { logFile, restore, result, calls } = await runFakeDiscovery({
     mode: 'partial-direct-only',
-    tikwmResponses: [{ status: 200, body: tikwmUserInfoBody() }],
+    tikwmResponses: [{ status: 200, body: tikwmUserInfoBody() }, EMPTY_FEED],
     tikwmKeys: [FAKE_TIKWM_KEY],
   });
   try {
-    assert.deepEqual(result, { ok: true, ids: DIRECT_IDS });
+    assert.deepEqual(result, { ok: true, ids: entriesOf(DIRECT_IDS) });
     assert.equal(readInvocations(logFile).length, 1);
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
   } finally {
     restore();
   }
@@ -648,6 +680,161 @@ test('partial results: exit 1 with unparseable stdout → failure, existing reas
     assert.equal(result.ok, false);
     assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
     assert.equal(readInvocations(logFile).length, 5);
+  } finally {
+    restore();
+  }
+});
+
+// --- TikTok view ranking (spec 203) ---
+//
+// The 60 newest feed videos are sorted by views and put first
+// (ranks 1-60); the rest of the discovery list follows in
+// discovery order. Feed-only ids still rank. Feed failure falls
+// back to discovery order with a loud log and the sync succeeds.
+
+function discoveryList(n, prefix = 'd') {
+  return Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+}
+
+test('rankTikTokDiscoveryIds: 60 feed videos sort by views, top 30 first', () => {
+  const discoveryIds = discoveryList(100);
+  const feedVideos = Array.from({ length: 60 }, (_, i) => ({
+    video_id: discoveryIds[i],
+    // Deliberately unordered: video i has (59 - i) * 100 views, so
+    // the first feed video is the most viewed and the last the least.
+    play_count: (59 - i) * 100,
+  }));
+  const { entries } = rankTikTokDiscoveryIds(discoveryIds, feedVideos, 100);
+  assert.equal(entries.length, 100);
+  // Rank 1 is the most-viewed feed video; ranks 1-60 are the feed
+  // videos in view order; rank 61 is the first non-feed discovery id.
+  assert.equal(entries[0].id, discoveryIds[0]);
+  assert.equal(entries[0].view_count, 5900);
+  assert.equal(entries[59].id, discoveryIds[59]);
+  assert.equal(entries[59].view_count, 0);
+  assert.equal(entries[60].id, discoveryIds[60]);
+  assert.equal(entries[60].view_count, null);
+  // No duplicates anywhere.
+  assert.equal(new Set(entries.map((entry) => entry.id)).size, entries.length);
+});
+
+test('rankTikTokDiscoveryIds: feed ids are deduped out of the 1000-list (total stays 1000)', () => {
+  const discoveryIds = discoveryList(1000);
+  const feedVideos = Array.from({ length: 60 }, (_, i) => ({
+    video_id: discoveryIds[i * 10],
+    play_count: 1000 - i,
+  }));
+  const { entries } = rankTikTokDiscoveryIds(discoveryIds, feedVideos, 1000);
+  assert.equal(entries.length, 1000);
+  assert.equal(new Set(entries.map((entry) => entry.id)).size, 1000);
+  assert.deepEqual(
+    entries.slice(0, 60).map((entry) => entry.id),
+    feedVideos.map((video) => video.video_id),
+  );
+  assert.deepEqual(
+    entries.slice(60).map((entry) => entry.id),
+    discoveryIds.filter((id) => !feedVideos.some((video) => video.video_id === id)),
+  );
+});
+
+test('rankTikTokDiscoveryIds: missing play_count counts as 0 and sorts last among feed videos', () => {
+  const discoveryIds = ['a', 'b', 'c'];
+  const feedVideos = [
+    { video_id: 'a', play_count: undefined },
+    { video_id: 'b', play_count: 5 },
+    { video_id: 'c', play_count: undefined },
+  ];
+  const { entries, missingPlayCount } = rankTikTokDiscoveryIds(discoveryIds, feedVideos, 3);
+  assert.equal(missingPlayCount, 2);
+  assert.deepEqual(
+    entries.map((entry) => entry.id),
+    ['b', 'a', 'c'],
+  );
+  // Ties at 0 views keep feed (newest-first) order.
+  assert.equal(entries[1].view_count, 0);
+  assert.equal(entries[2].view_count, 0);
+});
+
+test('rankTikTokDiscoveryIds: feed-only ids rank too, and the total is capped at maxCount', () => {
+  const discoveryIds = discoveryList(1000);
+  const feedVideos = Array.from({ length: 5 }, (_, i) => ({
+    video_id: `feed-only-${i}`,
+    play_count: 9000 - i,
+  }));
+  const { entries, feedOnlyCount } = rankTikTokDiscoveryIds(discoveryIds, feedVideos, 1000);
+  assert.equal(feedOnlyCount, 5);
+  assert.equal(entries.length, 1000);
+  assert.deepEqual(
+    entries.slice(0, 5).map((entry) => entry.id),
+    feedVideos.map((video) => video.video_id),
+  );
+  // The tail of the discovery list is dropped to keep the total at
+  // 1000, and nothing appears twice.
+  assert.equal(new Set(entries.map((entry) => entry.id)).size, 1000);
+  assert.equal(entries[999].id, discoveryIds[994]);
+});
+
+test('TikTok view ranking end-to-end: feed views reorder the discovery result', async () => {
+  const { logFile, restore, result, calls } = await runFakeDiscovery({
+    mode: 'fail-profile-direct-ok',
+    tikwmResponses: [
+      { status: 200, body: tikwmUserInfoBody() },
+      {
+        status: 200,
+        body: feedPageBody(
+          [
+            feedVideo(DIRECT_IDS[0], 100),
+            feedVideo(DIRECT_IDS[1], 9999),
+          ],
+          'cursor-1',
+          true,
+        ),
+      },
+      { status: 200, body: feedPageBody([], null, false) },
+    ],
+    tikwmKeys: [FAKE_TIKWM_KEY],
+  });
+  try {
+    // The lower-viewed discovery id is ranked below the higher-viewed
+    // one, even though it was discovered first (newest first).
+    assert.deepEqual(result, {
+      ok: true,
+      ids: [
+        { id: DIRECT_IDS[1], view_count: 9999 },
+        { id: DIRECT_IDS[0], view_count: 100 },
+      ],
+    });
+    assert.equal(readInvocations(logFile).length, 1);
+    // lookup + 2 feed pages.
+    assert.equal(calls.length, 3);
+    assert.ok(calls[1].url.includes('/user/posts'));
+    assert.ok(calls[2].url.includes('cursor=cursor-1'));
+  } finally {
+    restore();
+  }
+});
+
+test('TikTok view ranking fallback: feed failure keeps discovery order, logs loudly, sync still succeeds', async () => {
+  const { logFile, restore, result, lines, calls } = await runFakeDiscovery({
+    mode: 'fail-profile-direct-ok',
+    tikwmResponses: [
+      { status: 200, body: tikwmUserInfoBody() },
+      { status: 200, body: { code: 10430, msg: 'quota exhausted' } },
+    ],
+    tikwmKeys: [FAKE_TIKWM_KEY],
+  });
+  try {
+    assert.deepEqual(result, { ok: true, ids: entriesOf(DIRECT_IDS) });
+    assert.equal(readInvocations(logFile).length, 1);
+    assert.equal(calls.length, 2);
+    assert.ok(
+      lines.some(
+        (line) =>
+          line.includes('TikTok view ranking unavailable') &&
+          line.includes('falling back to discovery order') &&
+          line.includes('tikwm_quota_exhausted'),
+      ),
+    );
   } finally {
     restore();
   }
