@@ -546,6 +546,9 @@ describe('buildAduConfigView hub view (adu-opt-a F7)', () => {
     'destinationPlatform',
     'accountAvatarUrl',
     'destinationStatus',
+    // Spec 204: the detail marker rides the full view only — the hub
+    // omits it (the derived displayStatus carries the label there).
+    'destinationFbStatus',
   ] as const;
 
   it('omits exactly the fields the hub card never renders, keeping the rest identical', async () => {
@@ -565,6 +568,22 @@ describe('buildAduConfigView hub view (adu-opt-a F7)', () => {
     expect(hub.failedCount).toBe(2);
     expect(hub.postedCount).toBe(1);
     expect(hub.accountName).toBe('Test Account');
+  });
+
+  it('spec 204: the full view exposes the destination fb_status marker, the hub view omits it', async () => {
+    const db = makeFakeSupabase(counts, 'facebook', undefined, undefined, {
+      metadata: { fb_status: 'checkpoint' },
+    });
+    const full = await buildAduConfigView(db, configRow());
+    expect(full.destinationFbStatus).toBe('checkpoint');
+    const hub = await buildAduConfigView(db, configRow(), { hub: true });
+    expect(hub).not.toHaveProperty('destinationFbStatus');
+  });
+
+  it('spec 204: a destination with no marker exposes null on the full view', async () => {
+    const db = makeFakeSupabase(counts);
+    const full = await buildAduConfigView(db, configRow());
+    expect(full.destinationFbStatus).toBeNull();
   });
 
   it('trims the hub destination select: no handle, account display name only', async () => {
