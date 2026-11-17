@@ -34,6 +34,8 @@ import { PlatformCredentialsView } from '@/components/settings/platform/platform
 import { PlatformSetupCard } from '@/components/settings/platform/platform-setup-card';
 import { getPlatformCallbackUrls } from '@/lib/platforms/callback-urls';
 import { buildPrivacyPolicyUrl } from '@/lib/privacy-url';
+import { useBrand } from '@/components/brand';
+import { getBrandTenantRoot } from '@fbuploadpro/contracts';
 
 export const THREADS_CREDENTIALS_CONFIG = {
   platform: 'threads',
@@ -50,13 +52,20 @@ export interface ThreadsSettingsViewProps {
 }
 
 export function ThreadsSettingsView({ subdomain }: Readonly<ThreadsSettingsViewProps>) {
+  // Spec 205: the privacy URL must use the brand's own root — see the
+  // Facebook view for why. The brand comes from the root layout
+  // (resolved from the request host); no brand is hardcoded here.
+  const brandRoot = getBrandTenantRoot(
+    useBrand(),
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com'
+  );
   const urls = getPlatformCallbackUrls('threads');
 
   return (
     <PlatformCredentialsView
       subdomain={subdomain}
       config={THREADS_CREDENTIALS_CONFIG}
-      privacyUrl={buildPrivacyPolicyUrl(subdomain)}
+      privacyUrl={buildPrivacyPolicyUrl(subdomain, brandRoot)}
       setupCard={
         <PlatformSetupCard
           bare

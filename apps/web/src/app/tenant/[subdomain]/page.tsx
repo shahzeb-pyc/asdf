@@ -22,6 +22,7 @@ import {
 } from '@/components/home/home-sections';
 import { buildTenantHref, shouldUseCleanTenantPaths } from '@/lib/tenant-href';
 import { buildBrandWhatsAppSupportUrl, getRequestBrandFromHost } from '@/lib/brand';
+import { getBrandTenantRoot, resolveBrandFromHost } from '@fbuploadpro/contracts';
 
 import { getWorkspaceDisplayName } from './workspace-display-name';
 
@@ -70,7 +71,15 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
     // Outside a request scope (tests, static generation): fall back to prefixed URLs.
     hostHeader = null;
   }
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com';
+  // Spec 205: the root must be brand-aware, as the layout computes
+  // it (layout.tsx). The old NEXT_PUBLIC_ROOT_DOMAIN default made
+  // shouldUseCleanTenantPaths return false on a white-label host, so
+  // Home's quick links rendered prefixed /tenant/<sub>/... paths
+  // while the sidebar used clean paths.
+  const rootDomain = getBrandTenantRoot(
+    resolveBrandFromHost(hostHeader),
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com'
+  );
   const useCleanPaths = shouldUseCleanTenantPaths(hostHeader, subdomain, rootDomain);
   const brand = getRequestBrandFromHost(hostHeader);
   // Spec 191 (Home buttons fix): on the white-label brand there is
