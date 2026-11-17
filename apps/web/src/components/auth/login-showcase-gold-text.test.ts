@@ -7,9 +7,9 @@ import { fileURLToPath } from 'node:url';
  * Spec 200 guard — auth gold text contrast.
  *
  * The login showcase panel rendered gold text (`text-primary`,
- * `--color-brand-gold` #FFFC00) on the light canvas (#fafaf9) at
+ * the `--color-brand-gold` token) on the light canvas token at
  * 1.05:1 contrast — effectively invisible. The fix is theme-aware
- * and token-backed only: bronze (`text-brand-bronze`, #716400) on
+ * and token-backed only: bronze (`text-brand-bronze`) on
  * light theme, bright gold (`dark:text-primary`) on dark theme.
  * A flat swap would be wrong — bronze on the dark canvas is only
  * 3.32:1 — so the dark variant must stay.
@@ -18,7 +18,9 @@ import { fileURLToPath } from 'node:url';
  * bare `text-primary` class fails loudly in CI instead of silently
  * re-invisibling the showcase. No hex literals, no arbitrary values,
  * no new tokens: the classes below are existing design-system
- * utilities (see the repo theme rules — literal ban).
+ * utilities (see the repo theme rules — literal ban). Token values
+ * are read from the generated CSS at runtime, never written here,
+ * so this file itself stays literal-free.
  */
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (relative: string) => readFileSync(join(HERE, relative), 'utf8');
