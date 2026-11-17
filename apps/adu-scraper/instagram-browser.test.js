@@ -85,6 +85,68 @@ describe('parseInstagramProxyPool (single proxy: first entry only)', () => {
   });
 });
 
+describe('parseInstagramProxyPool — URL form (the pool\'s real format)', () => {
+  const URL_FIRST = { host: 'proxy-a.example.com', port: 10001, username: 'alice', password: 's3cret-one' };
+  const URL_POOL = 'http://alice:s3cret-one@proxy-a.example.com:10001,http://bob:s3cret-two@proxy-b.example.com:10002';
+
+  it('parses http://user:pass@host:port to the same proxy shape as the bare form', () => {
+    assert.deepEqual(parseInstagramProxyPool(URL_POOL), { ok: true, proxy: URL_FIRST });
+  });
+
+  it('parses a single URL-form entry', () => {
+    assert.deepEqual(
+      parseInstagramProxyPool('http://alice:s3cret-one@proxy-a.example.com:10001'),
+      { ok: true, proxy: URL_FIRST },
+    );
+  });
+
+  it('parses https:// the same way', () => {
+    assert.deepEqual(
+      parseInstagramProxyPool('https://alice:s3cret-one@proxy-a.example.com:10001'),
+      { ok: true, proxy: URL_FIRST },
+    );
+  });
+
+  it('keeps a password containing a colon intact in URL form', () => {
+    const parsed = parseInstagramProxyPool('http://alice:s3cret:with:colons@proxy-a.example.com:10001');
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.proxy.password, 's3cret:with:colons');
+  });
+
+  it('does not fall back to a later entry when the first URL entry is malformed', () => {
+    const parsed = parseInstagramProxyPool('http://alice@proxy-a.example.com:10001,http://bob:s3cret-two@proxy-b.example.com:10002');
+    assert.equal(parsed.ok, false);
+  });
+
+  it('ignores a malformed second entry when the first URL entry is good', () => {
+    const parsed = parseInstagramProxyPool('http://alice:s3cret-one@proxy-a.example.com:10001,not-a-proxy');
+    assert.deepEqual(parsed, { ok: true, proxy: URL_FIRST });
+  });
+
+  it('fails loud when the URL first entry is malformed', () => {
+    assert.equal(parseInstagramProxyPool('http://alice@proxy-a.example.com:10001').ok, false);
+    assert.equal(parseInstagramProxyPool('http://:s3cret-one@proxy-a.example.com:10001').ok, false);
+    assert.equal(parseInstagramProxyPool('http://alice:s3cret-one@:10001').ok, false);
+    assert.equal(parseInstagramProxyPool('http://alice:s3cret-one@proxy-a.example.com:notaport').ok, false);
+    assert.equal(parseInstagramProxyPool('http://alice:s3cret-one@proxy-a.example.com:99999').ok, false);
+  });
+
+  it('names both accepted forms in the malformed-entry reason', () => {
+    const parsed = parseInstagramProxyPool('not-a-proxy');
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.reason, /http:\/\/user:pass@host:port/);
+    assert.match(parsed.reason, /host:port:user:pass/);
+  });
+
+  it('never puts the raw pool value in the failure reason (URL form carries credentials too)', () => {
+    const bad = parseInstagramProxyPool('http://alice:s3cret-one@proxy-a.example.com:notaport');
+    assert.equal(bad.ok, false);
+    assert.equal(bad.reason.includes('alice'), false);
+    assert.equal(bad.reason.includes('s3cret-one'), false);
+    assert.equal(bad.reason.includes('proxy-a.example.com'), false);
+  });
+});
+
 describe('buildInstagramLaunchOptions', () => {
   it('puts the single proxy on --proxy-server and the IG profile dir on userDataDir', () => {
     const options = buildInstagramLaunchOptions({ userDataDir: '.browser-profile-ig', proxy: FIRST });

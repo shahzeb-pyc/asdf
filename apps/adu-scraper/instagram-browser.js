@@ -21,8 +21,10 @@ export const INSTAGRAM_RETRY_BACKOFF_MS = 5000;
 export const INSTAGRAM_MAX_JOBS_PER_SESSION = 500;
 export const INSTAGRAM_DEFAULT_USER_DATA_DIR = '.browser-profile-ig';
 
-// Parse the INSTAGRAM_PROXIES pool (comma-separated
-// `host:port:user:pass` entries) and return ONLY the first entry —
+// Parse the INSTAGRAM_PROXIES pool (comma-separated entries in
+// either `http://user:pass@host:port` URL form — the pool's real
+// format, canonical with the downloader — or bare
+// `host:port:user:pass` form) and return ONLY the first entry —
 // the single proxy Instagram ever uses. A missing, empty, or
 // malformed first entry is a loud failure ({ ok: false, reason }),
 // never a silent pick of another entry. The reason never contains
@@ -42,17 +44,53 @@ export function parseInstagramProxyPool(raw) {
   if (!first) {
     return { ok: false, reason: 'INSTAGRAM_PROXIES has no usable entry (empty pool)' };
   }
-  const parts = first.split(':');
+  const parsed = /^https?:\/\//i.test(first) ? parseInstagramProxyUrl(first) : parseInstagramProxyBare(first);
+  if (!parsed) {
+    return {
+      ok: false,
+      reason: 'INSTAGRAM_PROXIES first entry is malformed — expected http://user:pass@host:port or host:port:user:pass',
+    };
+  }
+  return { ok: true, proxy: parsed };
+}
+
+// URL form: http(s)://user:pass@host:port. Returns the parsed proxy
+// or null when malformed. Percent-encoded credentials are decoded;
+// a missing port means the scheme's default (80 / 443).
+function parseInstagramProxyUrl(entry) {
+  let url;
+  try {
+    url = new URL(entry);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  let username;
+  let password;
+  try {
+    username = decodeURIComponent(url.username);
+    password = decodeURIComponent(url.password);
+  } catch {
+    return null;
+  }
+  const port = Number(url.port || (url.protocol === 'https:' ? '443' : '80'));
+  if (!url.hostname || !username || !password || !Number.isInteger(port) || port < 1 || port > 65535) {
+    return null;
+  }
+  return { host: url.hostname, port, username, password };
+}
+
+// Bare form: host:port:user:pass (password may contain colons).
+// Returns the parsed proxy or null when malformed.
+function parseInstagramProxyBare(entry) {
+  const parts = entry.split(':');
   const [host, portRaw, username, ...passwordParts] = parts;
   const password = passwordParts.join(':');
   const port = Number(portRaw);
   if (!host || !portRaw || !username || !password || !Number.isInteger(port) || port < 1 || port > 65535) {
-    return {
-      ok: false,
-      reason: 'INSTAGRAM_PROXIES first entry is malformed — expected host:port:user:pass',
-    };
+    return null;
   }
-  return { ok: true, proxy: { host, port, username, password } };
+  return { host, port, username, password };
 }
 
 // The --proxy-server value for a parsed proxy. Credentials never go
