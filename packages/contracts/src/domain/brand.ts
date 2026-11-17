@@ -18,9 +18,9 @@ export const NEXTRISE_APP_HOST = 'app.sajidaliai.online';
 /** Tenant-host suffix of the white-label brand: `<workspace>.app.sajidaliai.online`. */
 export const NEXTRISE_TENANT_ROOT = 'app.sajidaliai.online';
 /** Support number shown on the white-label brand. */
-export const NEXTRISE_WHATSAPP_NUMBER = '0342-9469500';
+export const NEXTRISE_WHATSAPP_NUMBER = '0308-1311411';
 /** The same number in international form, for the wa.me link. */
-export const NEXTRISE_WHATSAPP_INTERNATIONAL = '923429469500';
+export const NEXTRISE_WHATSAPP_INTERNATIONAL = '923081311411';
 /** Display name of the white-label brand. */
 export const NEXTRISE_DISPLAY_NAME = 'NextRise Digital';
 /** Short name used in the sidebar wordmark and aria labels. */
@@ -125,8 +125,8 @@ export const NEXTRISE_BRAND_CONFIG: BrandConfig = {
   displayName: NEXTRISE_DISPLAY_NAME,
   shortName: NEXTRISE_SHORT_NAME,
   logoPath: NEXTRISE_LOGO_PATH,
-  // wa.me needs the international form (923429469500), not the display
-  // form 0342-9469500 — the trunk 0 is not diallable via wa.me.
+  // wa.me needs the international form (923081311411), not the display
+  // form 0308-1311411 — the trunk 0 is not diallable via wa.me.
   whatsappNumber: NEXTRISE_WHATSAPP_INTERNATIONAL,
   whatsappMessage: 'Hi! I need assistance with my NextRise account.',
   ...getBrandFlags('nextrise'),

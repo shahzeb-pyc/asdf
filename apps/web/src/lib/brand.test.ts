@@ -13,7 +13,7 @@ import { buildBrandWhatsAppSupportUrl } from './brand';
 describe('buildBrandWhatsAppSupportUrl', () => {
   it('returns the NextRise support link on the white-label brand', () => {
     expect(buildBrandWhatsAppSupportUrl('nextrise')).toBe(
-      'https://wa.me/923429469500?text=Hi!%20I%20need%20assistance%20with%20my%20NextRise%20account.'
+      'https://wa.me/923081311411?text=Hi!%20I%20need%20assistance%20with%20my%20NextRise%20account.'
     );
   });
 });
