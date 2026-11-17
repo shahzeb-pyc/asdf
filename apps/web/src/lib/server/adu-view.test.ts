@@ -89,6 +89,7 @@ function makeFakeSupabase(
     name: string,
     params: { p_workspace_id: string; p_config_ids: string[] },
   ) => { data: unknown; error: { code?: string; message?: string } | null },
+  destinationOverride?: Partial<Row>,
 ) {
   const calls: Array<{ table: string; ops: Op[] }> = [];
   const destination: Row = {
@@ -100,7 +101,9 @@ function makeFakeSupabase(
     account_id: 'acc-1',
     handle: null,
     platform: destinationPlatform,
+    metadata: null,
     social_accounts: { display_name: 'Test Account', avatar_url: null },
+    ...destinationOverride,
   };
   const resolveCounts = (configId: string): CountSetup =>
     perConfig?.[configId] ?? counts;
@@ -619,5 +622,74 @@ describe('buildAduConfigView follower last-updated (spec 162)', () => {
     const db = makeFakeSupabase(zeroCounts, 'facebook');
     const view = await buildAduConfigView(db, configRow());
     expect(view.followersUpdatedAt).toBeNull();
+  });
+});
+
+describe('buildAduConfigViews displayStatus reads the page, not the setup (spec 201)', () => {
+  const zeroCounts: CountSetup = {
+    pipeline: 0,
+    published: 0,
+    failed: 0,
+    failedInPipeline: 0,
+    publishedToday: 0,
+    failedToday: 0,
+  };
+
+  async function hubDisplayStatus(
+    config: AduConfigRow,
+    destinationOverride?: Partial<Row>,
+  ): Promise<string> {
+    const db = makeFakeSupabase(
+      zeroCounts,
+      'facebook',
+      undefined,
+      undefined,
+      destinationOverride,
+    );
+    const [view] = await buildAduConfigViews(db, [config], { hub: true });
+    return view.displayStatus;
+  }
+
+  it('error destination + active config never renders Active posting', async () => {
+    // The beekainternational bug: destinations in error since the
+    // 9 Nov identity checkpoint, configs still active.
+    const label = await hubDisplayStatus(configRow(), { status: 'error' });
+    expect(label).toBe('Error');
+    expect(label).not.toBe('Active posting');
+  });
+
+  it('error destination with a checkpoint marker renders Verification required', async () => {
+    const label = await hubDisplayStatus(configRow(), {
+      status: 'error',
+      metadata: { fb_status: 'checkpoint' },
+    });
+    expect(label).toBe('Verification required');
+  });
+
+  it('active destination keeps the config label (paused, completed, active)', async () => {
+    expect(await hubDisplayStatus(configRow())).toBe('Active posting');
+    expect(
+      await hubDisplayStatus({ ...configRow(), status: 'paused' }),
+    ).toBe('Paused');
+    expect(
+      await hubDisplayStatus({ ...configRow(), status: 'completed' }),
+    ).toBe('All reels posted');
+  });
+
+  it('rate-limited and disconnected destinations render their own label', async () => {
+    expect(
+      await hubDisplayStatus(configRow(), { status: 'rate_limited' }),
+    ).toBe('Rate limited');
+    expect(
+      await hubDisplayStatus(configRow(), { status: 'disconnected' }),
+    ).toBe('Disconnected');
+  });
+
+  it('a failed scrape still shows the setup status', async () => {
+    const label = await hubDisplayStatus(
+      { ...configRow(), sync_status: 'error' },
+      { status: 'error' },
+    );
+    expect(label).toBe('Source not found');
   });
 });

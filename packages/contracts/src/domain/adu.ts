@@ -137,19 +137,71 @@ export const ADU_SYNC_STATUS_LABELS: Record<AduSyncStatus, string> = {
 };
 
 /**
- * Badge precedence from the old app: a sync state overrides the page
- * status until the source has synced. Only then does page status show.
+ * Hub/detail badge (spec 201, owner rule 2026-11-17): the setup
+ * (source) status shows ONLY when the source failed to scrape
+ * (`sync_status === 'error'`); otherwise the card shows the page
+ * (destination) status directly. This replaces the old app's
+ * precedence — a sync state overriding the page status until the
+ * source synced. A page in error must never read as `Active posting`
+ * because its config is still active (verified live 2026-11-17:
+ * beekainternational destinations in `error` since the 9 Nov
+ * identity checkpoint, configs still `active` after reactivation).
+ *
+ * The destination is the `destinations` row the config points at:
+ * `status` is its coarse status (`active` / `error` /
+ * `rate_limited` / `disconnected`), `fbStatus` is its
+ * `metadata.fb_status` detail marker (spec 155; the ADU tick does
+ * not write it on publish failure, so ADU error destinations
+ * usually carry none and read as generic `Error`). An active
+ * destination falls through to the config status, which carries the
+ * states the destination cannot express (`paused`, `completed`).
+ * Unknown or missing destination data never reads as healthy.
  */
 export function aduDisplayStatus(
   status: AduConfigStatus,
-  syncStatus: AduSyncStatus
+  syncStatus: AduSyncStatus,
+  destination?: { status: string; fbStatus?: string | null } | null,
 ): string {
   if (syncStatus === 'error') return 'Source not found';
-  if (syncStatus === 'quota_parked') return 'Waiting for YouTube limit reset';
-  if (syncStatus === 'processing') return 'Scraping reels';
-  if (syncStatus === 'pending' || syncStatus === 'browser_pending')
-    return 'Scrape pending';
-  return ADU_PAGE_STATUS_LABELS[status];
+  if (!destination || destination.status === 'active') {
+    return ADU_PAGE_STATUS_LABELS[status];
+  }
+  if (destination.status === 'rate_limited') {
+    return ADU_PAGE_STATUS_LABELS.fb_rate_limited;
+  }
+  if (destination.status === 'disconnected') return 'Disconnected';
+  if (destination.status === 'error') {
+    const pageStatus = destinationFbStatusToAduStatus(destination.fbStatus);
+    return pageStatus ? ADU_PAGE_STATUS_LABELS[pageStatus] : 'Error';
+  }
+  return 'Error';
+}
+
+/**
+ * A destination `metadata.fb_status` marker (spec 155 spellings) to
+ * the ADU config status whose label it displays as. `checkpoint`
+ * is the stored spelling of the ADU `fb_verification_required`.
+ * Unknown markers (including `paused`, which only ever rides a
+ * `disconnected` row) map to null: the caller reads generic `Error`
+ * rather than asserting a cause the record does not state.
+ */
+function destinationFbStatusToAduStatus(
+  fbStatus: string | null | undefined,
+): AduConfigStatus | null {
+  switch (fbStatus) {
+    case 'checkpoint':
+      return 'fb_verification_required';
+    case 'invalid_token':
+    case 'page_not_accessible':
+    case 'missing_page_access':
+    case 'missing_permission':
+    case 'check_developer_app':
+    case 'account_suspended':
+    case '2fa_required_on_BM':
+      return fbStatus;
+    default:
+      return null;
+  }
 }
 
 /** Plain-language alert per status, in the old wording. No alert when active. */

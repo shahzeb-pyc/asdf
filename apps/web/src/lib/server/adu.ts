@@ -700,6 +700,9 @@ interface DestinationJoin {
   account_id: string;
   handle: string | null;
   platform: string | null;
+  /** Selected only to derive `displayStatus` from the destination
+   * (spec 201): `metadata.fb_status` is the error-detail marker. */
+  metadata: Record<string, unknown> | null;
   social_accounts?: { display_name: string; avatar_url: string | null } | null;
 }
 
@@ -753,7 +756,9 @@ export async function loadAduConfigView(
  * `alert`, `displayName`, `updatedAt`, `destinationHandle`,
  * `destinationPlatform`, `accountAvatarUrl` or `destinationStatus`
  * (verified against `AduPageCard` + the list code in
- * `adu-hub-page.tsx`, the list route's only consumer). The detail
+ * `adu-hub-page.tsx`, the list route's only consumer). `metadata`
+ * is selected only to derive `displayStatus` from the destination
+ * (spec 201) and is never exposed in the hub view. The detail
  * page, the Instagram hub and Threads detail keep the full shape;
  * only the Facebook list GET builds hub views.
  */
@@ -984,7 +989,16 @@ function viewFromParts(
     postingTimes: config.posting_times ?? [],
     status: config.status,
     syncStatus: config.sync_status,
-    displayStatus: aduDisplayStatus(config.status, config.sync_status),
+    // Spec 201: the badge reads the destination (page) status, not
+    // the config (setup) status — except on a failed scrape, when
+    // the setup status shows. A missing destination row keeps
+    // today's fallback (the config status), same as the old
+    // `destinationStatus: dest?.status ?? 'active'` default.
+    displayStatus: aduDisplayStatus(config.status, config.sync_status, {
+      status: dest?.status ?? 'active',
+      fbStatus:
+        typeof dest?.metadata?.fb_status === 'string' ? dest.metadata.fb_status : null,
+    }),
     // Alert wording follows the destination platform: the Facebook
     // alert names Facebook Accounts / Business Manager, which would
     // leak the wrong platform into the Instagram and Threads sections.
@@ -1076,8 +1090,8 @@ export async function buildAduConfigViews(
       .from('destinations')
       .select(
         hub
-          ? 'id, name, external_destination_id, avatar_url, status, account_id, platform, social_accounts(display_name)'
-          : 'id, name, external_destination_id, avatar_url, status, account_id, handle, platform, social_accounts(display_name, avatar_url)',
+          ? 'id, name, external_destination_id, avatar_url, status, account_id, platform, metadata, social_accounts(display_name)'
+          : 'id, name, external_destination_id, avatar_url, status, account_id, handle, platform, metadata, social_accounts(display_name, avatar_url)',
       )
       .in('id', destinationIds)
       .eq('section', 'adu'),
@@ -1181,5 +1195,8 @@ export function sanitizeAduSource(
 // action is re-queueing a config (sync_status -> 'pending') for the
 // scraper service to claim on its next loop; the downloader claims
 // pending reels itself. If the VPS services are not running, a
-// config stays 'pending' and the UI shows "Scrape pending" — loud,
-// never a fake success.
+// config stays 'pending' and no new reels arrive; the card shows
+// the destination status (spec 201), so a dead scraper no longer
+// surfaces on the card — the pending count staying at zero is the
+// only visible signal there, while the detail page still banners
+// scraping progress from the sync state itself.
