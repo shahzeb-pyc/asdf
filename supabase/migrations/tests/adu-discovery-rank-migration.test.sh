@@ -2,19 +2,23 @@
 # Live migration test for the TikTok top-30 / newest-first claim order
 # (spec 203): adu_reels gains discovery_rank + view_count, and both
 # live claim RPCs (TikTok + non-TikTok) pick
-#   ORDER BY discovery_rank ASC NULLS LAST, created_at DESC, id ASC
+#   ORDER BY created_at DESC, discovery_rank ASC NULLS LAST, id ASC
 # instead of the old `ORDER BY r.id ASC` (random UUID = arbitrary).
+# created_at separates runs (newest sync first); rank orders inside
+# each run. A cross-run case (two runs' rows interleaved in the
+# table) asserts the new run's ranks 1..N are claimed before the
+# old run's ranks 1..N — rank-first order would interleave them.
 #
 # Spins up throwaway PostgreSQL 16 clusters as the `postgres` system
 # user (postgres refuses to run as root), seeds minimal adu_configs /
 # adu_reels tables plus the OLD split claim definitions, applies the
 # forward migration, asserts the columns + index + grants + claim
-# order (ranked before unranked, newest first among unranked, for
-# BOTH claims), applies the reverse migration, asserts the rollback
-# restores the old order — then repeats the claim assertions on a
-# second cluster running the OLD definitions and asserts they FAIL
-# (the negative control proves the test catches the bug). Nothing
-# touches the live database.
+# order (newest-sync-first with rank order inside each run, legacy
+# unranked rows last, for BOTH claims), applies the reverse migration,
+# asserts the rollback restores the old order — then repeats the claim
+# assertions on a second cluster running the OLD definitions and
+# asserts they FAIL (the negative control proves the test catches the
+# bug). Nothing touches the live database.
 #
 #   bash supabase/migrations/tests/adu-discovery-rank-migration.test.sh
 #
@@ -104,13 +108,16 @@ create role authenticated nologin;
 create role service_role nologin;
 '
 
-# Configs: T and T2 are TikTok, F is Facebook. All active + synced
-# with a buffer target, so all three are hungry (buffer empty).
+# Configs: T, T2 and T3 are TikTok, F is Facebook. All active +
+# synced with a buffer target, so all are hungry (buffer empty).
+# T3 is the cross-run config (buffer 10, so all six of its rows can
+# be claimed in sequence).
 SEED_CONFIGS='
 insert into public.adu_configs (id, status, sync_status, source_platform, source_username, posts_per_day) values
   ('"'"'aaaaaaaa-0000-0000-0000-000000000001'"'"', '"'"'active'"'"', '"'"'synced'"'"', '"'"'tiktok'"'"', '"'"'courtroom62'"'"', 5),
   ('"'"'aaaaaaaa-0000-0000-0000-000000000002'"'"', '"'"'active'"'"', '"'"'synced'"'"', '"'"'tiktok'"'"', '"'"'otherhandle'"'"', 5),
-  ('"'"'aaaaaaaa-0000-0000-0000-000000000003'"'"', '"'"'active'"'"', '"'"'synced'"'"', '"'"'facebook'"'"', '"'"'somepage'"'"', 5);
+  ('"'"'aaaaaaaa-0000-0000-0000-000000000003'"'"', '"'"'active'"'"', '"'"'synced'"'"', '"'"'facebook'"'"', '"'"'somepage'"'"', 5),
+  ('"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'active'"'"', '"'"'synced'"'"', '"'"'tiktok'"'"', '"'"'crossrun'"'"', 10);
 '
 
 # Pre-migration rows (unranked): the UUIDs are chosen so the OLD
@@ -136,6 +143,24 @@ insert into public.adu_reels (id, config_id, status, source_reel_id, discovery_r
   ('"'"'ffffffff-0000-0000-0000-000000000003'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000003'"'"', '"'"'pending'"'"', '"'"'fk1-top-views'"'"', 1, 7777, now());
 '
 
+# Cross-run rows for config T3: an OLD run (created_at a day ago,
+# ranks 1-3) and a NEW run (created_at now, ranks 1-3), interleaved
+# in the table. One INSERT per run, so each run's rows share one
+# created_at — exactly as the production scraper inserts them.
+# The new run's ranks must be claimed strictly before the old run's
+# ranks; rank-first order would interleave them (new 1, old 1,
+# new 2, old 2, ...).
+SEED_CROSS_RUN_REELS='
+insert into public.adu_reels (id, config_id, status, source_reel_id, discovery_rank, view_count, created_at) values
+  ('"'"'20000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-old1'"'"', 1, 111, now() - interval '"'"'1 day'"'"'),
+  ('"'"'21000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-old2'"'"', 2, 222, now() - interval '"'"'1 day'"'"'),
+  ('"'"'22000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-old3'"'"', 3, 333, now() - interval '"'"'1 day'"'"');
+insert into public.adu_reels (id, config_id, status, source_reel_id, discovery_rank, view_count, created_at) values
+  ('"'"'80000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-new1'"'"', 1, 999, now()),
+  ('"'"'81000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-new2'"'"', 2, 888, now()),
+  ('"'"'82000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-new3'"'"', 3, 777, now());
+'
+
 # The same reels as above, but without rank columns (Run B has no
 # migration applied, so the columns do not exist there). The ranked
 # rows keep their large ids: under the old order they sort last.
@@ -149,6 +174,21 @@ insert into public.adu_reels (id, config_id, status, source_reel_id, created_at)
   ('"'"'90000000-0000-0000-0000-000000000002'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000002'"'"', '"'"'pending'"'"', '"'"'t2-newest'"'"', now()),
   ('"'"'00000000-0000-0000-0000-000000000003'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000003'"'"', '"'"'pending'"'"', '"'"'f-unranked'"'"', now() - interval '"'"'2 hours'"'"'),
   ('"'"'ffffffff-0000-0000-0000-000000000003'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000003'"'"', '"'"'pending'"'"', '"'"'fk1-top-views'"'"', now());
+'
+
+# The same T3 rows, but without rank columns (Run B has no
+# migration applied, so the columns do not exist there). Under the
+# old `ORDER BY r.id ASC` the claim sequence is oldest-first by id:
+# old 1, old 2, old 3, new 1, new 2, new 3.
+SEED_CROSS_RUN_REELS_NO_RANK='
+insert into public.adu_reels (id, config_id, status, source_reel_id, created_at) values
+  ('"'"'20000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-old1'"'"', now() - interval '"'"'1 day'"'"'),
+  ('"'"'21000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-old2'"'"', now() - interval '"'"'1 day'"'"'),
+  ('"'"'22000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-old3'"'"', now() - interval '"'"'1 day'"'"');
+insert into public.adu_reels (id, config_id, status, source_reel_id, created_at) values
+  ('"'"'80000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-new1'"'"', now()),
+  ('"'"'81000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-new2'"'"', now()),
+  ('"'"'82000000-0000-0000-0000-000000000004'"'"', '"'"'aaaaaaaa-0000-0000-0000-000000000004'"'"', '"'"'pending'"'"', '"'"'x-new3'"'"', now());
 '
 
 # ================= RUN A: happy path + reverse =================
@@ -175,6 +215,54 @@ su postgres -c "$PG_BIN/psql -h '/var/lib/postgresql/16/test-adu-discovery-rank-
 # inserts them.
 PSQL_A <<SQL
 $SEED_RANKED_REELS
+SQL
+
+# Cross-run rows arrive the same way (one INSERT per run).
+PSQL_A <<SQL
+$SEED_CROSS_RUN_REELS
+SQL
+
+# --- cross-run sequence: newest sync strictly first ----------------------
+# Claim six times and record config T3's pick each time. The new
+# run's ranks 1..3 must all come before the old run's ranks 1..3.
+# (The other configs are claimed alongside; their picks are
+# irrelevant here and are reset below.)
+PSQL_A <<'SQL'
+do $$
+declare
+  v_seq uuid[] := '{}';
+  v_one uuid;
+begin
+  for i in 1..6 loop
+    select reel_id into v_one
+      from public.claim_tiktok_buffer_downloads(10)
+     where config_id = 'aaaaaaaa-0000-0000-0000-000000000004';
+    if v_one is null then
+      raise exception 'cross-run: claim % returned no reel for T3', i;
+    end if;
+    v_seq := v_seq || v_one;
+  end loop;
+  if v_seq <> array[
+    '80000000-0000-0000-0000-000000000004'::uuid,
+    '81000000-0000-0000-0000-000000000004'::uuid,
+    '82000000-0000-0000-0000-000000000004'::uuid,
+    '20000000-0000-0000-0000-000000000004'::uuid,
+    '21000000-0000-0000-0000-000000000004'::uuid,
+    '22000000-0000-0000-0000-000000000004'::uuid
+  ] then
+    raise exception 'cross-run: claim sequence % is not newest-sync-first with rank order inside each run', v_seq;
+  end if;
+  raise notice 'CROSS-RUN CLAIM SEQUENCE PASSED: %', v_seq;
+end $$;
+SQL
+
+echo "cross-run sequence passed"
+
+# Reset everything the sequence test claimed, so the forward
+# assertions below run on a pristine state.
+PSQL_A <<SQL
+update public.adu_reels
+   set status = 'pending', download_retries = 0, download_claimed_at = null;
 SQL
 
 # --- forward assertions --------------------------------------------------
@@ -217,11 +305,13 @@ begin
     if v_svc is not true then raise exception 'service_role lost EXECUTE after migration'; end if;
   end loop;
 
-  -- (3) TikTok claim: ranked before unranked, newest first among
-  -- unranked. Config T must yield its rank-1 reel (largest id —
-  -- the old order would pick it LAST); config T2, which has only
-  -- unranked reels, must yield its NEWEST reel (largest id again —
-  -- the old order would pick the oldest).
+  -- (3) TikTok claim: newest sync first, rank order inside a sync.
+  -- Config T must yield its rank-1 reel (newest created_at AND
+  -- rank 1 — the old order would pick it LAST); config T2, which
+  -- has only unranked reels, must yield its NEWEST reel (largest
+  -- id again — the old order would pick the oldest). Legacy
+  -- unranked rows sort after new runs; the precise cross-run rule
+  -- is asserted in the sequence test above.
   select array_agg(reel_id) into v_claimed from public.claim_tiktok_buffer_downloads(10);
   if not ('ffffffff-0000-0000-0000-000000000001' = any(v_claimed)) then
     raise exception 'TikTok claim did not pick the rank-1 reel (claimed %) ', v_claimed;
@@ -244,8 +334,9 @@ begin
   if v_retries <> 1 then raise exception 'claimed reel retries % <> 1', v_retries; end if;
   if v_views <> 9999 then raise exception 'ranked reel view_count % <> 9999', v_views; end if;
 
-  -- (5) non-TikTok claim: same order rule. Config F must yield its
-  -- rank-1 reel, not its oldest unranked reel.
+  -- (5) non-TikTok claim: same order rule (newest sync first,
+  -- rank inside a sync). Config F must yield its rank-1 reel,
+  -- not its oldest unranked reel.
   select array_agg(reel_id) into v_claimed from public.claim_non_tiktok_buffer_downloads(10);
   if not ('ffffffff-0000-0000-0000-000000000003' = any(v_claimed)) then
     raise exception 'non-TikTok claim did not pick the rank-1 reel (claimed %)', v_claimed;
@@ -301,6 +392,9 @@ begin
   if not ('10000000-0000-0000-0000-000000000002' = any(v_claimed)) then
     raise exception 'after reverse: TikTok claim did not revert to id order for T2 (claimed %)', v_claimed;
   end if;
+  if not ('20000000-0000-0000-0000-000000000004' = any(v_claimed)) then
+    raise exception 'after reverse: TikTok claim did not revert to id order for T3 (claimed %)', v_claimed;
+  end if;
   select array_agg(reel_id) into v_claimed from public.claim_non_tiktok_buffer_downloads(10);
   if not ('00000000-0000-0000-0000-000000000003' = any(v_claimed)) then
     raise exception 'after reverse: non-TikTok claim did not revert to id order (claimed %)', v_claimed;
@@ -326,6 +420,62 @@ su postgres -c "$PG_BIN/psql -h '/var/lib/postgresql/16/test-adu-discovery-rank-
 PSQL_B <<SQL
 $SEED_CONFIGS
 $SEED_ALL_REELS_NO_RANK
+SQL
+
+PSQL_B <<SQL
+$SEED_CROSS_RUN_REELS_NO_RANK
+SQL
+
+# Cross-run negative control: on old code the claim sequence for
+# T3 is id order — old run first (oldest-first by id), NOT the new
+# order. This proves the sequence test catches the interleaving
+# bug specifically (rank-first order would interleave instead).
+PSQL_B <<'SQL'
+do $$
+declare
+  v_seq uuid[] := '{}';
+  v_one uuid;
+begin
+  for i in 1..6 loop
+    select reel_id into v_one
+      from public.claim_tiktok_buffer_downloads(10)
+     where config_id = 'aaaaaaaa-0000-0000-0000-000000000004';
+    if v_one is null then
+      raise exception 'cross-run negative control: claim % returned no reel for T3', i;
+    end if;
+    v_seq := v_seq || v_one;
+  end loop;
+  if v_seq <> array[
+    '20000000-0000-0000-0000-000000000004'::uuid,
+    '21000000-0000-0000-0000-000000000004'::uuid,
+    '22000000-0000-0000-0000-000000000004'::uuid,
+    '80000000-0000-0000-0000-000000000004'::uuid,
+    '81000000-0000-0000-0000-000000000004'::uuid,
+    '82000000-0000-0000-0000-000000000004'::uuid
+  ] then
+    raise exception 'cross-run negative control: old code sequence % is not id order', v_seq;
+  end if;
+  if v_seq = array[
+    '80000000-0000-0000-0000-000000000004'::uuid,
+    '81000000-0000-0000-0000-000000000004'::uuid,
+    '82000000-0000-0000-0000-000000000004'::uuid,
+    '20000000-0000-0000-0000-000000000004'::uuid,
+    '21000000-0000-0000-0000-000000000004'::uuid,
+    '22000000-0000-0000-0000-000000000004'::uuid
+  ] then
+    raise exception 'cross-run negative control: old code produced the new order?!';
+  end if;
+  raise notice 'CROSS-RUN NEGATIVE CONTROL PASSED: old code claims %', v_seq;
+end $$;
+SQL
+
+echo "cross-run negative control passed: old code does not claim newest-sync-first"
+
+# Reset everything the sequence claimed, so the negative control
+# below runs on a pristine state.
+PSQL_B <<SQL
+update public.adu_reels
+   set status = 'pending', download_retries = 0, download_claimed_at = null;
 SQL
 
 # The same "ranked reel is claimed first" assertion as Run A (3):

@@ -15,9 +15,17 @@
 --   - `view_count` — the TikTok view count measured at discovery
 --     (TikWM feed play_count), for the ranked set only; NULL
 --     everywhere else.
--- Both live claim RPCs (TikTok + non-TikTok) pick by rank first,
--- then newest first among unranked rows. Nothing else in those
--- RPCs changes (buffer gates, eligibility, retry budget untouched).
+-- Both live claim RPCs (TikTok + non-TikTok) pick newest-sync-first:
+--   ORDER BY created_at DESC, discovery_rank ASC NULLS LAST, id ASC.
+-- Within one sync all rows share one created_at (single INSERT), so
+-- created_at separates runs and rank orders inside each run. Rank
+-- first would interleave runs: a new run's rank-1 ties an old run's
+-- rank-1, broken by created_at, so downloads alternate new/old
+-- instead of the new run's top 30 strictly first. Legacy unranked
+-- rows (NULL rank, old created_at) sort after new runs; within one
+-- old sync they stay unordered (no order signal exists for them) —
+-- accepted, they drain over time. Nothing else in those RPCs
+-- changes (buffer gates, eligibility, retry budget untouched).
 -- The ORIGINAL claim_adu_buffer_downloads is LEFT UNTOUCHED: the
 -- adu-rpc-grants rig pins it, and it has no production caller.
 -- Grant closure matches the split migration: EXECUTE revoked from
@@ -89,7 +97,7 @@ begin
         where r.config_id = pb.page_id
           and r.status = 'pending'
           and r.download_retries < 3
-        order by r.discovery_rank asc nulls last, r.created_at desc, r.id asc
+        order by r.created_at desc, r.discovery_rank asc nulls last, r.id asc
         limit 1
       ) as first_pending_id
     from page_buffer pb
@@ -192,7 +200,7 @@ begin
         where r.config_id = pb.page_id
           and r.status = 'pending'
           and r.download_retries < 3
-        order by r.discovery_rank asc nulls last, r.created_at desc, r.id asc
+        order by r.created_at desc, r.discovery_rank asc nulls last, r.id asc
         limit 1
       ) as first_pending_id
     from page_buffer pb
