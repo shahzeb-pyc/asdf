@@ -12,7 +12,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { SidebarProvider } from '@/components/shared/ui/sidebar';
@@ -20,6 +20,7 @@ import { createQueryClient } from '@/lib/data/query-client';
 import { getPreference, preferences } from '@/lib/storage/preferences';
 import { WorkspaceStudioFooter } from '@/components/workspace/workspace-switcher';
 import { SwitcherActionsList } from '@/components/workspace/workspace-switcher-actions';
+import { SwitcherWorkspaceList } from '@/components/workspace/workspace-switcher-list';
 import {
   broadcastLogout,
   getMonogram,
@@ -59,6 +60,7 @@ interface FetchScript {
   switchStatus?: number;
   switchError?: string;
   createStatus?: number;
+  workspaces?: Array<typeof ACME>;
 }
 
 let fetchScript: FetchScript = {};
@@ -84,7 +86,7 @@ function installFetchStub() {
         if (fetchScript.listStatus && fetchScript.listStatus >= 400) {
           return json({ error: 'List failed' }, fetchScript.listStatus);
         }
-        return json({ workspaces: [ACME, BETA] });
+        return json({ workspaces: fetchScript.workspaces ?? [ACME, BETA] });
       }
       if (url === '/api/workspaces/switch') {
         if (fetchScript.switchStatus && fetchScript.switchStatus >= 400) {
@@ -296,6 +298,128 @@ describe('WorkspaceStudioFooter (decomposed switcher)', () => {
       );
     });
     expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'LOGOUT' }));
+  });
+});
+
+describe('workspace list scroll region (spec 199)', () => {
+  function twentyWorkspaces() {
+    return Array.from({ length: 20 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+      ownerId: ACME.ownerId,
+      name: `Workspace ${i + 1}`,
+      subdomain: `ws${i + 1}`,
+    }));
+  }
+
+  function List({
+    workspaces,
+    currentSubdomain = 'ws1',
+    isLoadingList = false,
+    listError = null,
+    switchError = null,
+  }: Readonly<{
+    workspaces: Array<{ id: string; ownerId: string; name: string; subdomain: string }>;
+    currentSubdomain?: string;
+    isLoadingList?: boolean;
+    listError?: string | null;
+    switchError?: string | null;
+  }>) {
+    return (
+      <SwitcherWorkspaceList
+        workspaces={workspaces}
+        currentSubdomain={currentSubdomain}
+        isSwitching={false}
+        isLoadingList={isLoadingList}
+        listError={listError}
+        switchError={switchError}
+        onSelectWorkspace={vi.fn()}
+        onRetryList={vi.fn()}
+        onOpenCreate={vi.fn()}
+      />
+    );
+  }
+
+  it('wraps only the workspace rows in a ~6-row scroll region; Create stays outside it', () => {
+    render(<List workspaces={twentyWorkspaces()} />);
+
+    const region = screen.getByTestId('workspace-list-scroll-region');
+    expect(region.className).toContain('max-h-66');
+    expect(region.className).toContain('overflow-y-auto');
+    expect(within(region).getAllByRole('menuitem')).toHaveLength(20);
+    // Create Workspace is pinned below the region, never scrolled away.
+    expect(within(region).queryByTestId('create-workspace-button')).toBeNull();
+    expect(screen.getByTestId('create-workspace-button')).toBeInTheDocument();
+  });
+
+  it('scrolls the active row into view on open — nearest, instant, on the active row', () => {
+    const scrollMock = vi.fn();
+    // jsdom does not implement scrollIntoView; read it through an
+    // unknown-typed slot so the restore below typechecks.
+    const proto = Element.prototype as unknown as {
+      scrollIntoView?: unknown;
+    };
+    const original = proto.scrollIntoView;
+    proto.scrollIntoView = scrollMock;
+    try {
+      render(<List workspaces={twentyWorkspaces()} currentSubdomain="ws15" />);
+
+      expect(scrollMock).toHaveBeenCalled();
+      expect(scrollMock.mock.calls[0]?.[0]).toEqual({ block: 'nearest', behavior: 'auto' });
+      expect(scrollMock.mock.instances[0]).toBe(screen.getByTestId('workspace-option-ws15'));
+    } finally {
+      if (original === undefined) {
+        delete proto.scrollIntoView;
+      } else {
+        proto.scrollIntoView = original;
+      }
+    }
+  });
+
+  it('keeps error alerts above the scroll region and the loading line below it', () => {
+    render(
+      <List
+        workspaces={[ACME]}
+        currentSubdomain="acme"
+        isLoadingList={true}
+        listError="Couldn't load your workspaces."
+        switchError="Couldn't switch workspace. Please try again."
+      />
+    );
+
+    const region = screen.getByTestId('workspace-list-scroll-region');
+    expect(within(region).queryByRole('alert')).toBeNull();
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts).toHaveLength(2);
+    for (const alert of alerts) {
+      expect(region.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    }
+    const loading = screen.getByText('Loading workspaces…');
+    expect(region.compareDocumentPosition(loading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(loading.compareDocumentPosition(screen.getByTestId('create-workspace-button')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('with 20 workspaces the popover keeps every action pinned outside the region', async () => {
+    const workspaces = twentyWorkspaces();
+    // The active workspace sits deep in the list (index 14).
+    workspaces[14] = { ...ACME, name: 'Acme' };
+    fetchScript = { workspaces };
+    installFetchStub();
+    const user = userEvent.setup();
+    render(<Footer />);
+    await user.click(screen.getByTestId('workspace-switcher-trigger'));
+
+    await screen.findByTestId('workspace-option-ws20');
+    const region = screen.getByTestId('workspace-list-scroll-region');
+    expect(within(region).getAllByRole('menuitem')).toHaveLength(20);
+    expect(within(region).queryByTestId('create-workspace-button')).toBeNull();
+    expect(within(region).queryByTestId('workspace-settings-button')).toBeNull();
+    expect(within(region).queryByTestId('theme-toggle-button')).toBeNull();
+    expect(within(region).queryByTestId('logout-button')).toBeNull();
+    // Header and actions are still present in the popover.
+    expect(screen.getByText('Jane Doe')).toBeInTheDocument();
+    expect(screen.getByTestId('create-workspace-button')).toBeInTheDocument();
+    expect(screen.getByTestId('workspace-settings-button')).toBeInTheDocument();
+    expect(screen.getByTestId('logout-button')).toBeInTheDocument();
   });
 });
 
