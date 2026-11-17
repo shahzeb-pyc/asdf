@@ -199,7 +199,7 @@ export async function runInstagramJobWithRetries(
 
 // The persistent Instagram browser: launched lazily by the injected
 // launch function on the first job and kept alive across jobs — the
-// same instance is returned until it dies (isConnected false) or the
+// same instance is returned until it dies (connected false) or the
 // 500-job session limit is hit, when it is closed and relaunched.
 // The launch function is injected so tests can prove persistence
 // without a real browser.
@@ -219,7 +219,10 @@ export class InstagramBrowserManager {
     if (this.browser) {
       let connected = false;
       try {
-        connected = this.browser.isConnected();
+        // Real Puppeteer 25 API: liveness is the `connected` getter
+        // property — there is no isConnected() method (calling it
+        // throws, which this catch would misread as "died").
+        connected = this.browser.connected === true;
       } catch {
         connected = false;
       }

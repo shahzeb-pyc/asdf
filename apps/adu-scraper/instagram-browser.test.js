@@ -17,13 +17,14 @@ import {
 const POOL = 'proxy-a.example.com:10001:alice:s3cret-one,proxy-b.example.com:10002:bob:s3cret-two,proxy-c.example.com:10003:carol:s3cret-three';
 const FIRST = { host: 'proxy-a.example.com', port: 10001, username: 'alice', password: 's3cret-one' };
 
+// Mirrors the real Puppeteer 25 Browser shape: liveness is the
+// `connected` property (a getter on the real object) — there is NO
+// isConnected() method. A fake that defines one hides exactly the
+// bug this file guards against (see the `connected` test below).
 function fakeBrowser() {
   return {
     connected: true,
     closed: false,
-    isConnected() {
-      return this.connected;
-    },
     async close() {
       this.closed = true;
     },
@@ -268,6 +269,23 @@ describe('runInstagramJobWithRetries (same proxy, up to 3 attempts)', () => {
 });
 
 describe('InstagramBrowserManager (persistent browser, no relaunch per job)', () => {
+  it('reuses a browser that has no isConnected method (real Puppeteer 25 shape)', async () => {
+    let launches = 0;
+    const browser = fakeBrowser();
+    // Guard against mock drift: the real Puppeteer 25 Browser has no
+    // isConnected() — liveness is the `connected` getter/property.
+    // This test FAILS on code that calls browser.isConnected() (it
+    // throws, the manager reads it as "died" and relaunches).
+    assert.equal(typeof browser.isConnected, 'undefined');
+    const manager = new InstagramBrowserManager({ launch: async () => { launches += 1; return browser; } });
+    assert.equal(await manager.getBrowser(), browser);
+    assert.equal(await manager.getBrowser(), browser);
+    manager.noteJobCompleted();
+    assert.equal(await manager.getBrowser(), browser);
+    assert.equal(launches, 1);
+    assert.equal(browser.closed, false);
+  });
+
   it('launches once and returns the same browser across jobs', async () => {
     let launches = 0;
     const browser = fakeBrowser();
