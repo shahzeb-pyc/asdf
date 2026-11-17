@@ -29,7 +29,7 @@ describe('buildMuseGuide', () => {
   it('names NextRise Digital with its own guide address on nextrise', () => {
     const guide = buildMuseGuide('nextrise');
     expect(guide).toContain('# NextRise Digital — Muse guide');
-    expect(guide).toContain('https://app.nextrisehq.com/muse_guide.md');
+    expect(guide).toContain('https://app.sajidaliai.online/muse_guide.md');
     expect(guide).toContain('There is no billing section in this app');
     expect(guide).toContain('## Plan');
     expect(guide).not.toContain('FBUploadPro');

@@ -17,7 +17,7 @@ describe('buildMuseConnectPrompt', () => {
     const prompt = buildMuseConnectPrompt('nextrise');
     expect(prompt).toContain('Connect to my NextRise Digital account');
     expect(prompt).toContain('my NextRise Digital Media Library key');
-    expect(prompt).toContain('https://app.nextrisehq.com/muse_guide.md');
+    expect(prompt).toContain('https://app.sajidaliai.online/muse_guide.md');
     expect(prompt).toContain('my NextRise Digital sign-in');
     expect(prompt).not.toContain('FBUploadPro');
     expect(prompt).not.toContain('app.fbuploadpro.com');
@@ -29,7 +29,7 @@ describe('buildMuseConnectPrompt', () => {
       MUSE_CONNECT_PROMPT.split('FBUploadPro')
         .join('NextRise Digital')
         .split('https://app.fbuploadpro.com')
-        .join('https://app.nextrisehq.com')
+        .join('https://app.sajidaliai.online')
     );
   });
 });

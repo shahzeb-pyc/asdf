@@ -14,15 +14,15 @@ import {
 
 describe('resolveBrandFromHost', () => {
   it('maps the white-label gateway host to nextrise', () => {
-    expect(resolveBrandFromHost('app.nextrisehq.com')).toBe('nextrise');
+    expect(resolveBrandFromHost('app.sajidaliai.online')).toBe('nextrise');
   });
 
   it('maps white-label tenant hosts to nextrise', () => {
-    expect(resolveBrandFromHost('student1.app.nextrisehq.com')).toBe('nextrise');
+    expect(resolveBrandFromHost('student1.app.sajidaliai.online')).toBe('nextrise');
   });
 
   it('is case- and port-insensitive', () => {
-    expect(resolveBrandFromHost('STUDENT1.App.NextriseHQ.com:443')).toBe('nextrise');
+    expect(resolveBrandFromHost('STUDENT1.App.SajidAliAI.online:443')).toBe('nextrise');
   });
 
   it('maps our gateway and tenant hosts to fbuploadpro', () => {
@@ -38,20 +38,20 @@ describe('resolveBrandFromHost', () => {
   });
 
   it('does NOT treat the bare white-label domain as the app', () => {
-    expect(resolveBrandFromHost('nextrisehq.com')).toBe('fbuploadpro');
-    expect(resolveBrandFromHost('www.nextrisehq.com')).toBe('fbuploadpro');
+    expect(resolveBrandFromHost('sajidaliai.online')).toBe('fbuploadpro');
+    expect(resolveBrandFromHost('www.sajidaliai.online')).toBe('fbuploadpro');
   });
 
   it('does NOT match a lookalike suffix', () => {
-    expect(resolveBrandFromHost('app.nextrisehq.com.evil.com')).toBe('fbuploadpro');
-    expect(resolveBrandFromHost('notapp.nextrisehq.com')).toBe('fbuploadpro');
+    expect(resolveBrandFromHost('app.sajidaliai.online.evil.com')).toBe('fbuploadpro');
+    expect(resolveBrandFromHost('notapp.sajidaliai.online')).toBe('fbuploadpro');
   });
 });
 
 describe('getBrandTenantRoot / getBrandGatewayHost', () => {
-  it('white-label root is always app.nextrisehq.com', () => {
-    expect(getBrandTenantRoot('nextrise', 'fbuploadpro.com')).toBe('app.nextrisehq.com');
-    expect(getBrandGatewayHost('nextrise', 'fbuploadpro.com')).toBe('app.nextrisehq.com');
+  it('white-label root is always app.sajidaliai.online', () => {
+    expect(getBrandTenantRoot('nextrise', 'fbuploadpro.com')).toBe('app.sajidaliai.online');
+    expect(getBrandGatewayHost('nextrise', 'fbuploadpro.com')).toBe('app.sajidaliai.online');
   });
 
   it('our brand keeps the configured root verbatim', () => {
@@ -107,7 +107,7 @@ describe('NEXTRISE_BRAND_CONFIG', () => {
 describe('brandLoginMismatchMessage', () => {
   it('points a NextRise account at the white-label login', () => {
     expect(brandLoginMismatchMessage('nextrise')).toBe(
-      'This account belongs to NextRise. Please log in at app.nextrisehq.com.'
+      'This account belongs to NextRise. Please log in at app.sajidaliai.online.'
     );
   });
 

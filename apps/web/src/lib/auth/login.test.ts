@@ -262,7 +262,7 @@ password: 'correct-password',
         requestHost: 'app.fbuploadpro.com',
       })
     ).rejects.toThrow(
-      'This account belongs to NextRise. Please log in at app.nextrisehq.com.'
+      'This account belongs to NextRise. Please log in at app.sajidaliai.online.'
     );
   });
 
@@ -272,7 +272,7 @@ password: 'correct-password',
       loginTenantUser({
         email: 'client@gmail.com',
 password: 'correct-password',
-        requestHost: 'app.nextrisehq.com',
+        requestHost: 'app.sajidaliai.online',
       })
     ).rejects.toThrow(
       'This account belongs to FBUploadPro. Please log in at app.fbuploadpro.com.'
@@ -284,11 +284,11 @@ password: 'correct-password',
     const { token, redirectUrl } = await loginTenantUser({
       email: 'client@gmail.com',
 password: 'correct-password',
-      requestHost: 'app.nextrisehq.com',
+      requestHost: 'app.sajidaliai.online',
     });
     const decoded = await verifySessionToken(token, getSessionSecret());
     expect(decoded.brand).toBe('nextrise');
-    expect(redirectUrl).toBe('https://acme.app.nextrisehq.com/');
+    expect(redirectUrl).toBe('https://acme.app.sajidaliai.online/');
   });
 
   it('our account logs in on our host with a branded token and our redirect', async () => {

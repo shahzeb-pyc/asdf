@@ -68,7 +68,7 @@ describe('RootLayout Vercel Analytics Integration (Spec 067)', () => {
   });
 
   it('exposes the NextRise metadata on the white-label host (spec 191)', async () => {
-    requestHost.current = 'app.nextrisehq.com';
+    requestHost.current = 'app.sajidaliai.online';
     const metadata = await generateMetadata();
     expect(metadata.title).toBe('NextRise Digital');
     expect(metadata.description).toBe('publishing automation platform');

@@ -149,12 +149,12 @@ describe('muse_guide.md route', () => {
   // Owner reversal 2026-11-15: the white-label brand gets the same
   // guide with its own name and guide address, and no billing parts.
   it('serves the NextRise guide on the white-label host, with no billing sections or prices', async () => {
-    const res = await GET(guideRequest('app.nextrisehq.com'));
+    const res = await GET(guideRequest('app.sajidaliai.online'));
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toContain('text/markdown');
     const text = await res.text();
     expect(text).toContain('NextRise Digital — Muse guide');
-    expect(text).toContain('https://app.nextrisehq.com/muse_guide.md');
+    expect(text).toContain('https://app.sajidaliai.online/muse_guide.md');
     expect(text).not.toContain('FBUploadPro');
     expect(text).not.toContain('app.fbuploadpro.com');
     expect(text).toContain('There is no billing section in this app');
