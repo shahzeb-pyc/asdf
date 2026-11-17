@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { LoginRequestSchema } from '@fbuploadpro/contracts';
+import { z } from 'zod';
+import {
+  LoginRequestSchema,
+  resolveBrandFromHost,
+  SafeReturnUrlSchema,
+} from '@fbuploadpro/contracts';
 import {
   loginTenantUser,
 } from '@/lib/auth/login';
@@ -18,9 +23,31 @@ import {
   verifyPendingSignupPassword,
 } from '@/lib/otp-service';
 
+/**
+ * Spec 199: on the white-label brand the login accepts any valid
+ * email. The contracts `LoginRequestSchema` is Gmail-only by design
+ * (`GmailSchema`) and stays that way for fbuploadpro, so the
+ * white-label variant lives here, in the login path — mirroring the
+ * contracts schema's shape (email / password / returnUrl) without
+ * the domain rule. `loginTenantUser` already looks the user up by
+ * the plain lowercased address when Gmail canonicalisation fails,
+ * so no change is needed downstream.
+ */
+const NextriseLoginRequestSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .email('Valid email address is required')
+    .max(255, 'Email cannot exceed 255 characters'),
+  password: z.string().min(1, 'Password is required').max(128, 'Password cannot exceed 128 characters'),
+  returnUrl: SafeReturnUrlSchema.optional(),
+});
+
 export async function POST(request: NextRequest) {
   try {
     const clientIp = extractClientIp(request.headers);
+    const requestHost = request.headers.get('host');
+    const brand = resolveBrandFromHost(requestHost);
 
     // IP rate limiting to prevent credential brute-force (max 10 login attempts per 60 seconds)
     const ipLimit = await checkRateLimit(`login:ip:${clientIp}`, 10, RATE_LIMIT_WINDOW_MS);
@@ -43,7 +70,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid JSON request body' }, { status: 400 });
     }
     const body: unknown = bodyResult.value;
-    const parseResult = LoginRequestSchema.safeParse(body);
+    const parseResult = (brand === 'nextrise' ? NextriseLoginRequestSchema : LoginRequestSchema).safeParse(body);
 
     if (!parseResult.success) {
       return NextResponse.json(
@@ -70,7 +97,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const requestHost = request.headers.get('host');
     let loginResult;
     try {
       loginResult = await loginTenantUser({

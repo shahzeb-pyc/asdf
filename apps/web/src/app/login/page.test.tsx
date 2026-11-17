@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import LoginPage, { SESSION_EXPIRED_NOTICE, toApiReturnUrl } from "./page";
+import { BrandProvider } from "@/components/brand";
 import { resetSessionExpiredGuard } from "@/lib/api/session-expired";
 
 const completeAuthRedirect = vi.fn();
@@ -225,6 +226,47 @@ describe("login form (form standard reference conversion)", () => {
     expect(password.type).toBe("text");
     await user.click(screen.getByRole("button", { name: "Hide password" }));
     expect(password.type).toBe("password");
+  });
+});
+
+describe("login form on the white-label brand (spec 199)", () => {
+  function renderNextrise() {
+    return render(
+      <BrandProvider brand="nextrise">
+        <LoginPage />
+      </BrandProvider>
+    );
+  }
+
+  it("shows no Gmail-only text and a neutral placeholder", () => {
+    renderNextrise();
+    expect(
+      screen.queryByText("Only @gmail.com (or @googlemail.com) accounts are supported.")
+    ).toBeNull();
+    expect((screen.getByLabelText("Email Address") as HTMLInputElement).placeholder).toBe(
+      "you@example.com"
+    );
+  });
+
+  it("a non-Gmail address submits without an inline error", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(jsonResponse(200, SUCCESS_BODY));
+    renderNextrise();
+    await fillAndSubmit(user, "student@protonmail.com", "correct-password");
+
+    await waitFor(() => expect(completeAuthRedirect).toHaveBeenCalled());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body)).email).toBe("student@protonmail.com");
+  });
+
+  it("a malformed address errors inline without a request", async () => {
+    const user = userEvent.setup();
+    renderNextrise();
+    await fillAndSubmit(user, "not-an-email", "some-password-1");
+
+    expect(await screen.findByText("Please enter a valid email address.")).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
