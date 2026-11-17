@@ -18,8 +18,9 @@ import {
 } from '../src/domain/adu.js';
 
 describe('ADU contracts', () => {
-  it('sync state overrides page status until synced', () => {
-    expect(aduDisplayStatus('active', 'processing')).toBe('Scraping reels');
+  it('page status shows once a scrape is running; only a failed scrape overrides (spec 201)', () => {
+    expect(aduDisplayStatus('active', 'processing')).toBe('Active posting');
+    expect(aduDisplayStatus('active', 'pending')).toBe('Active posting');
     expect(aduDisplayStatus('active', 'error')).toBe('Source not found');
     expect(aduDisplayStatus('active', 'synced')).toBe('Active posting');
     expect(aduDisplayStatus('fb_rate_limited', 'synced')).toBe('Rate limited');

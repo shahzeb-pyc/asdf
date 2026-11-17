@@ -10,7 +10,8 @@ import { loadThreadsAduDestination, threadsAduContext } from '@/lib/server/threa
  *   itself does NOT run in the web app — it lives in apps/adu-scraper
  *   (yt-dlp + Puppeteer), exactly like the old fbuploadpro, and the
  *   scraper claims pending configs on its own loop. If the scraper
- *   is not running, the config stays 'pending' ("Scrape pending").
+ *   is not running, the config stays 'pending' and no new reels
+ *   arrive (the card shows the destination status, spec 201).
  * There is NO 'download' action in the web app: downloading is the
  * VPS downloader service (apps/adu-downloader), which claims pending
  * reels itself, downloads via yt-dlp + aria2, and copies them to the
