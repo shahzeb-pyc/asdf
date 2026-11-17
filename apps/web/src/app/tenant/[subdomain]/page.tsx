@@ -40,12 +40,12 @@ interface TenantIndexPageProps {
  * posts, or links to Queue or Calendar.
  *
  * Sections by plan (Home stays exempt from the free-plan dialog):
- * - Paid: header, old-users banner, paid plan card, quick links
+ * - Paid: header, paid plan card, quick links
  *   (Media Library, Creator Finder, Facebook Accounts, Facebook
  *   Pages, Billing), Muse Assistant rail card.
- * - Free: header, old-users banner, free plan card, upgrade card,
+ * - Free: header, free plan card, upgrade card,
  *   Prompt Library + Billing links only, Muse Assistant rail card.
- * - Expired: header, old-users banner, expired banner and renew only.
+ * - Expired: header, expired banner and renew only.
  * - Admin: redirected to the admin section (/admin/subscriptions)
  *   before render, so the admin branch below is only a fallback and
  *   never the landing an admin sees.

@@ -38,6 +38,9 @@ test.describe('Tenant Home at 360px', () => {
     await expect(
       page.getByTestId('home-header').getByRole('heading', { name: 'Welcome, e2e' })
     ).toBeVisible();
+    // Spec 198: the notice must not render on Home (inversion of the
+    // deleted presence assertions).
+    await expect(page.getByTestId('old-users-notice-banner')).toHaveCount(0);
     await expect(page.getByTestId('home-error')).toBeVisible();
     await expectNoDocumentOverflow(page);
   });

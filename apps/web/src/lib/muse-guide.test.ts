@@ -68,7 +68,7 @@ describe('buildMuseGuide', () => {
     expect(guide).toContain('## Home');
     expect(guide).toContain('## Creator Finder');
     expect(guide).toContain('## Limits you must respect');
-    // Spec 198: the old-users banner is gone from the guide on both brands.
+    // Spec 198: the notice is gone from the guide on both brands.
     expect(guide).not.toContain('banner for old');
   });
 });

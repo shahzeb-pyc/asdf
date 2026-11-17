@@ -80,6 +80,16 @@ describe("login form (form standard reference conversion)", () => {
     expect(screen.queryByText(SESSION_EXPIRED_NOTICE)).toBeNull();
   });
 
+  // Spec 198: the notice is gone from login — this inverts the deleted
+  // presence test, so a re-introduced notice fails here.
+  it("does not render the removed notice above the sign-in form", () => {
+    render(<LoginPage />);
+    expect(screen.queryByTestId("old-users-notice-banner")).toBeNull();
+    expect(screen.queryByText(/Old fbuploadpro users/)).toBeNull();
+    // The form itself is untouched and still present.
+    expect(screen.getByRole("button", { name: "Sign In" })).toBeTruthy();
+  });
+
   it("validates on blur: a non-Gmail address errors inline without a submit or a request", async () => {
     const user = userEvent.setup();
     render(<LoginPage />);
