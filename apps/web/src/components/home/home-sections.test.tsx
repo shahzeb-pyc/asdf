@@ -104,7 +104,7 @@ describe('PaidPlanCard', () => {
     // support link, and the price / plan-length lines are hidden too
     // (they state our price and period, not theirs).
     const supportHref =
-      'https://wa.me/923429469500?text=Hi!%20I%20need%20assistance%20with%20my%20NextRise%20account.';
+      'https://wa.me/923081311411?text=Hi!%20I%20need%20assistance%20with%20my%20NextRise%20account.';
     render(
       <PaidPlanCard
         data={PAID_DATA}
@@ -150,7 +150,7 @@ describe('ExpiredBanner', () => {
     // the NextRise brand, so Renew would be a dead end. Renewals go
     // through the brand's WhatsApp support instead.
     const supportHref =
-      'https://wa.me/923429469500?text=Hi!%20I%20need%20assistance%20with%20my%20NextRise%20account.';
+      'https://wa.me/923081311411?text=Hi!%20I%20need%20assistance%20with%20my%20NextRise%20account.';
     render(
       <ExpiredBanner billingPurchaseHref="/tenant/acme/purchase" supportHref={supportHref} />
     );
