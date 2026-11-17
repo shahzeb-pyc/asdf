@@ -184,8 +184,10 @@ export function aduDisplayStatus(
  * Unknown markers (including `paused`, which only ever rides a
  * `disconnected` row) map to null: the caller reads generic `Error`
  * rather than asserting a cause the record does not state.
+ * Also used by the ADU detail page (spec 204) to derive the alert
+ * key from the destination's reason.
  */
-function destinationFbStatusToAduStatus(
+export function destinationFbStatusToAduStatus(
   fbStatus: string | null | undefined,
 ): AduConfigStatus | null {
   switch (fbStatus) {

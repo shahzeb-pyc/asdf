@@ -329,6 +329,37 @@ async function applyAduPublishErrorDecision(
       console.error(
         `ADU destination status flip failed: destination=${opts.destinationId} job=${opts.jobId} status=${decision.destinationStatus} code=${error.code ?? 'unknown'}`,
       );
+    } else if (decision.destinationFbStatus !== undefined) {
+      // Spec 204: the detail marker rides the destination flip, via
+      // the same `apply_destination_fb_status_marker` RPC the
+      // queue-consumer settle path uses (spec 155) — a single
+      // statement, so concurrent marker writes serialize on the row
+      // lock and no concurrent metadata write is clobbered.
+      // Best-effort by design: a lost write degrades the label,
+      // never the state, and the next failure re-stamps it. The
+      // marker is only stamped when the status flip landed — a
+      // marker on a destination whose flip failed would assert a
+      // cause the record does not state.
+      try {
+        const { error: markerError } = await supabase.rpc(
+          'apply_destination_fb_status_marker',
+          {
+            p_destination_id: opts.destinationId,
+            p_marker: decision.destinationFbStatus,
+          },
+        );
+        if (markerError) {
+          console.error(
+            `[adu-tick] failed to apply fb_status marker ${decision.destinationFbStatus ?? '(clear)'} for destination=${opts.destinationId} job=${opts.jobId}:`,
+            markerError,
+          );
+        }
+      } catch (err) {
+        console.error(
+          `[adu-tick] failed to apply fb_status marker ${decision.destinationFbStatus ?? '(clear)'} for destination=${opts.destinationId} job=${opts.jobId}:`,
+          err,
+        );
+      }
     }
   }
   if (decision.accountStatus) {

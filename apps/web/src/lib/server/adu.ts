@@ -662,6 +662,13 @@ export interface AduConfigView {
   destinationHandle: string | null;
   destinationPlatform: string | null;
   destinationStatus: string;
+  /**
+   * The destination's `metadata.fb_status` detail marker (spec
+   * 204), or null when the destination carries none. Detail view
+   * only — the hub view omits it (the derived `displayStatus`
+   * carries the label there).
+   */
+  destinationFbStatus: string | null;
   accountName: string | null;
   accountAvatarUrl: string | null;
   sourcePlatform: AduSourcePlatform;
@@ -774,6 +781,7 @@ export type AduHubConfigView = Omit<
   | 'destinationPlatform'
   | 'accountAvatarUrl'
   | 'destinationStatus'
+  | 'destinationFbStatus'
 >;
 
 const ZERO_ADU_COUNTS: AduConfigCounts = {
@@ -974,6 +982,8 @@ function viewFromParts(
     destinationHandle: dest?.handle ?? null,
     destinationPlatform: dest?.platform ?? null,
     destinationStatus: dest?.status ?? 'active',
+    destinationFbStatus:
+      typeof dest?.metadata?.fb_status === 'string' ? dest.metadata.fb_status : null,
     accountName: dest?.social_accounts?.display_name ?? null,
     accountAvatarUrl: dest?.social_accounts?.avatar_url ?? null,
     sourcePlatform: config.source_platform,

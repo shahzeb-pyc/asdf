@@ -159,7 +159,10 @@ const CASES: StatusCase[] = [
   },
 ];
 
-function configView(status: string) {
+function configView(
+  status: string,
+  destination?: { status: string; fbStatus: string | null },
+) {
   return {
     id: CONFIG_ID,
     destinationId: 'dest-1',
@@ -179,6 +182,10 @@ function configView(status: string) {
     status,
     syncStatus: 'synced',
     displayStatus: DISPLAY_STATUS[status],
+    // Spec 204: the destination's reason rides the view (the hub
+    // omits it — the derived displayStatus carries the label there).
+    destinationStatus: destination?.status ?? 'active',
+    destinationFbStatus: destination?.fbStatus ?? null,
     alert: null,
     followersCount: 120,
     followersGained: 132,
@@ -195,7 +202,8 @@ function configView(status: string) {
 /** Serves the ADU detail endpoints for whatever status is current. */
 async function installAduDetailFixtures(
   page: import('@playwright/test').Page,
-  getStatus: () => string
+  getStatus: () => string,
+  getDestination: () => { status: string; fbStatus: string | null } | null = () => null,
 ) {
   await page.route(
     `**/api/tenant/${TENANT.subdomain}/auto-download-upload/${CONFIG_ID}**`,
@@ -211,7 +219,7 @@ async function installAduDetailFixtures(
       if (method === 'PATCH') return json({ ok: true });
       if (url.pathname.endsWith('/reels')) return json({ reels: [] });
       if (url.pathname.endsWith('/failed')) return json({ jobs: [] });
-      return json({ config: configView(getStatus()) });
+      return json({ config: configView(getStatus(), getDestination() ?? undefined) });
     }
   );
 }
@@ -222,18 +230,20 @@ for (const viewport of [
 ]) {
   test.describe(`ADU detail statuses — ${viewport.name} (${viewport.width}px)`, () => {
     let currentStatus = 'active';
+    let currentDestination: { status: string; fbStatus: string | null } | null = null;
 
     test.beforeEach(async ({ page, context }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await context.addCookies([SESSION_COOKIE]);
       const state = createFixtureState();
       await installApiFixtures(page, state);
-      await installAduDetailFixtures(page, () => currentStatus);
+      await installAduDetailFixtures(page, () => currentStatus, () => currentDestination);
     });
 
     for (const c of CASES) {
       test(`${c.status}: badge, alert, and toggle lock`, async ({ page }) => {
         currentStatus = c.status;
+        currentDestination = null;
         await page.goto(`/tenant/${TENANT.subdomain}/auto-download-upload/${CONFIG_ID}`);
         await expect(
           page.getByRole('heading', { name: 'Total Statistics' })
@@ -272,5 +282,33 @@ for (const viewport of [
         }
       });
     }
+
+    test('spec 204: an error destination with a checkpoint marker shows the verification alert even when the config is active', async ({
+      page,
+    }) => {
+      // The beekainternational shape: the config was reactivated, so
+      // it reads active — the destination's marker is the only record
+      // of the checkpoint, and the alert must come from it.
+      currentStatus = 'active';
+      currentDestination = { status: 'error', fbStatus: 'checkpoint' };
+      await page.goto(`/tenant/${TENANT.subdomain}/auto-download-upload/${CONFIG_ID}`);
+      await expect(
+        page.getByRole('heading', { name: 'Total Statistics' })
+      ).toBeVisible();
+
+      const mark = page.getByTestId('adu-detail-status-mark');
+      await expect(mark).toContainText('Active posting');
+      await expect(page.getByText('Facebook Verification Required', { exact: true })).toBeVisible();
+      await expect(
+        page.getByText(/Complete identity or phone verification in the Meta app/)
+      ).toBeVisible();
+
+      if (viewport.name === 'phone') {
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+        );
+        expect(overflow).toBe(0);
+      }
+    });
   });
 }
