@@ -217,7 +217,13 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
           'https://sajidali.sajidaliai.online/api/tenant/acme/accounts/magic-link',
           {
             method: 'POST',
-            headers: { cookie: validSessionCookie },
+            headers: {
+              cookie: validSessionCookie,
+              // NextRequest carries no Host header unless given one:
+              // this is what makes the request arrive on the
+              // white-label tenant host.
+              host: 'sajidali.sajidaliai.online',
+            },
           }
         );
         const res = await generateMagicLink(req, {
@@ -342,7 +348,8 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
       );
 
       const req = new NextRequest(
-        `https://app.sajidaliai.online/connect/facebook?token=${magicToken}`
+        `https://app.sajidaliai.online/connect/facebook?token=${magicToken}`,
+        { headers: { host: 'app.sajidaliai.online' } }
       );
       const res = await forwardMagicLink(req);
 
@@ -802,7 +809,8 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
       const state = await signMagicState();
       mockGraphSuccess();
       const req = new NextRequest(
-        tenantCallbackUrl(`code=mock_code&state=${state}`)
+        tenantCallbackUrl(`code=mock_code&state=${state}`),
+        { headers: { host: 'sajidali.sajidaliai.online' } }
       );
       const res = await handleFacebookCallback(req, mockDbFor(false));
 
@@ -821,7 +829,8 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
       const req = new NextRequest(
         tenantCallbackUrl(
           `error=access_denied&error_description=User+denied&state=${state}`
-        )
+        ),
+        { headers: { host: 'sajidali.sajidaliai.online' } }
       );
       const res = await handleFacebookCallback(req, mockDbFor(false));
 

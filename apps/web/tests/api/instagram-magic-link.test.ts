@@ -222,7 +222,13 @@ describe('Magic Link Instagram Connection Endpoints', () => {
           'https://sajidali.sajidaliai.online/api/tenant/acme/instagram/accounts/magic-link',
           {
             method: 'POST',
-            headers: { cookie: validSessionCookie },
+            headers: {
+              cookie: validSessionCookie,
+              // NextRequest carries no Host header unless given one:
+              // this is what makes the request arrive on the
+              // white-label tenant host.
+              host: 'sajidali.sajidaliai.online',
+            },
           }
         );
         const res = await generateInstagramMagicLink(req, {
@@ -784,7 +790,7 @@ describe('Magic Link Instagram Connection Endpoints', () => {
       });
       global.fetch = vi
         .fn()
-        .mockResolvedValueOnce(body({ access_token: <redacted>
+        .mockResolvedValueOnce(body({ access_token: 'bisu_token', token_type: 'bearer' }))
         .mockResolvedValueOnce(body({ client_business_id: 'biz_1', id: 'sys_1' }))
         .mockResolvedValueOnce(
           body({ data: [{ id: 'ig_user_999', username: 'sunsetbakery' }] })
@@ -835,7 +841,8 @@ describe('Magic Link Instagram Connection Endpoints', () => {
         TEST_SECRET
       );
       const req = new NextRequest(
-        `https://sajidali.sajidaliai.online/api/auth/instagram/callback?code=mock_code&state=${state}`
+        `https://sajidali.sajidaliai.online/api/auth/instagram/callback?code=mock_code&state=${state}`,
+        { headers: { host: 'sajidali.sajidaliai.online' } }
       );
       const res = await handleInstagramCallback(req, mockDb());
 
@@ -862,7 +869,8 @@ describe('Magic Link Instagram Connection Endpoints', () => {
         TEST_SECRET
       );
       const req = new NextRequest(
-        `https://sajidali.sajidaliai.online/api/auth/instagram/callback?code=mock_code&state=${state}`
+        `https://sajidali.sajidaliai.online/api/auth/instagram/callback?code=mock_code&state=${state}`,
+        { headers: { host: 'sajidali.sajidaliai.online' } }
       );
       const res = await handleInstagramCallback(req, mockDb());
 

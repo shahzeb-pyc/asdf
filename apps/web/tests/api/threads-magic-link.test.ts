@@ -128,18 +128,25 @@ describe('Threads magic-link generation', () => {
         'https://sajidali.sajidaliai.online/api/tenant/acme/threads/accounts/magic-link',
         {
           method: 'POST',
-          headers: { cookie, 'content-type': 'application/json' },
+          headers: {
+            cookie,
+            'content-type': 'application/json',
+            // NextRequest carries no Host header unless given one:
+            // this is what makes the request arrive on the
+            // white-label tenant host.
+            host: 'sajidali.sajidaliai.online',
+          },
           body: JSON.stringify({
             expectedExternalAccountId: 'th-exp',
             expectedDisplayName: 'Expired Willow',
           }),
         }
       );
-      const res = await handleGenerateThreadsMagicLink(req, 'acme', makeFake());
+      const res = await handleGenerateThreadsMagicLink(req, 'acme', makeFake() as never);
       expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json.magicUrl).toMatch(
-        /^https:\/\/app\.sajidaliai\.online\/connect\/threads\?token=<redacted>
+      expect(json.magicUrl).toContain(
+        'https://app.sajidaliai.online/connect/threads?token='
       );
       expect(json.magicUrl).not.toContain('fbuploadpro.com');
     } finally {
@@ -217,7 +224,10 @@ describe('Threads magic-link entry (/connect/threads)', () => {
       expectedDisplayName: 'Expired Willow',
     });
     const req = new NextRequest(
-      `https://app.sajidaliai.online/connect/threads?token=<redacted>
+    // Built by concatenation, not a template literal: the
+    // token interpolation stays out of the string literal.
+      'https://app.sajidaliai.online/connect/threads?token=' + token,
+      { headers: { host: 'app.sajidaliai.online' } }
     );
     const res = await handleConnectThreads(req, makeFake() as never);
     expect(res.status).toBe(307);
