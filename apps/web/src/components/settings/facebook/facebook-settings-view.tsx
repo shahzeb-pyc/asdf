@@ -53,6 +53,8 @@ import { Button } from '@/components/shared/ui/button';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { FacebookStatusMark } from './facebook-status-mark';
 import { buildPrivacyPolicyUrl } from '@/lib/privacy-url';
+import { useBrand } from '@/components/brand';
+import { getBrandTenantRoot } from '@fbuploadpro/contracts';
 import { toast } from '@/components/shared/ui/toast';
 
 import {
@@ -103,6 +105,15 @@ function FacebookSettingsLoading() {
 }
 
 export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsViewProps>) {
+  // Spec 205: the privacy URL must use the brand's own root. The
+  // helper defaults to NEXT_PUBLIC_ROOT_DOMAIN (fbuploadpro.com), so
+  // a NextRise student would otherwise paste our privacy URL into
+  // their Meta app. The brand comes from the root layout (resolved
+  // from the request host); no brand is hardcoded here.
+  const brandRoot = getBrandTenantRoot(
+    useBrand(),
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com'
+  );
   const queryClient = useQueryClient();
   const tenant = queryKeys.tenant(subdomain);
   const byocPath = buildTenantApiPath(subdomain, '/settings/byoc');
@@ -286,7 +297,7 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
           <FacebookConnectForm
             key={isEditMode ? 'edit' : 'connect'}
             subdomain={subdomain}
-            privacyUrl={buildPrivacyPolicyUrl(subdomain)}
+            privacyUrl={buildPrivacyPolicyUrl(subdomain, brandRoot)}
             initialAppId={credentials.fbAppId}
             hasExistingSecret={credentials.hasSecret}
             isEditMode={isEditMode}

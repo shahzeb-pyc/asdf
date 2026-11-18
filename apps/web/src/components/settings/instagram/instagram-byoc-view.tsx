@@ -44,6 +44,8 @@ import { Skeleton } from '@/components/shared/ui/skeleton';
 import { toast } from '@/components/shared/ui/toast';
 import { PlatformStatusMark } from '@/components/settings/platform/platform-status-mark';
 import { buildPrivacyPolicyUrl } from '@/lib/privacy-url';
+import { useBrand } from '@/components/brand';
+import { getBrandTenantRoot } from '@fbuploadpro/contracts';
 import { buildSubdomainOAuthRedirectUriForCallback } from '@fbuploadpro/contracts';
 import {
   InstagramConnectForm,
@@ -65,6 +67,13 @@ export interface InstagramByocViewProps {
 }
 
 export function InstagramByocView({ subdomain }: Readonly<InstagramByocViewProps>) {
+  // Spec 205: the privacy URL must use the brand's own root — see the
+  // Facebook view for why. The brand comes from the root layout
+  // (resolved from the request host); no brand is hardcoded here.
+  const brandRoot = getBrandTenantRoot(
+    useBrand(),
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com'
+  );
   const queryClient = useQueryClient();
   const tenant = queryKeys.tenant(subdomain);
   const credentialsPath = buildTenantApiPath(
@@ -262,7 +271,7 @@ export function InstagramByocView({ subdomain }: Readonly<InstagramByocViewProps
             <InstagramConnectForm
               key={isEditMode ? 'edit' : 'connect'}
               signInCallback={signInCallback}
-              privacyUrl={buildPrivacyPolicyUrl(subdomain)}
+              privacyUrl={buildPrivacyPolicyUrl(subdomain, brandRoot)}
               initialAppId={credentials.appId}
               initialConfigId={credentials.configId ?? ''}
               hasExistingSecret={credentials.hasSecret}

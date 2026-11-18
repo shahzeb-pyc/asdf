@@ -387,3 +387,74 @@ describe("login returnUrl sent to the API (absolute-URL Validation failed fix)",
     expect(body.returnUrl).toBeUndefined();
   });
 });
+
+describe("login returnUrl on the white-label brand (spec 205)", () => {
+  function renderNextrise() {
+    return render(
+      <BrandProvider brand="nextrise">
+        <LoginPage />
+      </BrandProvider>
+    );
+  }
+
+  it("honours a white-label absolute returnUrl as the post-login returnUrl", async () => {
+    const user = userEvent.setup();
+    vi.stubEnv("NEXT_PUBLIC_ROOT_DOMAIN", "fbuploadpro.com");
+    try {
+      setUrl("/login?returnUrl=https%3A%2F%2Fsajidali.app.sajidaliai.online%2Fschedule");
+      fetchMock.mockResolvedValue(jsonResponse(200, SUCCESS_BODY));
+      renderNextrise();
+      await fillAndSubmit(user, "sajidali@protonsemail.com", "correct-password");
+
+      await waitFor(() => expect(completeAuthRedirect).toHaveBeenCalled());
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(String(init.body)) as { returnUrl?: string };
+      expect(body.returnUrl).toBe("/schedule");
+      expect(body.returnUrl).not.toContain("app.sajidaliai.online");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("rejects a fbuploadpro returnUrl on a white-label login (no cross-brand leak)", async () => {
+    const user = userEvent.setup();
+    vi.stubEnv("NEXT_PUBLIC_ROOT_DOMAIN", "fbuploadpro.com");
+    try {
+      setUrl("/login?returnUrl=https%3A%2F%2Fsajidali.fbuploadpro.com%2Fschedule");
+      fetchMock.mockResolvedValue(jsonResponse(200, SUCCESS_BODY));
+      renderNextrise();
+      await fillAndSubmit(user, "sajidali@protonsemail.com", "correct-password");
+
+      await waitFor(() => expect(completeAuthRedirect).toHaveBeenCalled());
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(String(init.body)) as { returnUrl?: string };
+      // Rejected outright: the page falls back to the tenant home,
+      // and no fbuploadpro address ever reaches the login request.
+      expect(body.returnUrl).toBe("/");
+      expect(body.returnUrl ?? "").not.toContain("fbuploadpro.com");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("rejects a white-label returnUrl on a fbuploadpro login (the other direction)", async () => {
+    const user = userEvent.setup();
+    vi.stubEnv("NEXT_PUBLIC_ROOT_DOMAIN", "fbuploadpro.com");
+    try {
+      setUrl("/login?returnUrl=https%3A%2F%2Fsajidali.app.sajidaliai.online%2Fschedule");
+      fetchMock.mockResolvedValue(jsonResponse(200, SUCCESS_BODY));
+      render(<LoginPage />);
+      await fillAndSubmit(user, "owner@gmail.com", "correct-password");
+
+      await waitFor(() => expect(completeAuthRedirect).toHaveBeenCalled());
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(String(init.body)) as { returnUrl?: string };
+      // Same rule, mirrored: a nextrise address is not a safe
+      // returnUrl for a fbuploadpro login.
+      expect(body.returnUrl).toBe("/");
+      expect(body.returnUrl ?? "").not.toContain("app.sajidaliai.online");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});

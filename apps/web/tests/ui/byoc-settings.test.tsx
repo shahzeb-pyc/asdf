@@ -29,6 +29,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { FacebookSettingsView } from '@/components/settings/facebook/facebook-settings-view';
+import { BrandProvider } from '@/components/brand';
 import { createFacebookConnectFormSchema } from '@/components/settings/facebook/facebook-connect-form';
 import { formatConnectedDate } from '@/components/settings/facebook/facebook-connected-view';
 import { queryKeys } from '@/lib/data/query-keys';
@@ -792,4 +793,36 @@ describe('FacebookSettingsView — disconnect dialog (OD-135-2a)', () => {
     ).toBeTruthy();
     expect(screen.getByTestId('fb-disconnect-modal')).toBeTruthy();
   }, INTERACTION_TIMEOUT);
+});
+
+describe('Facebook privacy URL on the white-label brand (spec 205)', () => {
+  function renderNextrise(seed?: ByocPayload) {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: 60_000 },
+        mutations: { retry: false },
+      },
+    });
+    if (seed) {
+      queryClient.setQueryData(queryKeys.tenant(SUBDOMAIN).settings.byoc, seed);
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BrandProvider brand="nextrise">
+          <FacebookSettingsView subdomain={SUBDOMAIN} />
+        </BrandProvider>
+        <Toast />
+      </QueryClientProvider>
+    );
+    return queryClient;
+  }
+
+  it('shows the white-label privacy URL, not fbuploadpro.com', async () => {
+    renderNextrise(NOT_CONNECTED);
+
+    expect(await screen.findByTestId('fb-privacy-url')).toBeTruthy();
+    expect(screen.getByTestId('fb-privacy-url').textContent).toBe(
+      'https://acme.app.sajidaliai.online/privacy'
+    );
+  });
 });

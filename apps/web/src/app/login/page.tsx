@@ -56,6 +56,7 @@ import { Button } from '@/components/shared/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/shared/ui/alert';
 import { sanitizeAuthErrorMessage } from '@/lib/auth-errors';
 import { sanitizeAuthRedirectUrl } from '@/lib/auth-redirect';
+import { getBrandTenantRoot } from '@fbuploadpro/contracts';
 import { completeAuthRedirect } from '@/lib/auth-broadcast';
 import { api, isApiError } from '@/lib/api';
 import { LoginSuccessResponseSchema, type LoginErrorBody } from '@/lib/api/schemas/auth';
@@ -150,7 +151,20 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
     // are sanitized — only safe in-app paths survive (no open redirect).
     const rawReturn = params.get('next') ?? params.get('returnUrl');
     if (rawReturn) {
-      setReturnUrl(sanitizeAuthRedirectUrl(rawReturn));
+      // Spec 205: sanitize against the REQUEST's brand root, as the
+      // server does (spec 204 did the same in completeAuthRedirect).
+      // The old call let the helper default to NEXT_PUBLIC_ROOT_DOMAIN
+      // (fbuploadpro.com), so a white-label deep link failed the check
+      // and fell back to '/', and the user landed on the tenant home
+      // instead of the page they came from. The brand is the page's
+      // own brand (useBrand, resolved from the request host by the
+      // root layout — the same brand the form schema and the Gmail
+      // note already use); no brand is hardcoded here.
+      const brandRoot = getBrandTenantRoot(
+        brand,
+        process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000'
+      );
+      setReturnUrl(sanitizeAuthRedirectUrl(rawReturn, undefined, brandRoot, window.location.host));
     }
     const emailParam = params.get('email');
     if (emailParam) {
@@ -170,8 +184,10 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
     if (params.get('reason') === 'session-expired') {
       setSessionExpired(true);
     }
-    // Mount-only: the query string is the page's entry state.
-  }, []);
+    // Runs once per brand: the query string is the page's entry state
+    // and `brand` is the page's own brand, which never changes during
+    // its lifetime.
+  }, [brand]);
 
   const handleServerFieldErrors = (body: LoginErrorBody): boolean => {
     if (!body.details) return false;
