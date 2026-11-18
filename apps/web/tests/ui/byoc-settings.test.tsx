@@ -825,4 +825,21 @@ describe('Facebook privacy URL on the white-label brand (spec 205)', () => {
       'https://acme.sajidaliai.online/privacy'
     );
   });
+
+  // Spec 207: the Step 2 sign-in address must use the brand's own
+  // root too — the privacy URL alone is not enough, because a
+  // student pastes THIS address into their Meta app and Meta
+  // rejects the connect if it is not the address the real OAuth
+  // flow actually sends.
+  it('shows the white-label sign-in address, not fbuploadpro.com', async () => {
+    renderNextrise(NOT_CONNECTED);
+
+    expect(await screen.findByTestId('fb-signin-address')).toBeTruthy();
+    // Scheme is not asserted: it follows the page origin (https in
+    // production, http in this jsdom run); the host + path are what
+    // Meta matches.
+    const address = screen.getByTestId('fb-signin-address').textContent ?? '';
+    expect(address).toContain('acme.sajidaliai.online/api/auth/facebook/callback');
+    expect(address).not.toContain('fbuploadpro.com');
+  });
 });

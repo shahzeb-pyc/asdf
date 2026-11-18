@@ -1371,4 +1371,25 @@ describe('Privacy Policy URL on the white-label brand (spec 205)', () => {
       );
     }
   );
+
+  // Spec 207: the sign-in address must use the brand's own root too —
+  // the privacy URL alone is not enough, because a student pastes
+  // THIS address into their Meta app and Meta rejects the connect if
+  // it is not the address the real OAuth flow actually sends.
+  // Threads is origin-based on both sides and needs no brand root,
+  // so only Instagram is asserted here.
+  it('shows the white-label sign-in address for Instagram, not fbuploadpro.com', async () => {
+    const ig = PLATFORM_CASES.find((c) => c.platform === 'instagram') as PlatformCase;
+    renderNextriseView(ig, notConnectedPayload('instagram'));
+
+    // The sign-in URL is a bare SPAN (no testid) — same matcher as
+    // the fbuploadpro-side sign-in test below.
+    const address = await screen.findByText((_, element) =>
+      element?.tagName === 'SPAN' &&
+      (element.textContent ?? '').endsWith('/api/auth/instagram/callback')
+    );
+    const text = address.textContent ?? '';
+    expect(text).toContain('acme.sajidaliai.online/api/auth/instagram/callback');
+    expect(text).not.toContain('fbuploadpro.com');
+  });
 });
