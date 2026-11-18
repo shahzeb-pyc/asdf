@@ -288,7 +288,7 @@ password: 'correct-password',
     });
     const decoded = await verifySessionToken(token, getSessionSecret());
     expect(decoded.brand).toBe('nextrise');
-    expect(redirectUrl).toBe('https://acme.app.sajidaliai.online/');
+    expect(redirectUrl).toBe('https://acme.sajidaliai.online/');
   });
 
   it('our account logs in on our host with a branded token and our redirect', async () => {

@@ -1357,13 +1357,13 @@ describe('Privacy Policy URL on the white-label brand (spec 205)', () => {
       // as plain text (no testid exists there).
       if (c.platform === 'instagram') {
         expect(
-          await screen.findByText('https://acme.app.sajidaliai.online/privacy')
+          await screen.findByText('https://acme.sajidaliai.online/privacy')
         ).toBeTruthy();
       } else {
         const testId = `${c.platform}-privacy-url`;
         expect(await screen.findByTestId(testId)).toBeTruthy();
         expect(screen.getByTestId(testId).textContent).toBe(
-          'https://acme.app.sajidaliai.online/privacy'
+          'https://acme.sajidaliai.online/privacy'
         );
       }
       expect(document.body.textContent).not.toContain(

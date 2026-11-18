@@ -68,7 +68,8 @@ export function getBrandConfig(brand: Brand): BrandConfig {
 /**
  * Effective tenant root for a request (spec 191) — the root the OAuth
  * callbacks and connect routes must build their redirect URIs under.
- * NextRise requests always resolve under app.sajidaliai.online; our brand
+ * NextRise requests always resolve under sajidaliai.online (workspaces
+ * `<workspace>.sajidaliai.online`, app host app.sajidaliai.online); our brand
  * keeps the configured root verbatim. The fallback preserves each
  * caller's old env-unset default ('' for the OAuth routes — the
  * routing helpers resolve locally from the request URL then — and

@@ -93,16 +93,16 @@ describe('getCookieDomain white-label brand (spec 191)', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns .app.sajidaliai.online for white-label hosts, ignoring COOKIE_DOMAIN', () => {
+  it('returns .sajidaliai.online for white-label hosts, ignoring COOKIE_DOMAIN', () => {
     vi.stubEnv('NODE_ENV', 'production');
-    expect(getCookieDomain('app.sajidaliai.online')).toBe('.app.sajidaliai.online');
-    expect(getCookieDomain('student1.app.sajidaliai.online')).toBe('.app.sajidaliai.online');
+    expect(getCookieDomain('app.sajidaliai.online')).toBe('.sajidaliai.online');
+    expect(getCookieDomain('student1.sajidaliai.online')).toBe('.sajidaliai.online');
   });
 
   it('keeps our brand on .fbuploadpro.com when both brands are configured', () => {
     vi.stubEnv('NODE_ENV', 'production');
     expect(getCookieDomain('app.fbuploadpro.com')).toBe('.fbuploadpro.com');
-    expect(getCookieDomain('app.sajidaliai.online')).toBe('.app.sajidaliai.online');
+    expect(getCookieDomain('app.sajidaliai.online')).toBe('.sajidaliai.online');
   });
 
   it('does not throw for a white-label host whose root does not match', () => {
@@ -110,6 +110,6 @@ describe('getCookieDomain white-label brand (spec 191)', () => {
     vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', 'example.com');
     // The white-label root does not come from the configured root at
     // all, so a mismatched configured root must not fail the login.
-    expect(getCookieDomain('app.sajidaliai.online')).toBe('.app.sajidaliai.online');
+    expect(getCookieDomain('app.sajidaliai.online')).toBe('.sajidaliai.online');
   });
 });

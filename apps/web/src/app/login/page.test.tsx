@@ -401,7 +401,7 @@ describe("login returnUrl on the white-label brand (spec 205)", () => {
     const user = userEvent.setup();
     vi.stubEnv("NEXT_PUBLIC_ROOT_DOMAIN", "fbuploadpro.com");
     try {
-      setUrl("/login?returnUrl=https%3A%2F%2Fsajidali.app.sajidaliai.online%2Fschedule");
+      setUrl("/login?returnUrl=https%3A%2F%2Fsajidali.sajidaliai.online%2Fschedule");
       fetchMock.mockResolvedValue(jsonResponse(200, SUCCESS_BODY));
       renderNextrise();
       await fillAndSubmit(user, "sajidali@protonsemail.com", "correct-password");
@@ -410,7 +410,28 @@ describe("login returnUrl on the white-label brand (spec 205)", () => {
       const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(String(init.body)) as { returnUrl?: string };
       expect(body.returnUrl).toBe("/schedule");
-      expect(body.returnUrl).not.toContain("app.sajidaliai.online");
+      expect(body.returnUrl).not.toContain("sajidaliai.online");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("rejects the retired <workspace>.app returnUrl on a white-label login (spec 206)", async () => {
+    const user = userEvent.setup();
+    vi.stubEnv("NEXT_PUBLIC_ROOT_DOMAIN", "fbuploadpro.com");
+    try {
+      setUrl("/login?returnUrl=https%3A%2F%2Fsajidali.app.sajidaliai.online%2Fschedule");
+      fetchMock.mockResolvedValue(jsonResponse(200, SUCCESS_BODY));
+      renderNextrise();
+      await fillAndSubmit(user, "sajidali@protonsemail.com", "correct-password");
+
+      await waitFor(() => expect(completeAuthRedirect).toHaveBeenCalled());
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(String(init.body)) as { returnUrl?: string };
+      // The old absolute target fails the check and falls back to the
+      // tenant home — the old host is never sent as the returnUrl.
+      expect(body.returnUrl).toBe("/");
+      expect(body.returnUrl ?? "").not.toContain("app.sajidaliai.online");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -441,7 +462,7 @@ describe("login returnUrl on the white-label brand (spec 205)", () => {
     const user = userEvent.setup();
     vi.stubEnv("NEXT_PUBLIC_ROOT_DOMAIN", "fbuploadpro.com");
     try {
-      setUrl("/login?returnUrl=https%3A%2F%2Fsajidali.app.sajidaliai.online%2Fschedule");
+      setUrl("/login?returnUrl=https%3A%2F%2Fsajidali.sajidaliai.online%2Fschedule");
       fetchMock.mockResolvedValue(jsonResponse(200, SUCCESS_BODY));
       render(<LoginPage />);
       await fillAndSubmit(user, "owner@gmail.com", "correct-password");
@@ -452,7 +473,7 @@ describe("login returnUrl on the white-label brand (spec 205)", () => {
       // Same rule, mirrored: a nextrise address is not a safe
       // returnUrl for a fbuploadpro login.
       expect(body.returnUrl).toBe("/");
-      expect(body.returnUrl ?? "").not.toContain("app.sajidaliai.online");
+      expect(body.returnUrl ?? "").not.toContain("sajidaliai.online");
     } finally {
       vi.unstubAllEnvs();
     }

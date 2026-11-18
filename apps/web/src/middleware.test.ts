@@ -238,7 +238,7 @@ describe('middleware white-label brand (spec 191)', () => {
       requestWithCookie('https://app.sajidaliai.online/login', token)
     );
     expect(response.status).toBe(307);
-    expect(response.headers.get('location')).toBe('https://student1.app.sajidaliai.online/');
+    expect(response.headers.get('location')).toBe('https://student1.sajidaliai.online/');
   });
 
   it('a NextRise session on OUR gateway is not a session there — login renders, no workspace redirect', async () => {
@@ -292,10 +292,10 @@ describe('middleware white-label brand (spec 191)', () => {
     const token = await brandToken('nextrise');
     for (const path of ['/billing', '/my-plan', '/purchase', '/payments', '/refund']) {
       const response = await middleware(
-        requestWithCookie(`https://student1.app.sajidaliai.online${path}`, token)
+        requestWithCookie(`https://student1.sajidaliai.online${path}`, token)
       );
       expect(rewriteTarget(response)).toBe(
-        `https://student1.app.sajidaliai.online/_not-found`
+        `https://student1.sajidaliai.online/_not-found`
       );
     }
   });
@@ -303,10 +303,10 @@ describe('middleware white-label brand (spec 191)', () => {
   it('the Muse page passes through on a white-label tenant host, even authenticated', async () => {
     const token = await brandToken('nextrise');
     const response = await middleware(
-      requestWithCookie('https://student1.app.sajidaliai.online/muse', token)
+      requestWithCookie('https://student1.sajidaliai.online/muse', token)
     );
     expect(rewriteTarget(response)).toBe(
-      'https://student1.app.sajidaliai.online/tenant/student1/muse'
+      'https://student1.sajidaliai.online/tenant/student1/muse'
     );
   });
 
@@ -321,10 +321,59 @@ describe('middleware white-label brand (spec 191)', () => {
   it('an ordinary section still rewrites to the tenant path on a white-label tenant host', async () => {
     const token = await brandToken('nextrise');
     const response = await middleware(
-      requestWithCookie('https://student1.app.sajidaliai.online/schedule', token)
+      requestWithCookie('https://student1.sajidaliai.online/schedule', token)
     );
     expect(rewriteTarget(response)).toBe(
-      'https://student1.app.sajidaliai.online/tenant/student1/schedule'
+      'https://student1.sajidaliai.online/tenant/student1/schedule'
+    );
+  });
+
+  it('the retired <workspace>.app host never serves the workspace: a user session bounces to the new host (spec 206)', async () => {
+    const token = await brandToken('nextrise');
+    const response = await middleware(
+      requestWithCookie('https://student1.app.sajidaliai.online/schedule', token)
+    );
+    // The extracted subdomain is `student1.app`, which matches no
+    // session subdomain — the mismatch guard sends the user to their
+    // own host under the new root, with the path preserved. The old
+    // host serves no workspace content.
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe(
+      'https://student1.sajidaliai.online/schedule?notice=tenant_redirect'
+    );
+    expect(rewriteTarget(response)).toBeNull();
+  });
+
+  it('the retired <workspace>.app host rewrites an admin to a tenant path that cannot resolve (spec 206)', async () => {
+    const token = await signSessionToken(
+      {
+        userId: '11111111-1111-4111-8111-111111111111',
+        email: 'owneruser@gmail.com',
+        subdomain: 'student1',
+        role: 'admin',
+        status: 'active',
+        brand: 'nextrise',
+      },
+      DEV_SECRET
+    );
+    const response = await middleware(
+      requestWithCookie('https://student1.app.sajidaliai.online/schedule', token)
+    );
+    // Admins pass the access guard, so the request rewrites — but to
+    // /tenant/student1.app/…, and `student1.app` matches no workspace
+    // row (exact-match lookup), so the layout 404s instead of serving.
+    expect(rewriteTarget(response)).toBe(
+      'https://student1.app.sajidaliai.online/tenant/student1.app/schedule'
+    );
+  });
+
+  it('the retired <workspace>.app host sends a logged-out visitor to login, never to a workspace (spec 206)', async () => {
+    const response = await middleware(
+      requestWithCookie('https://student1.app.sajidaliai.online/schedule', null)
+    );
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe(
+      'https://app.sajidaliai.online/login?returnUrl=https%3A%2F%2Fstudent1.app.sajidaliai.online%2Fschedule'
     );
   });
 

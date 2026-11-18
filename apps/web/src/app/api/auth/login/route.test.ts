@@ -99,7 +99,7 @@ describe('POST /api/auth/login brand-aware email rule (spec 199)', () => {
 
   it('white-label host accepts a subdomain of the white-label host', async () => {
     const response = await POST(
-      request('student.app.sajidaliai.online', {
+      request('student.sajidaliai.online', {
         email: 'student@protonmail.com',
         password: 'correct-password-1',
       })
