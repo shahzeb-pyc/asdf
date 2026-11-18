@@ -11,6 +11,7 @@ import {
   callWithTikwmApiKeyRotation,
   fetchTikwmApiUserInfo,
   fetchTikwmApiUserPosts,
+  fetchTikwmApiUserPostsPage,
   MIRROR_RESOLVE_ERROR_E01,
   MIRROR_RESOLVE_ERROR_E02,
   parseTikwmApiKeys,
@@ -310,6 +311,89 @@ describe('fetchTikwmApiUserPosts', () => {
     await expect(
       fetchTikwmApiUserPosts('alice', { apiKeys: [], pauseStore: fakeStore(), now })
     ).rejects.toMatchObject({ code: 'NO_KEYS_CONFIGURED' });
+  });
+});
+
+describe('fetchTikwmApiUserPostsPage (spec 203 cursor pagination)', () => {
+  const now = new Date('2026-10-29T12:00:00.000Z');
+  const noSleep = async () => {};
+
+  it('returns videos + cursor + hasMore, and keeps play_count', async () => {
+    const fetchFn = vi.fn(async () =>
+      jsonResponse({
+        code: 0,
+        msg: 'success',
+        data: {
+          videos: [video({ video_id: 'v1', play_count: 11329 }), video({ video_id: 'v2', play_count: 50 })],
+          cursor: 'cursor-abc',
+          hasMore: true,
+        },
+      })
+    );
+    const page = await fetchTikwmApiUserPostsPage('alice', {
+      fetchFn: fetchFn as never,
+      apiKeys: ['key-1'],
+      pauseStore: fakeStore(),
+      now,
+      sleep: noSleep,
+    });
+    expect(page.videos).toHaveLength(2);
+    expect(page.videos[0]?.play_count).toBe(11329);
+    expect(page.cursor).toBe('cursor-abc');
+    expect(page.hasMore).toBe(true);
+    const [url] = fetchFn.mock.calls[0] as [string];
+    expect(url).toContain('/user/posts?unique_id=alice&count=30');
+    expect(url).not.toContain('cursor=');
+  });
+
+  it('sends the cursor on page 2 and reports the last page', async () => {
+    const fetchFn = vi.fn(async (url: string) =>
+      url.includes('cursor=cursor-abc')
+        ? jsonResponse({
+            code: 0,
+            data: { videos: [video({ video_id: 'v3' })], hasMore: false },
+          })
+        : jsonResponse({
+            code: 0,
+            data: { videos: [video({ video_id: 'v1' })], cursor: 'cursor-abc', hasMore: true },
+          })
+    );
+    const first = await fetchTikwmApiUserPostsPage('alice', {
+      fetchFn: fetchFn as never,
+      apiKeys: ['key-1'],
+      pauseStore: fakeStore(),
+      now,
+      sleep: noSleep,
+    });
+    expect(first.cursor).toBe('cursor-abc');
+    const second = await fetchTikwmApiUserPostsPage('alice', {
+      fetchFn: fetchFn as never,
+      apiKeys: ['key-1'],
+      pauseStore: fakeStore(),
+      now,
+      sleep: noSleep,
+      cursor: first.cursor,
+    });
+    expect(second.videos).toHaveLength(1);
+    expect(second.videos[0]?.video_id).toBe('v3');
+    expect(second.cursor).toBeNull();
+    expect(second.hasMore).toBe(false);
+    expect(fetchFn.mock.calls).toHaveLength(2);
+  });
+
+  it('fetchTikwmApiUserPosts still returns videos only (unchanged shape)', async () => {
+    const fetchFn = vi.fn(async () =>
+      jsonResponse({ code: 0, data: { videos: [video()], cursor: 'x', hasMore: true } })
+    );
+    const videos = await fetchTikwmApiUserPosts('alice', {
+      fetchFn: fetchFn as never,
+      apiKeys: ['key-1'],
+      pauseStore: fakeStore(),
+      now,
+      sleep: noSleep,
+    });
+    expect(videos).toHaveLength(1);
+    expect(Array.isArray(videos)).toBe(true);
   });
 });
 

@@ -285,11 +285,66 @@ function paidCodeToError(code: number, msg: string | undefined, kind: 'feed' | '
 
 export interface TikwmApiCallOptions {
   count?: number | undefined;
+  /**
+   * Spec 203: feed cursor for page 2+ (the paid API returns
+   * `cursor` + `hasMore` per page). Absent on the first page.
+   */
+  cursor?: string | null | undefined;
   fetchFn?: FetchFn | undefined;
   apiKeys?: string[] | undefined;
   pauseStore?: TikwmApiKeyPauseStore | null | undefined;
   now?: Date | undefined;
   sleep?: SleepFn | undefined;
+}
+
+/**
+ * One page of a username's posts from the PAID tikwmapi feed
+ * endpoint, with key rotation — the paged form of
+ * fetchTikwmApiUserPosts (spec 203): the ADU scraper fetches two
+ * pages (30 + 30 via cursor) to rank the newest 60 TikTok reels by
+ * views. Returns the videos plus the next-page cursor (null when
+ * there is no next page) and hasMore. Throws TikwmApiError exactly
+ * like fetchTikwmApiUserPosts when the feed cannot be fetched.
+ */
+export async function fetchTikwmApiUserPostsPage(
+  username: string,
+  options: TikwmApiCallOptions = {}
+): Promise<{ videos: TikwmVideoItem[]; cursor: string | null; hasMore: boolean }> {
+  const fetchFn = options.fetchFn ?? fetch;
+  const count = Math.max(1, Math.min(options.count ?? 30, TIKWMAPI_FEED_COUNT_MAX));
+  const cursorParam = options.cursor
+    ? `&cursor=${encodeURIComponent(options.cursor)}`
+    : '';
+  const raw = await callWithTikwmApiKeyRotation({
+    keys: options.apiKeys ?? [],
+    pauseStore: options.pauseStore ?? null,
+    now: options.now,
+    sleep: options.sleep,
+    callWithKey: async (key) => {
+      const body = await fetchPaidJson(
+        `/user/posts?unique_id=${encodeURIComponent(username)}&count=${count}${cursorParam}`,
+        key,
+        fetchFn
+      );
+      const parsed = TikwmUserPostsResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new TikwmApiError(
+          'BAD_RESPONSE',
+          'TikTok feed service returned an unexpected response.'
+        );
+      }
+      if (parsed.data.code !== 0 || !parsed.data.data) {
+        throw paidCodeToError(parsed.data.code, parsed.data.msg, 'feed');
+      }
+      const data = parsed.data.data;
+      return {
+        videos: data.videos,
+        cursor: data.cursor ?? null,
+        hasMore: data.hasMore ?? false,
+      };
+    },
+  });
+  return raw;
 }
 
 /**
@@ -305,33 +360,8 @@ export async function fetchTikwmApiUserPosts(
   username: string,
   options: TikwmApiCallOptions = {}
 ): Promise<TikwmVideoItem[]> {
-  const fetchFn = options.fetchFn ?? fetch;
-  const count = Math.max(1, Math.min(options.count ?? 30, TIKWMAPI_FEED_COUNT_MAX));
-  const raw = await callWithTikwmApiKeyRotation({
-    keys: options.apiKeys ?? [],
-    pauseStore: options.pauseStore ?? null,
-    now: options.now,
-    sleep: options.sleep,
-    callWithKey: async (key) => {
-      const body = await fetchPaidJson(
-        `/user/posts?unique_id=${encodeURIComponent(username)}&count=${count}`,
-        key,
-        fetchFn
-      );
-      const parsed = TikwmUserPostsResponseSchema.safeParse(body);
-      if (!parsed.success) {
-        throw new TikwmApiError(
-          'BAD_RESPONSE',
-          'TikTok feed service returned an unexpected response.'
-        );
-      }
-      if (parsed.data.code !== 0 || !parsed.data.data) {
-        throw paidCodeToError(parsed.data.code, parsed.data.msg, 'feed');
-      }
-      return parsed.data.data.videos;
-    },
-  });
-  return raw;
+  const page = await fetchTikwmApiUserPostsPage(username, options);
+  return page.videos;
 }
 
 /** Display info for a username (avatar/nickname). Display-only: a

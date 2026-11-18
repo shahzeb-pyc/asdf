@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import { buildTiktokProfileUrl, supportsYtdlpDiscovery } from './profile-urls.js';
 import { buildTiktokYtdlpArgs } from './ytdlp-args.js';
 import { extractIdsFromYtdlpJson } from './extract-ids.js';
-import { getTikwmScraperKeys, resolveSecUidWithTikwm } from './tikwm.js';
+import { fetchTikwmFeedVideos, getTikwmScraperKeys, resolveSecUidWithTikwm } from './tikwm.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -243,6 +243,76 @@ async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
 }
 
 /**
+ * Rank one TikTok discovery run by views (spec 203). Pure: no I/O,
+ * no logging — the caller logs the summary.
+ *
+ * The feed's videos (newest 60, with play counts) sort by
+ * play_count desc and take the front of the list; the rest of the
+ * discovery list follows in discovery order (newest first); feed IDs
+ * are removed from the discovery list so no reel is added twice.
+ * Feed videos missing from the discovery list still rank (the feed
+ * saw a reel yt-dlp missed); the total is capped at maxCount,
+ * dropping from the tail. A missing/invalid play_count counts as 0
+ * and sorts last among the feed set (ties keep feed order — newest
+ * first — because Array.sort is stable).
+ *
+ * Returns { entries, missingPlayCount, feedOnlyCount } where entries
+ * are { id, view_count } in final (ranked) order; view_count is null
+ * for discovery-order entries (never measured).
+ */
+export function rankTikTokDiscoveryIds(discoveryIds, feedVideos, maxCount) {
+  const limit = Math.max(1, maxCount || 1000);
+  const feedById = new Map();
+  let missingPlayCount = 0;
+  for (const video of feedVideos ?? []) {
+    const id = typeof video?.video_id === 'string' ? video.video_id.trim() : '';
+    if (!id || feedById.has(id)) continue;
+    const playCount =
+      typeof video?.play_count === 'number' &&
+      Number.isFinite(video.play_count) &&
+      video.play_count >= 0
+        ? Math.floor(video.play_count)
+        : undefined;
+    if (playCount === undefined) missingPlayCount += 1;
+    feedById.set(id, playCount ?? 0);
+  }
+  const ranked = [...feedById.entries()]
+    .map(([id, viewCount]) => ({ id, view_count: viewCount }))
+    .sort((a, b) => b.view_count - a.view_count);
+  const rankedIds = new Set(ranked.map((entry) => entry.id));
+  const discoverySet = new Set(discoveryIds ?? []);
+  const feedOnlyCount = ranked.filter((entry) => !discoverySet.has(entry.id)).length;
+  const rest = (discoveryIds ?? [])
+    .filter((id) => !rankedIds.has(id))
+    .map((id) => ({ id, view_count: null }));
+  const entries = [...ranked, ...rest].slice(0, limit);
+  return { entries, missingPlayCount, feedOnlyCount };
+}
+
+/**
+ * Apply the TikTok view ranking to a successful discovery run.
+ * The feed is a ranking enrichment only — when it fails (no keys,
+ * throttle, quota, unreachable), the run still succeeds on
+ * discovery order (newest first) with a loud log; the sync is never
+ * failed over it. Returns { ok: true, ids } with entries in final
+ * (ranked) order.
+ */
+async function applyTikTokViewRanking(discoveryIds, username, maxCount, tikwmKeys, fetchFn, logUser) {
+  const feed = await fetchTikwmFeedVideos(username, { keys: tikwmKeys, fetchFn });
+  if (!feed.ok) {
+    console.warn(
+      `⚠️ TikTok view ranking unavailable for @${logUser} (${feed.reason}) — falling back to discovery order (newest first).`,
+    );
+    return { ok: true, ids: discoveryIds.map((id) => ({ id, view_count: null })) };
+  }
+  const ranked = rankTikTokDiscoveryIds(discoveryIds, feed.videos, maxCount);
+  console.log(
+    `✅ TikTok view ranking for @${logUser}: top ${Math.min(30, ranked.entries.length)} by views first (${feed.videos.length} feed videos, ${ranked.missingPlayCount} without a view count, ${ranked.feedOnlyCount} feed-only).`,
+  );
+  return { ok: true, ids: ranked.entries };
+}
+
+/**
  * Discover TikTok video IDs (owner order 2026-11-12, spec
  * scraper-tikwm-first-concurrency):
  * 1. Paid TikWM /user/info FIRST resolves the camelCase secUid
@@ -275,9 +345,13 @@ async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
  * @param {number} maxCount
  * @param {{ fetchFn?: typeof fetch, tikwmKeys?: string[] }} [options]
  *   Injectable for tests: fetchFn replaces the global fetch for the
- *   TikWM call, tikwmKeys replaces the env-var key list. Production
+ *   TikWM calls, tikwmKeys replaces the env-var key list. Production
  *   callers pass nothing.
- * @returns {Promise<{ ok: true, ids: string[] } | { ok: false, reason: string }>}
+ * @returns {Promise<{ ok: true, ids: { id: string, view_count: number | null }[] } | { ok: false, reason: string }>}
+ *   On success, ids are ranked entries in final order — top 30 by
+ *   views first, then the rest newest first (spec 203) — so the
+ *   upsert can assign discovery_rank from position. On feed
+ *   failure the entries keep discovery order (newest first).
  */
 export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCount, options = {}) {
   const p = (platform || '').toLowerCase();
@@ -314,6 +388,7 @@ export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCoun
 
   // 1. Paid TikWM lookup FIRST.
   const tikwmKeys = options.tikwmKeys ?? getTikwmScraperKeys();
+  let discovery;
   if (tikwmKeys.length === 0) {
     // No-keys rule (spec §1): loud startup ERROR already said so
     // (see discovery/tikwm.js); one warning per claim here, then
@@ -322,6 +397,7 @@ export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCoun
     console.warn(
       `⚠️ TikWM primary unavailable for @${logUser} (no TIKWMAPI_KEYS_SCRAPER keys) — running the yt-dlp profile-URL backup only.`,
     );
+    discovery = await runProfileBackup(profileUrl, maxCount, resolveProxy, logUser, null);
   } else {
     const lookup = await resolveSecUidWithTikwm(cleanUser, {
       keys: tikwmKeys,
@@ -333,21 +409,34 @@ export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCoun
       const direct = await runDiscoveryTarget(`tiktokuser:${lookup.secUid}`, maxCount, {}, logUser);
       if (direct.ok) {
         console.log(`✅ TikTok discovery via TikWM primary for @${logUser}.`);
-        return direct;
+        discovery = direct;
+      } else {
+        console.warn(
+          `⚠️ TikWM primary resolved secUid for @${logUser} but the tiktokuser: direct attempt failed (${direct.reason}); trying the profile-URL backup...`,
+        );
+        discovery = await runProfileBackup(profileUrl, maxCount, resolveProxy, logUser, `tikwm direct attempt failed (${direct.reason})`);
       }
+    } else {
       console.warn(
-        `⚠️ TikWM primary resolved secUid for @${logUser} but the tiktokuser: direct attempt failed (${direct.reason}); trying the profile-URL backup...`,
+        `⚠️ TikWM primary lookup failed for @${logUser} (${lookup.reason}); trying the profile-URL backup...`,
       );
-      return runProfileBackup(profileUrl, maxCount, resolveProxy, logUser, `tikwm direct attempt failed (${direct.reason})`);
+      discovery = await runProfileBackup(profileUrl, maxCount, resolveProxy, logUser, `tikwm lookup failed (${lookup.reason})`);
     }
-    console.warn(
-      `⚠️ TikWM primary lookup failed for @${logUser} (${lookup.reason}); trying the profile-URL backup...`,
-    );
-    return runProfileBackup(profileUrl, maxCount, resolveProxy, logUser, `tikwm lookup failed (${lookup.reason})`);
   }
 
-  // No keys: backup-only.
-  return runProfileBackup(profileUrl, maxCount, resolveProxy, logUser, null);
+  if (!discovery.ok) {
+    return discovery;
+  }
+
+  // Spec 203: rank the successful run by views before the upsert.
+  return applyTikTokViewRanking(
+    discovery.ids,
+    cleanUser,
+    maxCount,
+    tikwmKeys,
+    options.fetchFn,
+    logUser,
+  );
 }
 
 /**

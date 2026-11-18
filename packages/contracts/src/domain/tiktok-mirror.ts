@@ -66,6 +66,13 @@ export const TikwmVideoItemSchema = z.object({
   title: z.string().optional(),
   cover: z.string().optional(),
   create_time: z.number().int().nonnegative().optional(),
+  /**
+   * Spec 203: total views (raw feed field `play_count`). Optional:
+   * older payloads and the mirror paths never carried it, and the
+   * TikTok ranking treats a missing count as 0. The raw feed
+   * returns it on every video item; the schema used to drop it.
+   */
+  play_count: z.number().int().nonnegative().optional(),
   images: z.array(z.string()).optional(),
   author: z
     .object({

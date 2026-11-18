@@ -1,5 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { TikwmUserInfoResponseSchema } from './tiktok-mirror.js';
+import {
+  TikwmUserInfoResponseSchema,
+  TikwmVideoItemSchema,
+} from './tiktok-mirror.js';
+
+describe('TikwmVideoItemSchema play_count (spec 203)', () => {
+  it('keeps play_count when the raw feed returns it', () => {
+    const parsed = TikwmVideoItemSchema.safeParse({
+      video_id: '7709148290201341205',
+      play: 'https://example.com/no-wm.mp4',
+      play_count: 11329,
+      create_time: 1794925963,
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.play_count).toBe(11329);
+  });
+
+  it('keeps parsing when play_count is absent (older payloads, mirror paths)', () => {
+    const parsed = TikwmVideoItemSchema.safeParse({
+      video_id: '7709148290201341205',
+      play: 'https://example.com/no-wm.mp4',
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.play_count).toBeUndefined();
+  });
+
+  it('rejects a negative play_count', () => {
+    const parsed = TikwmVideoItemSchema.safeParse({
+      video_id: '7709148290201341205',
+      play_count: -1,
+    });
+    expect(parsed.success).toBe(false);
+  });
+});
 
 // Pins the camelCase `secUid` field the ADU scraper's TikWM fallback
 // resolves (spec scraper-tikwm-fallback). The live /user/info payload
