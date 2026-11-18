@@ -1382,7 +1382,12 @@ describe('Privacy Policy URL on the white-label brand (spec 205)', () => {
     const ig = PLATFORM_CASES.find((c) => c.platform === 'instagram') as PlatformCase;
     renderNextriseView(ig, notConnectedPayload('instagram'));
 
-    const address = await screen.findByTestId('instagram-setup-address-signin');
+    // The sign-in URL is a bare SPAN (no testid) — same matcher as
+    // the fbuploadpro-side sign-in test below.
+    const address = await screen.findByText((_, element) =>
+      element?.tagName === 'SPAN' &&
+      (element.textContent ?? '').endsWith('/api/auth/instagram/callback')
+    );
     const text = address.textContent ?? '';
     expect(text).toContain('acme.sajidaliai.online/api/auth/instagram/callback');
     expect(text).not.toContain('fbuploadpro.com');
