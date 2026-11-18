@@ -117,6 +117,36 @@ describe('Threads magic-link generation', () => {
     expect(payload.exp - payload.iat).toBe(900);
   });
 
+  it('builds the magic link on the white-label app host, not NEXT_PUBLIC_APP_URL (spec 208)', async () => {
+    // The trap: the deployment-wide app URL is our app host. The
+    // old code minted `https://app.fbuploadpro.com/connect/...`
+    // here and the whole connect ran on fbuploadpro.com — this
+    // test fails on that code.
+    process.env.NEXT_PUBLIC_APP_URL = 'https://app.fbuploadpro.com';
+    try {
+      const req = new NextRequest(
+        'https://sajidali.sajidaliai.online/api/tenant/acme/threads/accounts/magic-link',
+        {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            expectedExternalAccountId: 'th-exp',
+            expectedDisplayName: 'Expired Willow',
+          }),
+        }
+      );
+      const res = await handleGenerateThreadsMagicLink(req, 'acme', makeFake());
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.magicUrl).toMatch(
+        /^https:\/\/app\.sajidaliai\.online\/connect\/threads\?token=<redacted>
+      );
+      expect(json.magicUrl).not.toContain('fbuploadpro.com');
+    } finally {
+      process.env.NEXT_PUBLIC_APP_URL = 'https://app.example.test';
+    }
+  });
+
   it('rejects generation when Threads BYOC is not configured', async () => {
     const res = await postMagicLink({}, makeFake({ hasCredentials: false }));
     expect(res.status).toBe(422);
@@ -175,6 +205,27 @@ describe('Threads magic-link entry (/connect/threads)', () => {
     expect(statePayload.isMagic).toBe(true);
     expect(statePayload.expectedExternalAccountId).toBe('th-exp');
     expect(statePayload.expectedDisplayName).toBe('Expired Willow');
+  });
+
+  it('builds the authorize redirect URI on the white-label app host when the magic link is opened there (spec 208)', async () => {
+    // Brand agreement, middle leg: the magic link is displayed on
+    // the white-label app host, and the generic Threads callback
+    // lives on the app host too — so the authorize call must come
+    // back to app.sajidaliai.online, not to fbuploadpro.com.
+    const token = await validToken({
+      expectedExternalAccountId: 'th-exp',
+      expectedDisplayName: 'Expired Willow',
+    });
+    const req = new NextRequest(
+      `https://app.sajidaliai.online/connect/threads?token=<redacted>
+    );
+    const res = await handleConnectThreads(req, makeFake() as never);
+    expect(res.status).toBe(307);
+    const location = res.headers.get('location')!;
+    expect(location).toContain('threads.com/oauth/authorize');
+    expect(new URL(location).searchParams.get('redirect_uri')).toBe(
+      'https://app.sajidaliai.online/api/connect/threads/callback'
+    );
   });
 
   it('redirects a missing token to the error page', async () => {

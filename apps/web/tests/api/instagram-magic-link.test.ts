@@ -210,6 +210,35 @@ describe('Magic Link Instagram Connection Endpoints', () => {
       expect(payload.expectedInstagramAccountId).toBe('ig_user_123');
       expect(payload.expectedDisplayName).toBe('Sunset Bakery');
     });
+
+    it('builds the magic link on the white-label app host, not NEXT_PUBLIC_APP_URL (spec 208)', async () => {
+      // The trap: the deployment-wide app URL is our app host. The
+      // old code minted `https://app.fbuploadpro.com/connect/...`
+      // here and the whole connect ran on fbuploadpro.com — this
+      // test fails on that code.
+      process.env.NEXT_PUBLIC_APP_URL = 'https://app.fbuploadpro.com';
+      try {
+        const req = new NextRequest(
+          'https://sajidali.sajidaliai.online/api/tenant/acme/instagram/accounts/magic-link',
+          {
+            method: 'POST',
+            headers: { cookie: validSessionCookie },
+          }
+        );
+        const res = await generateInstagramMagicLink(req, {
+          params: Promise.resolve({ subdomain: 'acme' }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.magicUrl).toContain(
+          'https://app.sajidaliai.online/connect/instagram?token='
+        );
+        expect(data.magicUrl).not.toContain('fbuploadpro.com');
+      } finally {
+        process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+      }
+    });
   });
 
   describe('GET /connect/instagram (Magic Link Forwarder)', () => {
@@ -717,6 +746,129 @@ describe('Magic Link Instagram Connection Endpoints', () => {
       expect(res.status).toBe(307);
       expect(res.headers.get('location')).toBe(
         'https://app.fbuploadpro.com/connect/instagram/error?reason=oauth_failed'
+      );
+    });
+  });
+
+  // Magic-link host rule on the white label (spec 208): the
+  // callback runs on the workspace-subdomain host, but the connect
+  // pages only exist on the app host — and on the white label the
+  // app host is app.sajidaliai.online, not the deployment-wide
+  // NEXT_PUBLIC_APP_URL.
+  describe('OAuth callback on a white-label tenant host redirects magic flows to the white-label app host', () => {
+    beforeEach(() => {
+      process.env.NEXT_PUBLIC_ROOT_DOMAIN = 'sajidaliai.online';
+      // The trap: the deployment-wide app URL is our app host.
+      process.env.NEXT_PUBLIC_APP_URL = 'https://app.fbuploadpro.com';
+    });
+
+    afterEach(() => {
+      delete process.env.NEXT_PUBLIC_ROOT_DOMAIN;
+      process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+    });
+
+    function mockInstagramFetch() {
+      const granted = [
+        'instagram_basic',
+        'instagram_content_publish',
+        'instagram_manage_comments',
+        'instagram_manage_insights',
+      ].map((permission) => ({ permission, status: 'granted' }));
+      const body = (value: unknown) => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        body: null,
+        arrayBuffer: async () => new TextEncoder().encode(JSON.stringify(value)),
+        json: async () => value,
+      });
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(body({ access_token: <redacted>
+        .mockResolvedValueOnce(body({ client_business_id: 'biz_1', id: 'sys_1' }))
+        .mockResolvedValueOnce(
+          body({ data: [{ id: 'ig_user_999', username: 'sunsetbakery' }] })
+        )
+        .mockResolvedValueOnce(body({ data: granted }));
+    }
+
+    function mockDb(): DatabaseClient {
+      return {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'workspace_sajidali_123' }]);
+          }
+          if (sql.includes('FROM platform_credentials')) {
+            return Promise.resolve([
+              {
+                client_id: 'ig_app_id_123',
+                encrypted_client_secret: validEncryptedIgAppSecret,
+                config_id: 'cfg_123',
+              },
+            ]);
+          }
+          if (sql.includes('SELECT id FROM social_accounts')) {
+            return Promise.resolve([]);
+          }
+          if (sql.includes('INSERT INTO social_accounts')) {
+            return Promise.resolve([{ id: 'mock-account-uuid' }]);
+          }
+          if (sql.includes('INSERT INTO destinations')) {
+            return Promise.resolve([{ id: 'mock-destination-uuid' }]);
+          }
+          return Promise.resolve([]);
+        }),
+      } as unknown as DatabaseClient;
+    }
+
+    it('redirects magic success to the white-label app host, not fbuploadpro.com', async () => {
+      mockInstagramFetch();
+      const state = await signOAuthState(
+        {
+          tenantSubdomain: 'sajidali',
+          userId,
+          nonce: 'wl_magic_nonce_1234',
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 600,
+          isMagic: true,
+        },
+        TEST_SECRET
+      );
+      const req = new NextRequest(
+        `https://sajidali.sajidaliai.online/api/auth/instagram/callback?code=mock_code&state=${state}`
+      );
+      const res = await handleInstagramCallback(req, mockDb());
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe(
+        'https://app.sajidaliai.online/connect/instagram/success?accountName=sunsetbakery'
+      );
+    });
+
+    it('redirects a magic token-exchange failure to the white-label app-host error page', async () => {
+      global.fetch = vi.fn().mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({ error: { message: 'bad code' } }),
+      });
+      const state = await signOAuthState(
+        {
+          tenantSubdomain: 'sajidali',
+          userId,
+          nonce: 'wl_magic_nonce_5678',
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 600,
+          isMagic: true,
+        },
+        TEST_SECRET
+      );
+      const req = new NextRequest(
+        `https://sajidali.sajidaliai.online/api/auth/instagram/callback?code=mock_code&state=${state}`
+      );
+      const res = await handleInstagramCallback(req, mockDb());
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe(
+        'https://app.sajidaliai.online/connect/instagram/error?reason=oauth_failed'
       );
     });
   });
