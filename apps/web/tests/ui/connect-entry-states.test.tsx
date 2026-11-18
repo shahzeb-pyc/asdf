@@ -14,6 +14,10 @@ import { render, screen } from '@testing-library/react';
 
 import FacebookConnectSuccessPage from '@/app/connect/facebook/success/page';
 import { ConnectErrorView, getConnectErrorCopy } from '@/app/connect/facebook/error/page';
+import { InstagramConnectSuccessView } from '@/app/connect/instagram/success/page';
+import { ThreadsConnectSuccessView } from '@/app/connect/threads/success/page';
+import { InstagramConnectErrorView } from '@/app/connect/instagram/error/page';
+import { ThreadsConnectErrorView } from '@/app/connect/threads/error/page';
 import AccountSuspendedPage from '@/app/account-suspended/page';
 
 describe('connect success page (spec 136 §3.4)', () => {
@@ -127,5 +131,89 @@ describe('account suspended page (spec 136 §3.4 / §5.5)', () => {
     const { container } = render(<AccountSuspendedPage />);
     expect(container.querySelectorAll('[style]')).toHaveLength(0);
     expect(container.querySelectorAll('a, button, input, select, textarea')).toHaveLength(0);
+  });
+});
+
+/**
+ * Instagram/Threads magic outcome pages (spec 208, FB parity).
+ *
+ * The success pages offer a dashboard link on every variant (the
+ * original tab may be closed), and the error pages offer a way
+ * forward on every failure except an explicit cancel. The links
+ * are relative `/` — the pages are served from the brand's app
+ * host, so `/` is the brand gateway host, never fbuploadpro.com
+ * on the white label.
+ */
+describe('instagram/threads magic success pages carry a dashboard back link (spec 208)', () => {
+  it('instagram success renders a relative dashboard link on the plain variant', () => {
+    render(<InstagramConnectSuccessView params={{}} />);
+    const link = screen.getByTestId('instagram-magic-success-dashboard-link');
+    expect(link.getAttribute('href')).toBe('/');
+    expect(link.textContent).toContain('Back to FBUploadPro dashboard');
+  });
+
+  it('instagram success renders a relative dashboard link on the mismatch variant', () => {
+    render(
+      <InstagramConnectSuccessView
+        params={{
+          reconnectedMismatch: true,
+          newAccountName: 'Sunset Bakery',
+          expectedAccountName: 'Old Account',
+        }}
+      />
+    );
+    const link = screen.getByTestId('instagram-magic-mismatch-dashboard-link');
+    expect(link.getAttribute('href')).toBe('/');
+    expect(link.textContent).toContain('Back to FBUploadPro dashboard');
+    expect(screen.queryByTestId('instagram-magic-success-dashboard-link')).toBeNull();
+  });
+
+  it('threads success renders a relative dashboard link on the plain variant', () => {
+    render(<ThreadsConnectSuccessView params={{}} />);
+    const link = screen.getByTestId('threads-magic-success-dashboard-link');
+    expect(link.getAttribute('href')).toBe('/');
+    expect(link.textContent).toContain('Back to FBUploadPro dashboard');
+  });
+
+  it('threads success renders a relative dashboard link on the mismatch variant', () => {
+    render(
+      <ThreadsConnectSuccessView
+        params={{
+          reconnectedMismatch: true,
+          newAccountName: 'Willow',
+          expectedAccountName: 'Old Account',
+        }}
+      />
+    );
+    const link = screen.getByTestId('threads-magic-mismatch-dashboard-link');
+    expect(link.getAttribute('href')).toBe('/');
+    expect(link.textContent).toContain('Back to FBUploadPro dashboard');
+    expect(screen.queryByTestId('threads-magic-success-dashboard-link')).toBeNull();
+  });
+});
+
+describe('instagram/threads magic error pages carry a back link except on cancel (spec 208)', () => {
+  it('instagram error renders a relative back link on a failure', () => {
+    render(<InstagramConnectErrorView reason="oauth_failed" />);
+    const link = screen.getByTestId('instagram-magic-connect-error-back');
+    expect(link.getAttribute('href')).toBe('/');
+    expect(link.textContent).toContain('Back to FBUploadPro');
+  });
+
+  it('instagram error renders no back link on an explicit cancel', () => {
+    render(<InstagramConnectErrorView reason="cancelled" />);
+    expect(screen.queryByTestId('instagram-magic-connect-error-back')).toBeNull();
+  });
+
+  it('threads error renders a relative back link on a failure', () => {
+    render(<ThreadsConnectErrorView reason="oauth_failed" />);
+    const link = screen.getByTestId('threads-magic-connect-error-back');
+    expect(link.getAttribute('href')).toBe('/');
+    expect(link.textContent).toContain('Back to FBUploadPro');
+  });
+
+  it('threads error renders no back link on an explicit cancel', () => {
+    render(<ThreadsConnectErrorView reason="cancelled" />);
+    expect(screen.queryByTestId('threads-magic-connect-error-back')).toBeNull();
   });
 });

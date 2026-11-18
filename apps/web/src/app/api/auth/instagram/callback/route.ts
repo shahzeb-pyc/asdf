@@ -11,7 +11,7 @@ import {
   type OAuthStatePayload,
 } from '@fbuploadpro/contracts';
 import { logServerError, trackServerEvent } from '@/lib/server-analytics';
-import { getRequestBrandRoot } from '@/lib/brand';
+import { getRequestBrandAppUrl, getRequestBrandRoot } from '@/lib/brand';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
@@ -283,7 +283,14 @@ function buildPostConnectRedirect(
 
 function getCallbackEnvConfig(request: NextRequest) {
   const sessionSecret = getSessionSecret();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  // Spec 208: the magic outcome pages are built on the brand's app
+  // host, not the deployment-wide NEXT_PUBLIC_APP_URL — on the white
+  // label that value is our app host, so the success/error page
+  // would land on fbuploadpro.com with FBUploadPro branding.
+  // (The env `redirectUri` below is only a fallback: the token
+  // exchange prefers the state payload's redirect URI, and the
+  // redirect-URI rebuild derives the host from the brand root.)
+  const appUrl = getRequestBrandAppUrl(request);
   const rootDomain = getRequestBrandRoot(request);
   const redirectUri = `${appUrl}/api/auth/instagram/callback`;
 

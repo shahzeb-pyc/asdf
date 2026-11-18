@@ -7,6 +7,7 @@ import {
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import { getRequestBrandAppUrl } from '@/lib/brand';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveWorkspaceFacebookCredentials } from '@/lib/server/byoc-resolver';
 import { z } from 'zod';
@@ -101,7 +102,13 @@ export async function handleGenerateMagicLink(
       { status: 500 }
     );
   }
-  const appUrl = configuredAppUrl || 'http://localhost:3000';
+  // Spec 208: the magic URL is built on the brand's app host, not
+  // the deployment-wide NEXT_PUBLIC_APP_URL — on the white label
+  // that value is our app host, so a link built from it would run
+  // the whole connect on fbuploadpro.com. (The P1-7 fail-loud
+  // check above stays: it guards the deployment's app URL for
+  // our brand, and the helper falls back to it there.)
+  const appUrl = getRequestBrandAppUrl(request);
 
   // 3. Pre-check that Facebook BYOC is configured for this workspace
   const client = dbClient || getSupabaseAdminClient();
@@ -145,14 +152,11 @@ export async function handleGenerateMagicLink(
     sessionSecret
   );
 
-  // Audit N5: strip trailing slashes off the app URL (no double
-  // slash) and encode the token — safe today only because the
+  // Audit N5: encode the token — safe today only because the
   // token charset is base64url+hex, which must not be assumed.
-  // Plain loop, not a /\/+$/ regex: Sonar S8786 flags the regex
-  // form for super-linear backtracking.
-  let magicBase = appUrl;
-  while (magicBase.endsWith('/')) magicBase = magicBase.slice(0, -1);
-  const magicUrl = `${magicBase}/connect/facebook?token=${encodeURIComponent(token)}`;
+  // (The helper already stripped trailing slashes off the app
+  // URL, so no local strip loop is needed here.)
+  const magicUrl = `${appUrl}/connect/facebook?token=${encodeURIComponent(token)}`;
 
   return NextResponse.json({
     success: true,

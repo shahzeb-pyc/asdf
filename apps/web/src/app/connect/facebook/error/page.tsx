@@ -116,10 +116,15 @@ export function ConnectErrorView({
         // Audit UX1: every failure except an explicit cancel gets a
         // way forward. This device holds no session, so it cannot
         // restart the connect itself — the back action returns the
-        // user to FBUploadPro, where they can connect again from
+        // user to the app host, where they can connect again from
         // Accounts (BL1 established this pattern for save failures).
+        // Spec 208: the link is relative — this page is served from
+        // the brand's app host, so `/` is the brand gateway host
+        // (on the white label `app.sajidaliai.online`). An absolute
+        // `NEXT_PUBLIC_APP_URL` here would send a NextRise student
+        // to the wrong brand's dashboard.
         <Button asChild data-testid="magic-connect-error-back">
-          <Link href={process.env.NEXT_PUBLIC_APP_URL || '/'}>
+          <Link href="/">
             Back to {brandConfig.shortName}
           </Link>
         </Button>

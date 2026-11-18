@@ -206,6 +206,41 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
       }
     });
 
+    it('builds the magic link on the white-label app host, not NEXT_PUBLIC_APP_URL (spec 208)', async () => {
+      // The trap: the deployment-wide app URL is our app host. The
+      // old code minted `https://app.fbuploadpro.com/connect/...`
+      // here and the whole connect ran on fbuploadpro.com — this
+      // test fails on that code.
+      process.env.NEXT_PUBLIC_APP_URL = 'https://app.fbuploadpro.com';
+      try {
+        const req = new NextRequest(
+          'https://sajidali.sajidaliai.online/api/tenant/acme/accounts/magic-link',
+          {
+            method: 'POST',
+            headers: {
+              cookie: validSessionCookie,
+              // NextRequest carries no Host header unless given one:
+              // this is what makes the request arrive on the
+              // white-label tenant host.
+              host: 'sajidali.sajidaliai.online',
+            },
+          }
+        );
+        const res = await generateMagicLink(req, {
+          params: Promise.resolve({ subdomain: 'acme' }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.magicUrl).toContain(
+          'https://app.sajidaliai.online/connect/facebook?token='
+        );
+        expect(data.magicUrl).not.toContain('fbuploadpro.com');
+      } finally {
+        process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+      }
+    });
+
     it('fails loud in production when the app URL is unset instead of minting a localhost magic link (P1-7)', async () => {
       const prevAppUrl = process.env.NEXT_PUBLIC_APP_URL;
       delete process.env.NEXT_PUBLIC_APP_URL;
@@ -293,6 +328,37 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
       expect(statePayload.tenantSubdomain).toBe('acme');
       expect(statePayload.userId).toBe(userId);
       expect(statePayload.isMagic).toBe(true);
+    });
+
+    it('builds the OAuth redirect URI on the white-label tenant host when the magic link is opened there (spec 208)', async () => {
+      // Brand agreement, middle leg: the magic link is displayed on
+      // the white-label app host, so the Facebook authorize call
+      // must come back to the white-label tenant host — not to a
+      // fbuploadpro.com callback the student never registered.
+      const now = Math.floor(Date.now() / 1000);
+      const magicToken = await signMagicLinkToken(
+        {
+          tenantSubdomain: 'sajidali',
+          userId,
+          nonce: 'test_nonce_wl_12345678',
+          iat: now,
+          exp: now + 900,
+        },
+        TEST_SECRET
+      );
+
+      const req = new NextRequest(
+        `https://app.sajidaliai.online/connect/facebook?token=${magicToken}`,
+        { headers: { host: 'app.sajidaliai.online' } }
+      );
+      const res = await forwardMagicLink(req);
+
+      expect(res.status).toBe(307);
+      const url = new URL(res.headers.get('location')!);
+      expect(url.origin).toBe('https://www.facebook.com');
+      expect(url.searchParams.get('redirect_uri')).toBe(
+        'https://sajidali.sajidaliai.online/api/auth/facebook/callback'
+      );
     });
 
     it('resolves workspace BYOC app_id if configured in platform_credentials', async () => {
@@ -650,6 +716,127 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
       expect(res.status).toBe(307);
       expect(res.headers.get('location')).toBe(
         'https://app.fbuploadpro.com/connect/facebook/error?reason=internal_oauth_error'
+      );
+    });
+  });
+
+  describe('OAuth callback on a white-label tenant host redirects magic flows to the white-label app host (spec 208)', () => {
+    beforeEach(() => {
+      process.env.NEXT_PUBLIC_ROOT_DOMAIN = 'sajidaliai.online';
+      // The trap: the deployment-wide app URL is our app host.
+      process.env.NEXT_PUBLIC_APP_URL = 'https://app.fbuploadpro.com';
+    });
+
+    afterEach(() => {
+      delete process.env.NEXT_PUBLIC_ROOT_DOMAIN;
+      process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+    });
+
+    const signMagicState = async () =>
+      signOAuthState(
+        {
+          tenantSubdomain: 'sajidali',
+          userId,
+          nonce: 'wl_magic_nonce_1234',
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 600,
+          isMagic: true,
+        },
+        TEST_SECRET
+      );
+
+    const mockGraphSuccess = () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            access_token: 'mock_short_token',
+            token_type: 'bearer',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            access_token: 'mock_long_token',
+            token_type: 'bearer',
+            expires_in: 5184000,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            id: 'fb_user_magic_999',
+            name: 'Magic User',
+            gender: 'female',
+            link: 'https://facebook.com/magicuser',
+            picture: {
+              data: {
+                url: 'https://graph.facebook.com/v26.0/magic/picture',
+              },
+            },
+          }),
+        });
+    };
+
+    const mockDbFor = (alreadyExisted: boolean): DatabaseClient =>
+      ({
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'workspace_sajidali_123' }]);
+          }
+          if (sql.includes('FROM platform_credentials')) {
+            return Promise.resolve([
+              {
+                client_id: 'fb_app_id_123',
+                encrypted_client_secret: validEncryptedFbAppSecret,
+              },
+            ]);
+          }
+          if (sql.includes('SELECT id, status FROM social_accounts')) {
+            return Promise.resolve(
+              alreadyExisted ? [{ id: 'existing_acct', status: 'active' }] : []
+            );
+          }
+          return Promise.resolve([{ id: 'mock-account-uuid' }]);
+        }),
+      }) as unknown as DatabaseClient;
+
+    const tenantCallbackUrl = (query: string) =>
+      `https://sajidali.sajidaliai.online/api/auth/facebook/callback?${query}`;
+
+    it('redirects a fresh magic success to the white-label app host, not fbuploadpro.com', async () => {
+      const state = await signMagicState();
+      mockGraphSuccess();
+      const req = new NextRequest(
+        tenantCallbackUrl(`code=mock_code&state=${state}`),
+        { headers: { host: 'sajidali.sajidaliai.online' } }
+      );
+      const res = await handleFacebookCallback(req, mockDbFor(false));
+
+      expect(res.status).toBe(307);
+      // Brand agreement, last leg: the displayed magic URL was on
+      // app.sajidaliai.online, the OAuth redirect URI on
+      // sajidali.sajidaliai.online — and the success page lands on
+      // the same app host the link came from.
+      expect(res.headers.get('location')).toBe(
+        'https://app.sajidaliai.online/connect/facebook/success?accountName=Magic+User'
+      );
+    });
+
+    it('redirects a magic cancellation to the white-label app-host error page', async () => {
+      const state = await signMagicState();
+      const req = new NextRequest(
+        tenantCallbackUrl(
+          `error=access_denied&error_description=User+denied&state=${state}`
+        ),
+        { headers: { host: 'sajidali.sajidaliai.online' } }
+      );
+      const res = await handleFacebookCallback(req, mockDbFor(false));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe(
+        'https://app.sajidaliai.online/connect/facebook/error?reason=cancelled'
       );
     });
   });

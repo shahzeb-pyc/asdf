@@ -6,7 +6,7 @@ import {
 } from '@fbuploadpro/contracts';
 // Side effect: registers the X connect config (spec 127).
 import '@/lib/connect/platforms/x';
-import { getRequestBrandRoot } from '@/lib/brand';
+import { getRequestBrandAppUrl, getRequestBrandRoot } from '@/lib/brand';
 // Side effect: registers the Threads connect config (spec 124).
 import '@/lib/connect/platforms/threads';
 import {
@@ -235,7 +235,9 @@ function threadsNoticeRedirect(
   isMagic: boolean
 ): NextResponse {
   if (isMagic) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    // Spec 208: the magic error page is built on the brand's app
+    // host, not the deployment-wide NEXT_PUBLIC_APP_URL.
+    const appUrl = getRequestBrandAppUrl(request);
     const errorUrl = buildMagicConnectUrl(
       '/connect/threads/error',
       request.url,
@@ -488,7 +490,9 @@ export async function handleConnectCallback(
   // only in the Accounts section, and each feature imports from
   // Accounts at its own Add endpoint.
   if (statePayload.isMagic && platform === 'threads') {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    // Spec 208: the magic success page is built on the brand's app
+    // host, not the deployment-wide NEXT_PUBLIC_APP_URL.
+    const appUrl = getRequestBrandAppUrl(request);
     const successUrl = buildMagicConnectUrl(
       '/connect/threads/success',
       request.url,

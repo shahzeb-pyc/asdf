@@ -7,6 +7,7 @@ import {
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import { getRequestBrandAppUrl } from '@/lib/brand';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolvePlatformClientCredentials } from '@/lib/connect/persist';
 import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
@@ -22,8 +23,8 @@ import { bodyTooLargeResponse, enforceIpRateLimit, readJsonBody } from '@/lib/re
  * carries the same fields Facebook's does, with the platform-
  * agnostic `expectedExternalAccountId` in place of Facebook's
  * `expectedFbAccountId`. The link points at the Threads magic
- * entry (`/connect/threads?token=…`), built from
- * `NEXT_PUBLIC_APP_URL` — never hardcoded.
+ * entry (`/connect/threads?token=…`), built on the brand's app
+ * host (spec 208: `getRequestBrandAppUrl`) — never hardcoded.
  *
  * Reuse behaviour matches Facebook on main: the token is a signed
  * envelope with a 15-minute expiry and no server-side record, so it
@@ -73,8 +74,11 @@ export async function handleGenerateThreadsMagicLink(
   dbClient?: DatabaseClient | SupabaseClient
 ): Promise<NextResponse> {
   const sessionSecret = getSessionSecret();
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  // Spec 208: the magic URL is built on the brand's app host, not
+  // the deployment-wide NEXT_PUBLIC_APP_URL — on the white label
+  // that value is our app host, so a link built from it would run
+  // the whole connect on fbuploadpro.com.
+  const appUrl = getRequestBrandAppUrl(request);
 
   // 1. Session auth guard
   const sessionCookie = request.cookies.get('fbup_session')?.value;

@@ -3,8 +3,11 @@
 import React, { Suspense } from 'react';
 import { useSearchParams, type ReadonlyURLSearchParams } from 'next/navigation';
 
+import Link from 'next/link';
+
 import { ConnectStatusLayout } from '@/components/accounts/connect-status-layout';
 import { useBrandConfig } from '@/components/brand';
+import { Button } from '@/components/shared/ui/button';
 
 export interface ThreadsConnectSuccessParams {
   alreadyConnected?: boolean | undefined;
@@ -67,6 +70,29 @@ export function ThreadsConnectSuccessView({
       <div className="rounded-sm bg-subtle px-3.5 py-2.5 text-metadata text-ink-dim">
         Linked to {brandConfig.shortName} via Threads.
       </div>
+      {/* Spec 208 (FB parity): if the original tab was closed,
+          "close this tab and return" leaves the user to navigate
+          manually — offer the dashboard link on every success
+          variant, not just the mismatch one. Relative `/`: this
+          page is served from the brand's app host. */}
+      {!params.reconnectedMismatch ? (
+        <Button asChild variant="outline" className="mt-4">
+          <Link href="/" data-testid="threads-magic-success-dashboard-link">
+            Back to {brandConfig.shortName} dashboard
+          </Link>
+        </Button>
+      ) : null}
+      {params.reconnectedMismatch ? (
+        // This device holds no session, so it cannot reconnect the
+        // expected account itself — link back to the dashboard,
+        // where the expected account's card Reconnect lives. Do not
+        // fake a reconnect action here.
+        <Button asChild variant="outline" className="mt-4">
+          <Link href="/" data-testid="threads-magic-mismatch-dashboard-link">
+            Back to {brandConfig.shortName} dashboard
+          </Link>
+        </Button>
+      ) : null}
     </ConnectStatusLayout>
   );
 }

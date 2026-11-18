@@ -13,8 +13,11 @@
  * (or with no/local root domain) and on Vercel preview hosts the
  * request origin already is the app host, so it is used as-is and
  * existing localhost expectations stay green. In production the app
- * host comes from `NEXT_PUBLIC_APP_URL` when it is a non-local host,
- * else `app.<rootDomain>` — never hardcoded, never the tenant host.
+ * host comes from the caller-supplied `appUrl` — the brand's app
+ * host (spec 208: `getRequestBrandAppUrl`, the white label's
+ * gateway host, never the deployment-wide `NEXT_PUBLIC_APP_URL`
+ * value on its own) — else `app.<rootDomain>`; never hardcoded,
+ * never the tenant host.
  *
  * Generalised from the Facebook-only `buildMagicConnectUrl` in
  * `app/api/auth/facebook/callback/route.ts` (which now wraps this
