@@ -41,6 +41,37 @@ export function getRequestBrandGatewayHost(brand: Brand): string {
   return getBrandGatewayHost(brand, getConfiguredRootDomain());
 }
 
+/**
+ * App-host origin for the brand of a request (spec 208) — the origin
+ * magic links and magic outcome pages are built on.
+ *
+ * The white-label brand always resolves to its gateway host
+ * (`https://app.sajidaliai.online`): the single deployment-wide
+ * `NEXT_PUBLIC_APP_URL` is our app host, so a magic link built from
+ * it would run the whole connect on fbuploadpro.com for a NextRise
+ * student. Our brand keeps the configured app URL (production) with
+ * the localhost fallback, exactly as before — the magic URL in
+ * existing tests comes from that variable even on a localhost
+ * request, and the FB generator's fail-loud check guards it.
+ * Trailing slashes are stripped (plain loop, not a `/\/+$/` regex:
+ * Sonar S8786 flags the regex form) so callers can append a path.
+ */
+export function getRequestBrandAppUrl(
+  request: { headers: { get(name: string): string | null } } | undefined | null,
+): string {
+  const brand = getRequestBrandFromHost(request?.headers.get('host') ?? null);
+  if (brand === 'nextrise') {
+    return `https://${getRequestBrandGatewayHost(brand)}`;
+  }
+  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (configured) {
+    let base = configured;
+    while (base.endsWith('/')) base = base.slice(0, -1);
+    return base;
+  }
+  return 'http://localhost:3000';
+}
+
 export function getBrandFlagsFor(brand: Brand): BrandFlags {
   return getBrandFlags(brand);
 }
