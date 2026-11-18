@@ -155,11 +155,15 @@ export function InstagramByocView({ subdomain }: Readonly<InstagramByocViewProps
   // The sign-in address shown here is built with the SAME builder the
   // real Instagram OAuth initiate uses, so the address shown can never
   // drift from the address the connect flow actually sends to Meta.
+  // Spec 207: the root is the brand's own tenant root (already
+  // computed above, same as the privacy URL) — not
+  // NEXT_PUBLIC_ROOT_DOMAIN, which would show the fbuploadpro address
+  // on the white label and get a redirect-URI mismatch at Meta.
   const signInCallback = buildSubdomainOAuthRedirectUriForCallback(
     subdomain,
     '/api/auth/instagram/callback',
     typeof window !== 'undefined' ? window.location.origin : null,
-    process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com',
+    brandRoot,
     process.env.NEXT_PUBLIC_APP_URL
   );
 

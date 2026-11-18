@@ -23,7 +23,8 @@
 
 import * as React from 'react';
 
-import { buildSubdomainOAuthRedirectUri } from '@fbuploadpro/contracts';
+import { buildSubdomainOAuthRedirectUri, getBrandTenantRoot } from '@fbuploadpro/contracts';
+import { useBrand } from '@/components/brand';
 
 /** How long the "Copied" feedback stays visible (as shipped). */
 const COPY_FEEDBACK_DURATION_MS = 2000;
@@ -37,13 +38,20 @@ export function FacebookSetupCard({
   // apps/web/src/app/connect/facebook/route.ts): production shows the
   // workspace-subdomain form, never the app host or a preview host;
   // local/preview behaviour follows the flow's own fallback.
+  // Spec 207: the root is the brand's own tenant root, not
+  // NEXT_PUBLIC_ROOT_DOMAIN — the brand comes from the root layout
+  // (resolved from the request host), the same source the initiators
+  // use, so the address shown can never drift from the address the
+  // connect flow actually sends to Meta. A NextRise student pasting
+  // the fbuploadpro address into their Meta app would get a
+  // redirect-URI mismatch at Meta.
   const callbackUrl = buildSubdomainOAuthRedirectUri(
     subdomain,
     typeof window !== 'undefined' ? window.location.origin : null,
-    // Same default as the privacy-URL helpers: without it, an unset
-    // root domain would fall back to a localhost address, which is
-    // never the address Meta must have on file.
-    process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com',
+    getBrandTenantRoot(
+      useBrand(),
+      process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com'
+    ),
     process.env.NEXT_PUBLIC_APP_URL
   );
   const [copied, setCopied] = React.useState(false);
