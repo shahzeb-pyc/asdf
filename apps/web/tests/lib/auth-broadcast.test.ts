@@ -276,22 +276,22 @@ describe('completeAuthRedirect — brand-aware redirect (spec 204)', () => {
 
   it('keeps a white-label login on the white-label tenant host', () => {
     const location = stubBrowserWindow('app.sajidaliai.online');
-    completeAuthRedirect('https://sajidali.app.sajidaliai.online/', {
+    completeAuthRedirect('https://sajidali.sajidaliai.online/', {
       id: 'u1',
       email: 'sajidali@protonsemail.com',
       subdomain: 'sajidali',
     });
-    expect(location.href).toBe('https://sajidali.app.sajidaliai.online/');
+    expect(location.href).toBe('https://sajidali.sajidaliai.online/');
   });
 
   it('honours a white-label returnUrl path on the white-label host', () => {
     const location = stubBrowserWindow('app.sajidaliai.online');
-    completeAuthRedirect('https://sajidali.app.sajidaliai.online/schedule', {
+    completeAuthRedirect('https://sajidali.sajidaliai.online/schedule', {
       id: 'u1',
       email: 'sajidali@protonsemail.com',
       subdomain: 'sajidali',
     });
-    expect(location.href).toBe('https://sajidali.app.sajidaliai.online/schedule');
+    expect(location.href).toBe('https://sajidali.sajidaliai.online/schedule');
   });
 
   it('builds a white-label tenant URL from a relative redirect', () => {
@@ -301,7 +301,7 @@ describe('completeAuthRedirect — brand-aware redirect (spec 204)', () => {
       email: 'sajidali@protonsemail.com',
       subdomain: 'sajidali',
     });
-    expect(location.href).toBe('https://sajidali.app.sajidaliai.online/schedule');
+    expect(location.href).toBe('https://sajidali.sajidaliai.online/schedule');
   });
 
   it('rejects a fbuploadpro returnUrl on a white-label login', () => {
@@ -311,7 +311,19 @@ describe('completeAuthRedirect — brand-aware redirect (spec 204)', () => {
       email: 'sajidali@protonsemail.com',
       subdomain: 'sajidali',
     });
-    expect(location.href).toBe('https://sajidali.app.sajidaliai.online/');
+    expect(location.href).toBe('https://sajidali.sajidaliai.online/');
+  });
+
+  it('rejects the retired <workspace>.app returnUrl on a white-label login (spec 206 negative control)', () => {
+    const location = stubBrowserWindow('app.sajidaliai.online');
+    completeAuthRedirect('https://sajidali.app.sajidaliai.online/schedule', {
+      id: 'u1',
+      email: 'sajidali@protonsemail.com',
+      subdomain: 'sajidali',
+    });
+    // The old absolute target fails the check and falls back to the
+    // new tenant home — the old host is never the landing address.
+    expect(location.href).toBe('https://sajidali.sajidaliai.online/');
   });
 
   it('keeps a fbuploadpro login on the fbuploadpro tenant host', () => {
@@ -326,7 +338,7 @@ describe('completeAuthRedirect — brand-aware redirect (spec 204)', () => {
 
   it('rejects a white-label returnUrl on a fbuploadpro login', () => {
     const location = stubBrowserWindow('app.fbuploadpro.com');
-    completeAuthRedirect('https://sajidali.app.sajidaliai.online/', {
+    completeAuthRedirect('https://sajidali.sajidaliai.online/', {
       id: 'u1',
       email: 'sajidali@fbuploadpro.com',
       subdomain: 'sajidali',

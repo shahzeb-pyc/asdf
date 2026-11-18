@@ -822,7 +822,7 @@ describe('Facebook privacy URL on the white-label brand (spec 205)', () => {
 
     expect(await screen.findByTestId('fb-privacy-url')).toBeTruthy();
     expect(screen.getByTestId('fb-privacy-url').textContent).toBe(
-      'https://acme.app.sajidaliai.online/privacy'
+      'https://acme.sajidaliai.online/privacy'
     );
   });
 });

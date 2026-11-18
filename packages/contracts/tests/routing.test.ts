@@ -9,6 +9,7 @@ import {
   getPlatformAccountsPath,
   getTenantRewriteUrl,
 } from '../src/domain/routing';
+import { SubdomainSchema } from '../src/domain/user.js';
 
 describe('Tenant Subdomain Routing Contracts', () => {
   describe('extractSubdomain', () => {
@@ -59,6 +60,34 @@ describe('Tenant Subdomain Routing Contracts', () => {
       const result = extractSubdomain(null, 'fbuploadpro.com');
       expect(result.isApex).toBe(true);
       expect(result.subdomain).toBeNull();
+    });
+
+    it('extracts a white-label tenant subdomain under the bare root (spec 206)', () => {
+      const result = extractSubdomain('sajidali.sajidaliai.online', 'sajidaliai.online');
+      expect(result.isApex).toBe(false);
+      expect(result.subdomain).toBe('sajidali');
+      expect(result.isReserved).toBe(false);
+    });
+
+    it('treats the white-label app host as the reserved app subdomain', () => {
+      const result = extractSubdomain('app.sajidaliai.online', 'sajidaliai.online');
+      expect(result.isApex).toBe(false);
+      expect(result.subdomain).toBe('app');
+      expect(result.isReserved).toBe(true);
+    });
+
+    it('the retired <workspace>.app form extracts a dotted label that is not a workspace (spec 206)', () => {
+      const result = extractSubdomain(
+        'sajidali.app.sajidaliai.online',
+        'sajidaliai.online'
+      );
+      expect(result.isApex).toBe(false);
+      // The extracted label keeps the dot: it is `sajidali.app`,
+      // never silently `sajidali`. Workspace subdomains are single
+      // labels, so this can match no workspace row.
+      expect(result.subdomain).toBe('sajidali.app');
+      expect(SubdomainSchema.safeParse(result.subdomain).success).toBe(false);
+      expect(SubdomainSchema.safeParse('sajidali').success).toBe(true);
     });
   });
 

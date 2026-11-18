@@ -388,7 +388,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const host = request.headers.get('host') || '';
   // Spec 191: the brand comes from the request host. All routing
   // below uses the brand's tenant root and gateway host, so the
-  // white-label brand's hosts are <workspace>.app.sajidaliai.online
+  // white-label brand's hosts are <workspace>.sajidaliai.online
   // and app.sajidaliai.online, and our brand keeps its configured root
   // exactly as before.
   const brand = resolveBrandFromHost(host);
@@ -477,7 +477,16 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 
   // If apex domain or reserved system subdomain, serve root routes
   if (isApex || isReserved || !subdomain) {
-    if (isApex && pathname.startsWith('/tenant/')) {
+    // Spec 206: the white-label gateway host is a reserved subdomain
+    // ('app') under the bare tenant root, not the apex — so a /tenant/
+    // path on the app host must go through the same direct-tenant-path
+    // handling as the apex (billing block, session and access checks).
+    // Under the old root the app host WAS the apex, so this ran for it
+    // already; without the 'app' arm, /tenant/<sub>/billing on the
+    // white-label gateway would serve the billing page instead of
+    // 404ing. The fbuploadpro app host takes the same path — its
+    // /tenant/ handling is identical to its apex handling.
+    if ((isApex || subdomain === 'app') && pathname.startsWith('/tenant/')) {
       const pathSubdomain = pathname.split('/')[2];
       if (pathSubdomain) {
         const session = await resolveSession(request, sessionSecret, brand);

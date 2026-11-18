@@ -18,11 +18,12 @@ describe('resolveBrandFromHost', () => {
   });
 
   it('maps white-label tenant hosts to nextrise', () => {
-    expect(resolveBrandFromHost('student1.app.sajidaliai.online')).toBe('nextrise');
+    expect(resolveBrandFromHost('student1.sajidaliai.online')).toBe('nextrise');
+    expect(resolveBrandFromHost('notapp.sajidaliai.online')).toBe('nextrise');
   });
 
   it('is case- and port-insensitive', () => {
-    expect(resolveBrandFromHost('STUDENT1.App.SajidAliAI.online:443')).toBe('nextrise');
+    expect(resolveBrandFromHost('STUDENT1.SajidAliAI.online:443')).toBe('nextrise');
   });
 
   it('maps our gateway and tenant hosts to fbuploadpro', () => {
@@ -39,18 +40,27 @@ describe('resolveBrandFromHost', () => {
 
   it('does NOT treat the bare white-label domain as the app', () => {
     expect(resolveBrandFromHost('sajidaliai.online')).toBe('fbuploadpro');
-    expect(resolveBrandFromHost('www.sajidaliai.online')).toBe('fbuploadpro');
   });
 
   it('does NOT match a lookalike suffix', () => {
     expect(resolveBrandFromHost('app.sajidaliai.online.evil.com')).toBe('fbuploadpro');
-    expect(resolveBrandFromHost('notapp.sajidaliai.online')).toBe('fbuploadpro');
+  });
+
+  it('treats www as a subdomain of the tenant root (apex-handled by routing, like www.fbuploadpro.com)', () => {
+    expect(resolveBrandFromHost('www.sajidaliai.online')).toBe('nextrise');
+  });
+
+  it('the retired <workspace>.app form still brands nextrise but never resolves a workspace', () => {
+    // Brand only: it sits under the tenant root. The workspace side
+    // fails — extractSubdomain yields `<workspace>.app`, which matches
+    // no workspace row (see routing tests + middleware tests).
+    expect(resolveBrandFromHost('student1.app.sajidaliai.online')).toBe('nextrise');
   });
 });
 
 describe('getBrandTenantRoot / getBrandGatewayHost', () => {
-  it('white-label root is always app.sajidaliai.online', () => {
-    expect(getBrandTenantRoot('nextrise', 'fbuploadpro.com')).toBe('app.sajidaliai.online');
+  it('white-label tenant root is sajidaliai.online, gateway stays app.sajidaliai.online', () => {
+    expect(getBrandTenantRoot('nextrise', 'fbuploadpro.com')).toBe('sajidaliai.online');
     expect(getBrandGatewayHost('nextrise', 'fbuploadpro.com')).toBe('app.sajidaliai.online');
   });
 

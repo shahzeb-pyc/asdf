@@ -84,7 +84,7 @@ describe('Tenant Home quick links — clean paths per brand (spec 205)', () => {
   }
 
   it('uses clean paths on the white-label tenant host', async () => {
-    hostState.current = 'sajidali.app.sajidaliai.online';
+    hostState.current = 'sajidali.sajidaliai.online';
 
     const html = await renderHomeHtml();
 

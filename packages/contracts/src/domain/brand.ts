@@ -15,8 +15,14 @@ export type Brand = z.infer<typeof BrandSchema>;
 
 /** Gateway host of the white-label brand. */
 export const NEXTRISE_APP_HOST = 'app.sajidaliai.online';
-/** Tenant-host suffix of the white-label brand: `<workspace>.app.sajidaliai.online`. */
-export const NEXTRISE_TENANT_ROOT = 'app.sajidaliai.online';
+/**
+ * Tenant-host suffix of the white-label brand: `<workspace>.sajidaliai.online`.
+ * Same structure as our brand (`<workspace>.fbuploadpro.com`): the app
+ * lives at `app.sajidaliai.online` and workspaces are siblings under the
+ * root — the retired `<workspace>.app.sajidaliai.online` form is not a
+ * tenant host anymore (spec 206).
+ */
+export const NEXTRISE_TENANT_ROOT = 'sajidaliai.online';
 /** Support number shown on the white-label brand. */
 export const NEXTRISE_WHATSAPP_NUMBER = '0308-1311411';
 /** The same number in international form, for the wa.me link. */
@@ -30,21 +36,30 @@ export const NEXTRISE_LOGO_PATH = '/brand/nextrise-logo.svg';
 
 /**
  * Resolve the brand from a request host. Case-insensitive, port-insensitive.
- * The bare white-label domain (sajidaliai.online) is NOT an app host — it
- * resolves to our brand, so nothing white-label ever leaks onto it.
+ * Any host under the white-label tenant root (`app.sajidaliai.online`,
+ * `<workspace>.sajidaliai.online`) is nextrise. The bare white-label
+ * domain (sajidaliai.online) is NOT an app host — it resolves to our
+ * brand, so nothing white-label ever leaks onto it.
+ *
+ * The retired `<workspace>.app.sajidaliai.online` form still brands
+ * nextrise (it sits under the tenant root) but never resolves a
+ * workspace: its extracted subdomain (`<workspace>.app`) matches no
+ * workspace row — see `extractSubdomain` + the workspace resolver.
  */
 export function resolveBrandFromHost(host: string | null | undefined): Brand {
   if (!host) return 'fbuploadpro';
   const clean = host.trim().toLowerCase().split(':')[0] ?? '';
   if (clean === NEXTRISE_APP_HOST) return 'nextrise';
-  if (clean.endsWith(`.${NEXTRISE_APP_HOST}`)) return 'nextrise';
+  if (clean.endsWith(`.${NEXTRISE_TENANT_ROOT}`)) return 'nextrise';
   return 'fbuploadpro';
 }
 
 /**
  * Tenant-host suffix for a brand. Our brand uses the configured root
  * (from `NEXT_PUBLIC_ROOT_DOMAIN`); the white-label brand always uses
- * `app.sajidaliai.online`, whatever the deployment's root is.
+ * `sajidaliai.online`, whatever the deployment's root is — workspaces
+ * are `<workspace>.sajidaliai.online`, the app itself stays at
+ * `app.sajidaliai.online` (see `getBrandGatewayHost`).
  *
  * Verbatim: the port is part of the root (`localhost:3000`), and an
  * empty root stays empty — the routing helpers resolve locally from
