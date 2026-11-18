@@ -16,6 +16,7 @@
  * Those writes are unchanged from the original mechanism.
  */
 
+import { getBrandTenantRoot, resolveBrandFromHost } from '@fbuploadpro/contracts';
 import { sanitizeAuthRedirectUrl } from './auth-redirect';
 
 export const AUTH_BROADCAST_CHANNEL = 'fbup_auth';
@@ -186,6 +187,24 @@ export function completeAuthRedirect(
   });
 
   if (typeof window !== 'undefined') {
-    window.location.href = sanitizeAuthRedirectUrl(redirectUrl, user?.subdomain);
+    // Spec 204: sanitize against the REQUEST's brand root, as the
+    // server already does (loginTenantUser passes the brand tenant
+    // root into sanitizeAuthRedirectUrl). The old call let the helper
+    // default to NEXT_PUBLIC_ROOT_DOMAIN (fbuploadpro.com), so a
+    // white-label tenant URL failed the check and fell back to the
+    // fbuploadpro tenant host — a NextRise login landed on
+    // fbuploadpro. The brand is resolved from the host the user is
+    // actually on, generically; no brand is hardcoded here.
+    const requestHost = window.location.host;
+    const brandRoot = getBrandTenantRoot(
+      resolveBrandFromHost(requestHost),
+      process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000'
+    );
+    window.location.href = sanitizeAuthRedirectUrl(
+      redirectUrl,
+      user?.subdomain,
+      brandRoot,
+      requestHost
+    );
   }
 }
