@@ -318,6 +318,30 @@ describe('middleware white-label brand (spec 191)', () => {
     expect(rewriteTarget(response)).toBe('https://app.sajidaliai.online/_not-found');
   });
 
+  it('a /tenant/ path on the fbuploadpro app host serves for its own user (spec 206)', async () => {
+    // Spec 206 routes app-host /tenant/ paths through the same
+    // direct-tenant-path handling as the apex — fbuploadpro behaviour
+    // is unchanged: an authenticated user on their own /tenant/ path
+    // is served, exactly as on the apex host.
+    const token = await brandToken('fbuploadpro', 'acme');
+    const response = await middleware(
+      requestWithCookie('https://app.fbuploadpro.com/tenant/acme/schedule', token)
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
+    expect(rewriteTarget(response)).toBeNull();
+  });
+
+  it('a /tenant/ path on the fbuploadpro app host sends a logged-out visitor to login (spec 206)', async () => {
+    const response = await middleware(
+      requestWithCookie('https://app.fbuploadpro.com/tenant/acme/schedule', null)
+    );
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe(
+      'https://app.fbuploadpro.com/login?returnUrl=https%3A%2F%2Fapp.fbuploadpro.com%2Ftenant%2Facme%2Fschedule'
+    );
+  });
+
   it('an ordinary section still rewrites to the tenant path on a white-label tenant host', async () => {
     const token = await brandToken('nextrise');
     const response = await middleware(
@@ -344,7 +368,7 @@ describe('middleware white-label brand (spec 191)', () => {
     expect(rewriteTarget(response)).toBeNull();
   });
 
-  it('the retired <workspace>.app host rewrites an admin to a tenant path that cannot resolve (spec 206)', async () => {
+  it('an admin on the retired <workspace>.app host never reaches a tenant path (spec 206)', async () => {
     const token = await signSessionToken(
       {
         userId: '11111111-1111-4111-8111-111111111111',
@@ -359,12 +383,15 @@ describe('middleware white-label brand (spec 191)', () => {
     const response = await middleware(
       requestWithCookie('https://student1.app.sajidaliai.online/schedule', token)
     );
-    // Admins pass the access guard, so the request rewrites — but to
-    // /tenant/student1.app/…, and `student1.app` matches no workspace
-    // row (exact-match lookup), so the layout 404s instead of serving.
-    expect(rewriteTarget(response)).toBe(
-      'https://student1.app.sajidaliai.online/tenant/student1.app/schedule'
+    // Admins never render tenant content: the tenant-branch admin
+    // guard fires before any rewrite, so an admin on the retired host
+    // is redirected to the admin section — the unresolvable
+    // /tenant/student1.app/... path is never produced.
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe(
+      'https://student1.app.sajidaliai.online/admin/subscriptions'
     );
+    expect(rewriteTarget(response)).toBeNull();
   });
 
   it('the retired <workspace>.app host sends a logged-out visitor to login, never to a workspace (spec 206)', async () => {

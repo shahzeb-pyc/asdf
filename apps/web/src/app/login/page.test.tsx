@@ -416,7 +416,7 @@ describe("login returnUrl on the white-label brand (spec 205)", () => {
     }
   });
 
-  it("rejects the retired <workspace>.app returnUrl on a white-label login (spec 206)", async () => {
+  it("strips the retired <workspace>.app host from the returnUrl, keeping the path (spec 206)", async () => {
     const user = userEvent.setup();
     vi.stubEnv("NEXT_PUBLIC_ROOT_DOMAIN", "fbuploadpro.com");
     try {
@@ -428,9 +428,12 @@ describe("login returnUrl on the white-label brand (spec 205)", () => {
       await waitFor(() => expect(completeAuthRedirect).toHaveBeenCalled());
       const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(String(init.body)) as { returnUrl?: string };
-      // The old absolute target fails the check and falls back to the
-      // tenant home — the old host is never sent as the returnUrl.
-      expect(body.returnUrl).toBe("/");
+      // The page capture runs before login, so it cannot check the
+      // subdomain yet — it reduces the absolute old-form target to its
+      // path. The old host is never sent as the returnUrl, and the
+      // deep-link path survives: the server and client redirect layers
+      // (which know the user's subdomain) attach it to the NEW host.
+      expect(body.returnUrl).toBe("/schedule");
       expect(body.returnUrl ?? "").not.toContain("app.sajidaliai.online");
     } finally {
       vi.unstubAllEnvs();
