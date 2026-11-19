@@ -21,6 +21,7 @@ import {
   CSP_HEADER_NAME,
   generateNonce,
 } from './lib/csp';
+import { isMaintenanceMode, isMaintenanceExemptPath } from './lib/maintenance';
 import { purgeHostOnlySessionCookie } from './lib/auth/session';
 import { isTenantSubdomainHost } from '@/lib/tenant-href';
 
@@ -396,6 +397,22 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const rootDomain = getBrandTenantRoot(brand, configuredRoot);
   const gatewayHost = getBrandGatewayHost(brand, configuredRoot);
   const sessionSecret = getSessionSecret();
+  const nonce = generateNonce();
+
+  // Spec 209: maintenance mode — while the flag is on, every page
+  // request rewrites to /maintenance. The gate runs before the
+  // public-route bypass below, so /privacy and /account-suspended
+  // rewrite too: the spec excludes only /maintenance itself, /api/*,
+  // /_next/*, and static assets. No bypass — login, tenant pages,
+  // and admin all show maintenance while the cutover runs.
+  if (isMaintenanceMode() && !isMaintenanceExemptPath(pathname)) {
+    const requestHeaders = stripUserHeaders(request);
+    setCspRequestHeaders(requestHeaders, nonce);
+    const response = NextResponse.rewrite(new URL('/maintenance', request.url), {
+      request: { headers: requestHeaders },
+    });
+    return applyCspHeaders(applyNoStoreHeaders(response), nonce);
+  }
 
   // System API routes and public static bypass tenant rewriting.
   // /privacy is public on EVERY host (app, apex, and every tenant
@@ -456,8 +473,6 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     });
     return applyCspHeaders(response, nonce);
   }
-
-  const nonce = generateNonce();
 
   // Spec 167: the old Facebook Pages section address redirects
   // permanently (301) to its new name, for every visitor — before
