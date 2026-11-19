@@ -13,6 +13,11 @@
  * import — so tests can flip it by setting process.env, and so a
  * redeploy with a new secret value takes effect without a code
  * change.
+ *
+ * NOTE: an empty commit does NOT redeploy. Vercel skips empty
+ * merges as "Not affected" and keeps serving the old deploy with
+ * the old secret value, so flipping this flag off requires a real
+ * file change (like this comment) to force a fresh build.
  */
 export function isMaintenanceMode(): boolean {
   return process.env.MAINTENANCE_MODE === 'true';
