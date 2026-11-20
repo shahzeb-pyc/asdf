@@ -44,6 +44,14 @@ def public_url_for_key(key: str) -> str:
 IN_FLIGHT_POLL_SECONDS = _bounded_int("ADU_DOWNLOADER_IN_FLIGHT_POLL_SECONDS", "20", minimum=1, maximum=300)
 # Sleep only when no in-flight work and claim returned zero rows.
 IDLE_WAIT_SECONDS = _bounded_int("ADU_DOWNLOADER_IDLE_WAIT_SECONDS", "60", minimum=1)
+# Spec 212 — HARD CAP on the idle sleep: consecutive empty loops sleep
+# 60s, 120s, 240s, then 300s, never longer. A newly queued reel is
+# picked up at most the cap after it arrives; any claim resets to the
+# base immediately. Bounded 60–600s; a cap below the base is treated
+# as the base (see idle_backoff.next_idle_wait_seconds).
+IDLE_WAIT_MAX_SECONDS = _bounded_int(
+    "ADU_DOWNLOADER_IDLE_WAIT_MAX_SECONDS", "300", minimum=60, maximum=600
+)
 MAX_CONCURRENT = _bounded_int("ADU_DOWNLOADER_CONCURRENCY", "30", minimum=1, maximum=200)
 # Per-claim download attempts before mark_adu_reel_download_failed (separate from DB download_retries).
 DOWNLOAD_ATTEMPT_RETRIES = _bounded_int("ADU_DOWNLOADER_ATTEMPT_RETRIES", "4", minimum=1, maximum=20)

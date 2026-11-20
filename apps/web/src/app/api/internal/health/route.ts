@@ -21,6 +21,12 @@ import { createR2S3Client, getR2Config } from '@/lib/storage';
  */
 
 export const HEARTBEAT_STALE_SECONDS = 180; // ~3 missed 1-minute ticks
+/**
+ * Spec 212: the poll gate runs a full tick at most every 240s while
+ * idle, so a last-full-tick older than cap + 60s margin means the gate
+ * is stuck — loud, instead of hiding behind the per-minute heartbeat.
+ */
+export const POLL_GATE_STALE_SECONDS = 300;
 export const STUCK_PUBLISHING_MINUTES = 10; // matches the worker recovery threshold
 const R2_PROBE_TIMEOUT_MS = 1000;
 
@@ -44,6 +50,16 @@ export interface InternalHealthPayload {
       lastSkipReason: string | null;
       claimed: number;
       settled: number;
+    };
+    /**
+     * Spec 212: the poll gate's last full tick. The per-minute heartbeat
+     * stays fresh on skipped ticks by design, so this is the check that
+     * proves the gate itself is still running full ticks.
+     */
+    pollGate: {
+      ok: boolean;
+      ageSeconds: number | null;
+      lastFullTickAt: string | null;
     };
     queue: {
       dueCount: number;
@@ -176,6 +192,7 @@ async function countByStatus(
 }
 
 type HeartbeatCheck = InternalHealthPayload['checks']['heartbeat'];
+type PollGateCheck = InternalHealthPayload['checks']['pollGate'];
 type QueueCheck = InternalHealthPayload['checks']['queue'];
 type QueueTableCounts = QueueCheck;
 
@@ -187,6 +204,12 @@ const EMPTY_HEARTBEAT: HeartbeatCheck = {
   lastSkipReason: null,
   claimed: 0,
   settled: 0,
+};
+
+const EMPTY_POLL_GATE: PollGateCheck = {
+  ok: false,
+  ageSeconds: null,
+  lastFullTickAt: null,
 };
 
 const EMPTY_QUEUE_TABLE: QueueTableCounts = {
@@ -225,6 +248,40 @@ async function checkHeartbeat(db: SupabaseClient, now: Date): Promise<HeartbeatC
     };
   } catch {
     return EMPTY_HEARTBEAT;
+  }
+}
+
+/**
+ * Spec 212: prove the poll gate is still running full ticks. The
+ * heartbeat stays fresh on skipped ticks by design (a skipped tick
+ * writes success), so only this check catches a gate that stopped
+ * running full ticks — e.g. a state row wedged in the past. A missing
+ * row (migration unapplied) reads as unhealthy and self-heals when
+ * the migration lands; the worker fails open to full ticks meanwhile,
+ * so publishing is never stalled by the missing row.
+ */
+async function checkPollGate(db: SupabaseClient, now: Date): Promise<PollGateCheck> {
+  try {
+    const { data, error } = await db
+      .from('worker_poll_state')
+      .select('last_full_tick_at')
+      .eq('id', 1)
+      .maybeSingle();
+    if (error || !data) return EMPTY_POLL_GATE;
+    const lastFullTickAt = data.last_full_tick_at as string | null;
+    const ageSeconds = lastFullTickAt
+      ? Math.max(
+          0,
+          Math.floor((now.getTime() - new Date(lastFullTickAt).getTime()) / 1000)
+        )
+      : null;
+    return {
+      ok: ageSeconds !== null && ageSeconds <= POLL_GATE_STALE_SECONDS,
+      ageSeconds,
+      lastFullTickAt,
+    };
+  } catch {
+    return EMPTY_POLL_GATE;
   }
 }
 
@@ -402,6 +459,7 @@ export async function probeInternalHealth(
         checks: {
           database: { ok: false, latencyMs: null },
           heartbeat: EMPTY_HEARTBEAT,
+          pollGate: EMPTY_POLL_GATE,
           queue: EMPTY_QUEUE,
           storage: { ok: false },
           facebook: {
@@ -433,6 +491,7 @@ export async function probeInternalHealth(
   const latencyMs = dbOk ? Date.now() - dbStart : null;
 
   const heartbeat = await checkHeartbeat(db, now);
+  const pollGate = await checkPollGate(db, now);
   const queue = await checkQueue(db, now);
 
   const storageOk = deps?.checkStorage
@@ -450,7 +509,7 @@ export async function probeInternalHealth(
     checkSectionIntegrity(db, now),
   ]);
 
-  const unhealthy = !dbOk || !heartbeat.ok || !storageOk;
+  const unhealthy = !dbOk || !heartbeat.ok || !pollGate.ok || !storageOk;
   let status: InternalHealthPayload['status'] = 'ok';
   if (unhealthy) {
     status = 'unhealthy';
@@ -466,6 +525,7 @@ export async function probeInternalHealth(
       checks: {
         database: { ok: dbOk, latencyMs },
         heartbeat,
+        pollGate,
         queue,
         storage: { ok: storageOk },
         facebook: { pagesByStatus, accountsByStatus, sectionCheck },

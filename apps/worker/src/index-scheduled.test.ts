@@ -42,8 +42,19 @@ function fakeQueue() {
 function stubFrom(
   upsertRows: Record<string, unknown>[],
   fromTables: string[],
-  opts?: { failPaymentsScan?: boolean }
+  opts?: {
+    failPaymentsScan?: boolean;
+    /**
+     * Spec 212: the poll-gate state row the gate reads. Absent (the
+     * default) means no row — the gate fails open to a full tick.
+     * Tracked via lastTable because the chain object is shared across
+     * tables and maybeSingle is resolved after the synchronous
+     * .from().select().eq() chain; every use here awaits sequentially.
+     */
+    pollState?: Record<string, unknown> | null | undefined;
+  }
 ) {
+  let lastTable = '';
   const emptyChain: any = {
     select: () => emptyChain,
     eq: () => emptyChain,
@@ -62,7 +73,12 @@ function stubFrom(
     delete: () => emptyChain,
     in: () => emptyChain,
     single: () => Promise.resolve({ data: null, error: null }),
-    maybeSingle: () => Promise.resolve({ data: null, error: null }),
+    maybeSingle: () =>
+      Promise.resolve({
+        data:
+          lastTable === 'worker_poll_state' ? (opts?.pollState ?? null) : null,
+        error: null,
+      }),
     upsert: (row: Record<string, unknown>) => {
       upsertRows.push(row);
       return Promise.resolve({ error: null });
@@ -97,6 +113,7 @@ function stubFrom(
   };
   return (table: string) => {
     fromTables.push(table);
+    lastTable = table;
     return opts?.failPaymentsScan && table === 'subscription_payments'
       ? failingChain
       : emptyChain;
@@ -397,5 +414,165 @@ describe('handleScheduled daily section check (spec 174 3B)', () => {
       expect.anything()
     );
     errSpy.mockRestore();
+  });
+});
+
+describe('handleScheduled poll gate (spec 212)', () => {
+  function healthyRpc() {
+    return vi.fn(async () => ({ data: [], error: null }));
+  }
+
+  async function runMinuteCron(opts: {
+    now: Date;
+    pollState?: Record<string, unknown> | null | undefined;
+    rpc?: ReturnType<typeof vi.fn>;
+  }) {
+    const upsertRows: Record<string, unknown>[] = [];
+    const fromTables: string[] = [];
+    const rpc = opts.rpc ?? healthyRpc();
+    const query = vi.fn().mockResolvedValue([]);
+    await handleScheduled(
+      { cron: '* * * * *', scheduledTime: opts.now.getTime() } as never,
+      { TOKEN_ENCRYPTION_KEY: 'test-key' } as never,
+      undefined,
+      {
+        db: {
+          rpc,
+          query,
+          from: stubFrom(upsertRows, fromTables, {
+            pollState: opts.pollState,
+          }),
+        } as never,
+        queues: { fast: fakeQueue() as never, heavy: fakeQueue() as never },
+        now: opts.now,
+        waitUntil: () => {},
+      }
+    );
+    return { rpc, upsertRows, fromTables };
+  }
+
+  const heartbeatRow = (upsertRows: Record<string, unknown>[]) =>
+    upsertRows.find((r) => r['worker_name'] === 'fbuploadpro-worker');
+  const pollStateRow = (upsertRows: Record<string, unknown>[]) =>
+    upsertRows.find((r) => r['id'] === 1 && r['last_full_tick_at'] !== undefined);
+
+  it('skips the sub-tick block while idle but still writes the heartbeat', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const now = new Date('2026-10-27T08:03:00.000Z');
+      const thirtySecondsAgo = new Date(now.getTime() - 30_000).toISOString();
+      const { rpc, upsertRows, fromTables } = await runMinuteCron({
+        now,
+        pollState: {
+          last_full_tick_at: thirtySecondsAgo,
+          last_activity_at: thirtySecondsAgo,
+          current_interval_seconds: 60,
+        },
+      });
+      // Interval is 60s (idle < 1 min), only 30s elapsed: skip.
+      expect(rpc).not.toHaveBeenCalled();
+      expect(fromTables).toContain('worker_poll_state');
+      expect(fromTables).not.toContain('subscription_payments');
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[poll-gate] idle skip')
+      );
+      // No full tick ran, so no poll-state write — but the heartbeat
+      // still lands every minute or the health tier flags the worker dead.
+      expect(pollStateRow(upsertRows)).toBeUndefined();
+      const heartbeat = heartbeatRow(upsertRows);
+      expect(heartbeat).toBeDefined();
+      expect(heartbeat!.last_success_at).not.toBeNull();
+      expect(heartbeat!.last_claimed_count).toBe(0);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('runs the full tick when the gate state is missing (fail-open)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const now = new Date('2026-10-27T08:03:00.000Z');
+      const { rpc, upsertRows, fromTables } = await runMinuteCron({ now });
+      expect(rpc).toHaveBeenCalledWith(
+        'claim_due_queue_items',
+        expect.anything()
+      );
+      expect(fromTables).toContain('subscription_payments');
+      // First full tick seeds the state row (activity defaults to now,
+      // interval doubles from the 60s default on the idle tick).
+      const state = pollStateRow(upsertRows);
+      expect(state).toBeDefined();
+      expect(state!['last_full_tick_at']).toBe(now.toISOString());
+      expect(state!['last_activity_at']).toBe(now.toISOString());
+      expect(state!['current_interval_seconds']).toBe(120);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('runs the full tick on a recovery minute despite a fresh full tick', async () => {
+    const now = new Date('2026-10-27T08:05:00.000Z');
+    const thirtySecondsAgo = new Date(now.getTime() - 30_000).toISOString();
+    const { rpc } = await runMinuteCron({
+      now,
+      pollState: {
+        last_full_tick_at: thirtySecondsAgo,
+        last_activity_at: thirtySecondsAgo,
+        current_interval_seconds: 60,
+      },
+    });
+    // Minute 05 % 5 == 0: the recovery force runs the full tick even
+    // though the 60s interval has not elapsed.
+    expect(rpc).toHaveBeenCalledWith('claim_due_queue_items', expect.anything());
+  });
+
+  it('preserves last_activity_at when an idle full tick finds nothing', async () => {
+    const now = new Date('2026-10-27T08:03:00.000Z');
+    const tenMinutesAgo = new Date(now.getTime() - 10 * 60_000).toISOString();
+    const { upsertRows } = await runMinuteCron({
+      now,
+      pollState: {
+        last_full_tick_at: tenMinutesAgo,
+        last_activity_at: tenMinutesAgo,
+        current_interval_seconds: 240,
+      },
+    });
+    // 10 idle minutes: interval is at the 240s cap, 600s elapsed: run.
+    const state = pollStateRow(upsertRows);
+    expect(state).toBeDefined();
+    expect(state!['last_full_tick_at']).toBe(now.toISOString());
+    expect(state!['last_activity_at']).toBe(tenMinutesAgo);
+    expect(state!['current_interval_seconds']).toBe(240);
+  });
+
+  it('treats a sub-tick failure as activity, so the next tick stays fast', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const now = new Date('2026-10-27T08:03:00.000Z');
+      const tenMinutesAgo = new Date(now.getTime() - 10 * 60_000).toISOString();
+      const rpc = vi.fn(async (fn: string) => {
+        if (fn === 'list_active_facebook_posting_slots') {
+          return { data: null, error: new Error('list boom') };
+        }
+        return { data: [], error: null };
+      });
+      const { upsertRows } = await runMinuteCron({
+        now,
+        pollState: {
+          last_full_tick_at: tenMinutesAgo,
+          last_activity_at: tenMinutesAgo,
+          current_interval_seconds: 240,
+        },
+        rpc,
+      });
+      const state = pollStateRow(upsertRows);
+      expect(state).toBeDefined();
+      // The slot failure counts as activity: last_activity_at is now
+      // and the interval resets to 60s, so the next tick stays fast.
+      expect(state!['last_activity_at']).toBe(now.toISOString());
+      expect(state!['current_interval_seconds']).toBe(60);
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });

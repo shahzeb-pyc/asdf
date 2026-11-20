@@ -1,11 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 import { InternalError, parseTikwmApiKeys, type PublisherRegistry } from '@fbuploadpro/contracts';
 import {
+  isRecoveryTick,
   runClaimTick,
   type ClaimerDbClient,
   type ClaimerQueues,
   type PublishQueueMessage,
 } from './claimer.js';
+import {
+  decidePollTick,
+  markPollFullTick,
+  summariseTickActivity,
+} from './poll-gate.js';
 import { runSlotClaimTick } from './slot-claim.js';
 import { runPublishNowClaimTick } from './publish-now-claim.js';
 import {
@@ -420,6 +426,28 @@ export async function handleScheduled(
     return;
   }
 
+  // Spec 212 — idle backoff gate: the per-minute cron still fires
+  // every minute, but while the system is idle the expensive sub-tick
+  // block below runs only when the backoff interval has elapsed (60s →
+  // 120s → 240s hard cap), on recovery minutes, or when no gate state
+  // exists yet. A skipped tick still writes the per-minute heartbeat
+  // (the health tier flags a worker dead after 180s without one), and
+  // a gate read failure runs the full tick — fail-open, never silent.
+  const gateNow = options?.now ?? new Date(controller.scheduledTime);
+  const pollGate = await decidePollTick(db, gateNow, isRecoveryTick(gateNow));
+  if (!pollGate.run) {
+    console.info(
+      `[poll-gate] idle skip reason=${pollGate.reason} nextFullTickInSeconds=${pollGate.nextFullTickInSeconds}`
+    );
+    await recordHeartbeat(db, {
+      success: true,
+      claimed: 0,
+      enqueuedFast: 0,
+      enqueuedHeavy: 0,
+    });
+    return;
+  }
+
   // First sub-tick failure across the downgrade-activation,
   // publish-now, slot, mirror-job, and ADU ticks below. It never
   // fails the tick itself, but it DOES fail the tick's heartbeat
@@ -431,6 +459,20 @@ export async function handleScheduled(
     | 'mirror_job_tick_failed'
     | 'adu_tick_failed'
     | null = null;
+
+  // Spec 212 — per-sub-tick results, captured for the poll-gate
+  // activity signal (whether this full tick found work). Null when the
+  // sub-tick failed before returning.
+  let downgradeResult: Awaited<
+    ReturnType<typeof runDowngradeActivationTick>
+  > | null = null;
+  let publishNowResult: Awaited<
+    ReturnType<typeof runPublishNowClaimTick>
+  > | null = null;
+  let slotResult: Awaited<ReturnType<typeof runSlotClaimTick>> | null = null;
+  let mirrorJobResult: Awaited<ReturnType<typeof runMirrorJobTick>> | null =
+    null;
+  let aduResult: Awaited<ReturnType<typeof runAduTick>> | null = null;
 
   try {
     const result = await runClaimTick({
@@ -452,7 +494,7 @@ export async function handleScheduled(
     // itself — due schedules simply retry next minute — but it
     // DOES fail the tick's heartbeat (below).
     try {
-      await runDowngradeActivationTick({
+      downgradeResult = await runDowngradeActivationTick({
         db: db as unknown as Parameters<typeof runDowngradeActivationTick>[0]['db'],
         now: options?.now ?? new Date(controller.scheduledTime),
       });
@@ -475,7 +517,7 @@ export async function handleScheduled(
     // never fails the tick itself — marked rows simply wait for the
     // next minute. It DOES fail the tick's heartbeat (below).
     try {
-      await runPublishNowClaimTick({
+      publishNowResult = await runPublishNowClaimTick({
         db,
         queues: queuesFromEnv(env, options?.queues),
         env,
@@ -503,7 +545,7 @@ export async function handleScheduled(
     // slot claim failed is not a successful tick, and the health
     // tier must not report it as one.
     try {
-      await runSlotClaimTick({
+      slotResult = await runSlotClaimTick({
         db,
         queues: queuesFromEnv(env, options?.queues),
         env,
@@ -536,7 +578,7 @@ export async function handleScheduled(
         tikwmApiKeys: parseTikwmApiKeys(env.TIKWMAPI_KEYS, env.TIKWMAPI_KEY),
         resolveProxyUrl: env.DATAIMPULSE_PROXY,
       });
-      await runMirrorJobTick({
+      mirrorJobResult = await runMirrorJobTick({
         check: tickDeps,
         claimJobs: tickDeps.claimMirrorCheckJobs,
         fetchMirror: tickDeps.fetchMirror,
@@ -561,7 +603,7 @@ export async function handleScheduled(
     // tick itself — ADU jobs simply retry next minute. A failure
     // here DOES fail the tick's heartbeat (below).
     try {
-      await runAduTick({
+      aduResult = await runAduTick({
         db: db as unknown as Parameters<typeof runAduTick>[0]['db'],
         registry,
         masterKey,
@@ -577,6 +619,36 @@ export async function handleScheduled(
       console.error('[handleScheduled] ADU tick failed; continuing:', aduErr);
       firstSubTickFailure ??= 'adu_tick_failed';
     }
+
+    // Spec 212: record the full tick in the poll-gate state. Work
+    // resets the interval to per-minute; an idle tick lets it grow. A
+    // sub-tick failure also counts as activity, so a broken sub-tick
+    // keeps retrying every minute exactly as before. A failed state
+    // write never fails the tick — the next tick re-derives from the
+    // old state. Marked BEFORE the heartbeat write so the heartbeat
+    // stays the last upsert the tick performs, as the existing tests
+    // observe.
+    const hadActivity =
+      firstSubTickFailure !== null ||
+      summariseTickActivity({
+        claim: result,
+        downgrade: downgradeResult ?? { activated: 0, failed: 0 },
+        publishNow: publishNowResult ?? { claimed: 0 },
+        slot: slotResult ?? { claimed: 0 },
+        mirrorJob: mirrorJobResult ?? { claimed: 0, completed: 0 },
+        adu: aduResult ?? {
+          intakeJobsCreated: 0,
+          published: 0,
+          retried: 0,
+          failed: 0,
+        },
+      });
+    await markPollFullTick(db, {
+      now: gateNow,
+      hadActivity,
+      lastActivityAt: pollGate.lastActivityAt,
+      currentIntervalSeconds: pollGate.currentIntervalSeconds,
+    });
 
     // Sub-tick failures fail the heartbeat, not the tick: the tick
     // completed and every subsystem retries next minute, but

@@ -10,6 +10,7 @@ from config import (
     ARIA2_SPLIT,
     DOWNLOAD_ATTEMPT_RETRIES,
     DOWNLOAD_MAX_BYTES,
+    IDLE_WAIT_MAX_SECONDS,
     IDLE_WAIT_SECONDS,
     IN_FLIGHT_POLL_SECONDS,
     MAX_CONCURRENT,
@@ -20,6 +21,7 @@ from config import (
     STALE_MINUTES,
     public_url_for_key,
 )
+from idle_backoff import next_idle_wait_seconds
 from caption_utils import normalize_reel_caption
 from db import (
     claim_buffer_downloads,
@@ -438,6 +440,11 @@ def run_loop() -> None:
     tiktok_deps = _build_tiktok_deps()
     with ThreadPoolExecutor(max_workers=MAX_CONCURRENT) as pool:
         in_flight: set = set()
+        # Spec 212: consecutive loops that claimed nothing. The idle
+        # sleep grows with the streak (60s → 120s → 240s → 300s cap)
+        # so an idle downloader stops firing the stale-reset + claim
+        # RPCs every minute; any claim or in-flight work resets it.
+        consecutive_empty = 0
         while True:
             try:
                 reset_result = reset_stale_reel_downloads(STALE_MINUTES)
@@ -477,7 +484,24 @@ def run_loop() -> None:
                     in_flight.add(pool.submit(process_one, row, tiktok_deps))
 
                 if not in_flight and not claimed:
-                    time.sleep(IDLE_WAIT_SECONDS)
+                    idle_wait = next_idle_wait_seconds(
+                        consecutive_empty,
+                        base_seconds=IDLE_WAIT_SECONDS,
+                        max_seconds=IDLE_WAIT_MAX_SECONDS,
+                    )
+                    consecutive_empty += 1
+                    log.info(
+                        json.dumps(
+                            {
+                                "event": "idle_backoff",
+                                "idle_wait_seconds": idle_wait,
+                                "consecutive_empty": consecutive_empty,
+                            }
+                        )
+                    )
+                    time.sleep(idle_wait)
+                else:
+                    consecutive_empty = 0
             except Exception:
                 log.exception(json.dumps({"event": "loop_error"}))
                 time.sleep(IDLE_WAIT_SECONDS)
@@ -491,6 +515,7 @@ def main() -> None:
                 "event": "loop_start",
                 "log_dir": str(log_dir),
                 "idle_wait_seconds": IDLE_WAIT_SECONDS,
+                "idle_wait_max_seconds": IDLE_WAIT_MAX_SECONDS,
                 "in_flight_poll_seconds": IN_FLIGHT_POLL_SECONDS,
                 "concurrency": MAX_CONCURRENT,
                 "stale_minutes": STALE_MINUTES,
