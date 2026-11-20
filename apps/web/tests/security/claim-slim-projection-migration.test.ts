@@ -1,21 +1,26 @@
 /**
- * @file claim-id-only-migration.test.ts
- * @description Spec 211: claim RPC id-only projection migration.
+ * @file claim-slim-projection-migration.test.ts
+ * @description Spec 211: claim RPC slim-projection migration.
  * Verifies the migration file:
  * 1. Ships as ONE new forward migration named
- *    20261120134000_claim_due_queue_items_id_only.sql, sorting after
- *    the live claim definition 20261113060000_claim_rpc_section.sql,
- *    and never drops a table or a column.
+ *    20261120134000_claim_due_queue_items_slim_projection.sql, sorting
+ *    after the live claim definition
+ *    20261113060000_claim_rpc_section.sql, and never drops a table or
+ *    a column.
  * 2. Drops + re-creates exactly ONE function:
  *    claim_due_queue_items(platform, TEXT[], INT, INT) — the DROP is
  *    required because the return type narrows (CREATE OR REPLACE
  *    cannot change it) — with the unchanged signature, defaults,
  *    SECURITY DEFINER posture, and the p_limit 1000 hard cap, and
  *    re-asserts the service-role-only ACLs exactly as spec 174 does.
- * 3. Narrows the return to exactly one column: RETURNS TABLE(id uuid),
- *    and the final SELECT returns only `c.id` — no destination /
- *    account / media join in the final SELECT, no encrypted tokens,
- *    no caption / platform_options / media columns in the return.
+ * 3. Narrows the return to exactly two columns: RETURNS TABLE(id uuid,
+ *    destination_id uuid), and the final SELECT returns only
+ *    `c.id, c.destination_id` — no destination / account / media join
+ *    in the final SELECT, no encrypted tokens, no caption /
+ *    platform_options / media columns in the return. The claimer
+ *    consumes only `id`; the parity rig (case c6) reads
+ *    `destination_id` to assert the per-destination headroom bound —
+ *    that is why the projection keeps it.
  * 4. Keeps the claim semantics body-for-body: the 3-day rate_limited
  *    flip, the D5 grouped-usage snapshot (pg_temp.claim138_rule_usage,
  *    drop-guarded, ON COMMIT DROP), the deferral update, and the
@@ -31,7 +36,7 @@ import path from 'node:path';
 
 const migrationsDir = path.resolve(process.cwd(), '../../supabase/migrations');
 const allFiles = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
-const migrationFile = allFiles.find((f) => f.includes('claim_due_queue_items_id_only'));
+const migrationFile = allFiles.find((f) => f.includes('claim_due_queue_items_slim_projection'));
 
 const sql = migrationFile
   ? fs.readFileSync(path.join(migrationsDir, migrationFile), 'utf-8')
@@ -45,9 +50,9 @@ const fnEndMarker = 'END;\n$function$;';
 const fnEnd = fnStart === -1 ? -1 : sql.indexOf(fnEndMarker, fnStart) + fnEndMarker.length;
 const fnBody = fnStart === -1 || fnEnd === -1 ? '' : sql.slice(fnStart, fnEnd);
 
-describe('Spec 211: claim RPC id-only migration', () => {
+describe('Spec 211: claim RPC slim-projection migration', () => {
   it('ships as the single forward migration 20261120134000, after spec 174', () => {
-    expect(migrationFile).toBe('20261120134000_claim_due_queue_items_id_only.sql');
+    expect(migrationFile).toBe('20261120134000_claim_due_queue_items_slim_projection.sql');
     expect(allFiles).toContain('20261113060000_claim_rpc_section.sql');
     expect(
       (migrationFile as string) > '20261113060000_claim_rpc_section.sql',
@@ -86,8 +91,8 @@ describe('Spec 211: claim RPC id-only migration', () => {
     );
   });
 
-  it('returns exactly one column: id', () => {
-    expect(fnBody).toMatch(/RETURNS TABLE\(id uuid\)/);
+  it('returns exactly two columns: id, destination_id', () => {
+    expect(fnBody).toMatch(/RETURNS TABLE\(id uuid, destination_id uuid\)/);
     expect(fnBody).not.toContain('encrypted_access_token');
     expect(fnBody).not.toContain('encrypted_destination_token');
     expect(fnBody).not.toContain('platform_options');
@@ -95,7 +100,7 @@ describe('Spec 211: claim RPC id-only migration', () => {
     expect(fnBody).not.toContain('media_storage_key');
     expect(fnBody).not.toContain('first_comment');
     expect(fnBody).toContain(
-      'SELECT c.id\n  FROM claimed c\n  ORDER BY c.scheduled_time ASC, c.id ASC;',
+      'SELECT c.id, c.destination_id\n  FROM claimed c\n  ORDER BY c.scheduled_time ASC, c.id ASC;',
     );
   });
 

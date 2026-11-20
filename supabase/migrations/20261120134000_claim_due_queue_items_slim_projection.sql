@@ -1,5 +1,5 @@
 -- Spec 211 (Supabase egress fix 2 of 4): claim_due_queue_items returns
--- only the item id.
+-- only the item id and its destination id.
 --
 -- The claim RPC used to return the full 29-column joined row
 -- (queue-item columns + destination/account/media joins, including
@@ -10,25 +10,30 @@
 -- `row.id`, builds a { itemId, platform, lane } queue message validated
 -- by PublishQueueMessageSchema, and never touches another column — the
 -- full item/account/destination rows are re-loaded by the consumers
--- before publishing. The slot-claim and publish-now ticks consume
--- claim_posting_slot_item / claim_publish_now_items, not this RPC.
+-- before publishing. The claim-RPC parity rig (apps/worker/tests/
+-- claim-rpc/parity.ts, case c6) additionally reads `destination_id`
+-- from the returned rows to assert the per-destination headroom bound
+-- (headroom 2 claims exactly 2 from one destination, 3 from the
+-- uncapped one) — that is the only other reader, and it is why the
+-- projection keeps `destination_id` alongside `id`: two UUID columns
+-- instead of twenty-nine, the same egress saving in practice.
 --
--- This migration therefore narrows the return projection to `id` only.
--- The claim/deferral/selection body is the LIVE prod body from
--- 20261113060000_claim_rpc_section.sql, copied verbatim: same signature
--- and defaults, same p_limit 1000 hard cap, same SECURITY DEFINER
--- posture, same service-role-only ACLs, same 3-day rate_limited flip,
--- same D5 grouped-usage snapshot, same deferral and ranked selection.
--- Only the RETURNS TABLE list and the final SELECT change (the
--- destination/account/media joins in the final SELECT existed only to
--- populate the dropped columns). The return-type change forbids CREATE
--- OR REPLACE, so the old signature is DROPped first, as in spec 174.
--- No other function is dropped or redefined here.
+-- This migration therefore narrows the return projection to
+-- (id, destination_id). The claim/deferral/selection body is the LIVE
+-- prod body from 20261113060000_claim_rpc_section.sql, copied verbatim:
+-- same signature and defaults, same p_limit 1000 hard cap, same
+-- SECURITY DEFINER posture, same service-role-only ACLs, same 3-day
+-- rate_limited flip, same D5 grouped-usage snapshot, same deferral and
+-- ranked selection. Only the RETURNS TABLE list and the final SELECT
+-- change (the destination/account/media joins in the final SELECT
+-- existed only to populate the dropped columns). The return-type
+-- change forbids CREATE OR REPLACE, so the old signature is DROPped
+-- first, as in spec 174. No other function is dropped or redefined here.
 
 DROP FUNCTION IF EXISTS public.claim_due_queue_items(public.platform, TEXT[], INT, INT);
 
 CREATE OR REPLACE FUNCTION public.claim_due_queue_items(p_platform platform, p_lane_kind_set text[], p_limit integer DEFAULT 500, p_max_per_destination integer DEFAULT 3)
- RETURNS TABLE(id uuid)
+ RETURNS TABLE(id uuid, destination_id uuid)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'public'
@@ -311,7 +316,7 @@ BEGIN
     WHERE qi.id = c.id
     RETURNING qi.*
   )
-  SELECT c.id
+  SELECT c.id, c.destination_id
   FROM claimed c
   ORDER BY c.scheduled_time ASC, c.id ASC;
 END;

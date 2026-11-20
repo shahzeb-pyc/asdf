@@ -303,8 +303,10 @@ export interface DatabaseUnifiedPublishLogRow {
 }
 
 /**
- * What `claim_due_queue_items` returns (spec 211): the item id only.
- * The claimer (`apps/worker/src/claimer.ts`) reads exactly `id` and the
+ * What `claim_due_queue_items` returns (spec 211): the item id and its
+ * destination id. The claimer (`apps/worker/src/claimer.ts`) reads
+ * exactly `id`, and the claim-RPC parity rig (case c6) reads
+ * `destination_id` to assert the per-destination headroom bound; the
  * consumers re-load the full item/account/destination rows before
  * publishing — the 29-column joined row the RPC used to return is gone
  * (migration 20261120134000). Keep this in step with that migration's
@@ -312,6 +314,7 @@ export interface DatabaseUnifiedPublishLogRow {
  */
 export interface ClaimedUnifiedQueueItemRpcResult {
   id: string;
+  destination_id: string;
 }
 
 /**
