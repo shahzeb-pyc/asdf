@@ -44,6 +44,12 @@ interface UseImportUploadParams {
 const UPLOAD_RETRY_BASE_DELAY_MS = 1000;
 /** Max automatic retries after a failed attempt (manual Retry is always available). */
 const UPLOAD_MAX_AUTO_RETRIES = 3;
+/**
+ * Max automatic retries for transport drops (network errors). A flapping
+ * connection can be down for a minute or more; 5 retries at 1s/2s/4s/8s/16s
+ * is ~31s of backoff. Every other failure keeps the 3-retry budget.
+ */
+const UPLOAD_MAX_AUTO_RETRIES_NETWORK = 5;
 
 /** Network timeouts: a stalled request must surface an error, never hang at 95%. */
 const PRESIGN_TIMEOUT_MS = 30_000;
@@ -66,6 +72,24 @@ export class StepTimeoutError extends Error {
     super(`StepTimeout:${step}`);
     this.name = 'StepTimeoutError';
   }
+}
+
+/**
+ * True when the failure is a transport drop (the connection to R2 died
+ * mid-flight), not a server answer or a timeout. Network errors get the
+ * larger retry budget; everything else keeps the standard one.
+ *
+ * The raw fetch-failure match is anchored: an unanchored "load failed"
+ * also matches "Upload failed (server responded …)", which is an HTTP
+ * error from R2, not a drop.
+ */
+export function isNetworkUploadError(err: unknown): boolean {
+  if (err instanceof Error && err.message === NETWORK_MESSAGE) return true;
+  if (isApiError(err) && err.kind === 'network') return true;
+  if (err instanceof Error && /^(failed to fetch|network ?error|load failed)/i.test(err.message)) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -963,7 +987,13 @@ const uploadFile = useCallback(
 
       // Auto-retry up to N times with exponential backoff; otherwise surface
       // the real error in plain language with the manual Retry button.
-      if (item.retryCount < UPLOAD_MAX_AUTO_RETRIES) {
+      // Transport drops get the larger budget: a flapping connection can
+      // be down for a minute or more, and the multipart resume means a
+      // retried attempt only re-sends the failed part.
+      const maxRetries = isNetworkUploadError(err)
+        ? UPLOAD_MAX_AUTO_RETRIES_NETWORK
+        : UPLOAD_MAX_AUTO_RETRIES;
+      if (item.retryCount < maxRetries) {
         scheduleAutoRetry(setQueue, item, attemptController);
       } else {
         markUploadFailed(setQueue, item, resolveUploadErrorMessage(err));
