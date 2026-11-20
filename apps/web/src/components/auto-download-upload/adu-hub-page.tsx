@@ -1208,13 +1208,18 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
     setSelectedPageKeys(allPagesChecked ? [] : selectableRowKeys);
   };
 
-  // Discovers one account's pages live from Facebook, replacing
-  // that account's previous result in place. One account's failure
-  // never touches another account's pages.
-  const startDiscover = (accountIds: string[]) => {
+  // Discovers the given accounts' pages live from Facebook, replacing
+  // each account's previous result in place. The promise resolves only
+  // after every account has settled (the Publish Now pattern): the
+  // pages step must never render on a partial list, and one account's
+  // failure never touches another account's pages.
+  const discoverAccounts = async (accountIds: string[]) => {
     for (const accountId of accountIds) {
       setDiscoverByAccount((prev) => ({ ...prev, [accountId]: { ...EMPTY_DISCOVER_ENTRY } }));
-      void executeDiscoverPages(subdomain, accountId).then((result) => {
+    }
+    await Promise.allSettled(
+      accountIds.map(async (accountId) => {
+        const result = await executeDiscoverPages(subdomain, accountId);
         setDiscoverByAccount((prev) => ({
           ...prev,
           [accountId]: result.success
@@ -1235,13 +1240,23 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                 droppedCount: 0,
               },
         }));
-      });
-    }
+      }),
+    );
   };
 
-  const goToPagesStep = () => {
+  // True while step 1 is waiting for every selected account's discover
+  // to settle. Step 2 renders only after that, so Next / Select All can
+  // never act on a partial list.
+  const [discovering, setDiscovering] = React.useState(false);
+
+  const goToPagesStep = async () => {
+    setDiscovering(true);
+    try {
+      await discoverAccounts(selectedAccountIds);
+    } finally {
+      setDiscovering(false);
+    }
     setStep(2);
-    startDiscover(selectedAccountIds);
   };
 
   const sourcePlaceholder = (platform: Platform) =>
@@ -1478,7 +1493,7 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                       variant="outline"
                       size="sm"
                       data-testid={`adu-discover-retry-${accountId}`}
-                      onClick={() => startDiscover([accountId])}
+                      onClick={() => void discoverAccounts([accountId])}
                     >
                       Retry
                     </Button>
@@ -1520,7 +1535,7 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                         variant="outline"
                         size="sm"
                         data-testid={`adu-discover-retry-${accountId}`}
-                        onClick={() => startDiscover([accountId])}
+                        onClick={() => void discoverAccounts([accountId])}
                       >
                         Retry
                       </Button>
@@ -1829,7 +1844,8 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
               type="button"
               data-testid="adu-accounts-next-btn"
               disabled={selectedAccountIds.length === 0}
-              onClick={goToPagesStep}
+              loading={discovering}
+              onClick={() => void goToPagesStep()}
             >
               Next
             </Button>

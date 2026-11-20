@@ -324,7 +324,13 @@ export async function GET(
 ): Promise<NextResponse> {
   const { subdomain, accountId } = await context.params;
   // Audit S6: previously unthrottled Graph-backed call; 20/min like import.
-  const limited = await enforceIpRateLimit(request, 'tenant_account_discover', 20);
+  // Spec 210: scoped per workspace, not per IP — a select-all discover fires
+  // one request per account (46 in workspace 1), so a bare-IP cap 429s the
+  // tail of every legitimate burst. 60/min per workspace allows one full
+  // burst per minute while still bounding Graph calls.
+  const limited = await enforceIpRateLimit(request, 'tenant_account_discover', 60, {
+    scope: `ws:${subdomain}`,
+  });
   if (limited) return limited;
   return handleDiscoverPages(request, subdomain, accountId);
 }
