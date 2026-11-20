@@ -92,6 +92,11 @@ function jsonResponse(body: unknown, ok = true, status = 200) {
 function mockFetch(
   postBodies: unknown[],
   discover: Record<string, unknown> = DISCOVER,
+  // Per-account discover latency (ms) and forced error statuses, for the
+  // spec-210 gating tests: a slow account must not be overtaken by the
+  // pages view, and a 429 must surface as that account's error only.
+  delays: Record<string, number> = {},
+  errorStatuses: Record<string, number> = {},
 ) {
   return vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     if (init?.method === 'POST') {
@@ -100,6 +105,12 @@ function mockFetch(
     }
     if (url.includes('/pages/discover')) {
       const accountId = url.split('/accounts/')[1]?.split('/')[0];
+      const delay = accountId ? delays[accountId] ?? 0 : 0;
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      const errorStatus = accountId ? errorStatuses[accountId] : undefined;
+      if (errorStatus) {
+        return jsonResponse({ error: 'Too many requests. Please wait 60 seconds before trying again.', retryAfterSeconds: 60 }, false, errorStatus);
+      }
       const payload = accountId ? discover[accountId] : undefined;
       if (!payload) return jsonResponse({ error: 'Facebook account not found' }, false, 404);
       return jsonResponse(payload);
@@ -108,9 +119,14 @@ function mockFetch(
   });
 }
 
-async function openDialog(postBodies: unknown[] = [], discover: Record<string, unknown> = DISCOVER) {
+async function openDialog(
+  postBodies: unknown[] = [],
+  discover: Record<string, unknown> = DISCOVER,
+  delays: Record<string, number> = {},
+  errorStatuses: Record<string, number> = {},
+) {
   const onCreated = vi.fn();
-  vi.stubGlobal('fetch', mockFetch(postBodies, discover));
+  vi.stubGlobal('fetch', mockFetch(postBodies, discover, delays, errorStatuses));
   render(
     <AddPageDialog subdomain="testws" open onOpenChange={() => {}} onCreated={onCreated} />
   );
@@ -338,6 +354,41 @@ describe('ADU Add Page dialog — live discovery', () => {
     await screen.findByText('Example Page');
     expect(screen.queryByTestId('adu-discover-error-22222222-2222-4222-8222-222222222222')).toBeNull();
     expect(screen.getByText('7 pages found')).toBeTruthy();
+  });
+
+  it('step 2 does not render until the slowest selected account settles (spec 210)', async () => {
+    const { onCreated } = await openDialog([], DISCOVER, { '22222222-2222-4222-8222-222222222222': 200 });
+    expect(onCreated).toBeDefined();
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByText('Example Account'));
+    fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
+    // The gate holds: still on step 1, Next disabled with its spinner,
+    // and no pages list yet — the fast account's pages must not appear
+    // before the slow account settles, or Select All would miss them.
+    expect(screen.getByText('Step 1 of 4: Select Accounts')).toBeTruthy();
+    expect(screen.queryByTestId('adu-pages-list')).toBeNull();
+    expect(screen.queryByText('Ellie Blossom')).toBeNull();
+    expect((screen.getByTestId('adu-accounts-next-btn') as HTMLButtonElement).disabled).toBe(true);
+    // Once the slow account settles, step 2 renders with both accounts.
+    await screen.findByTestId('adu-pages-list');
+    expect(screen.getByText('Step 2 of 4: Select Pages')).toBeTruthy();
+    expect(screen.getByText('Ellie Blossom')).toBeTruthy();
+    expect(screen.getByText('Example Page')).toBeTruthy();
+  });
+
+  it('a 429 on one account shows its error without dropping the other account (spec 210)', async () => {
+    const { onCreated } = await openDialog([], DISCOVER, {}, { '22222222-2222-4222-8222-222222222222': 429 });
+    expect(onCreated).toBeDefined();
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByText('Example Account'));
+    fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
+    // The 429'd account renders its error + Retry; the healthy
+    // account's pages are listed, and the step still advances — one
+    // failure never blocks the others.
+    await screen.findByTestId('adu-discover-error-22222222-2222-4222-8222-222222222222');
+    expect(screen.getByText(/Example Account: Couldn't load pages/)).toBeTruthy();
+    expect(screen.getByText('Ellie Blossom')).toBeTruthy();
+    expect(screen.getByText('5 pages found')).toBeTruthy();
   });
 
   it('step 4 submits the existing shape for pages from the selected account', async () => {

@@ -23,16 +23,22 @@ export const LARGE_JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 /**
  * Checks the per-IP rate limit for a route. Returns a 429 response when the
  * caller is over the limit, or null when the request may proceed.
+ *
+ * `options.scope` replaces the bare-IP key segment with a caller-chosen
+ * bucket (e.g. `ws:<subdomain>`): callers whose legitimate burst exceeds
+ * the per-IP cap — one workspace discovering pages across all its accounts
+ * at once — scope the bucket per workspace instead of per IP. Without it
+ * the key is exactly as before, so every other route is unaffected.
  */
 export async function enforceIpRateLimit(
   request: NextRequest,
   keyPrefix: string,
   maxRequests: number,
-  windowMs: number = RATE_LIMIT_WINDOW_MS
+  options: { windowMs?: number; scope?: string } = {}
 ): Promise<NextResponse | null> {
-  const clientIp = extractClientIp(request.headers);
+  const { windowMs = RATE_LIMIT_WINDOW_MS, scope } = options;
   const result = await checkRateLimit(
-    `${keyPrefix}:ip:${clientIp}`,
+    scope ? `${keyPrefix}:${scope}` : `${keyPrefix}:ip:${extractClientIp(request.headers)}`,
     maxRequests,
     windowMs
   );
