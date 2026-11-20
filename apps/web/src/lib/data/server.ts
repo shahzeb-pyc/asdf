@@ -60,16 +60,17 @@ function stripTrailingSlashes(value: string): string {
 }
 
 /** Origin the server variant calls back into our own API on.
- * Fallback only — see `getRequestBaseUrl()`: on Vercel this is a
- * `*.vercel.app` deployment URL, which Vercel Authentication gates,
- * so it must never be the loopback origin when a request host exists. */
+ * Fallback only — see `getRequestBaseUrl()`: a preview deployment
+ * serves on its own `*.workers.dev` host, which is not gated, so the
+ * request host wins for loopbacks and this fallback only matters with
+ * no request context (tests, scripts, static generation), where the
+ * production app URL is the correct origin. */
 export function getServerBaseUrl(): string {
-  // The current deployment's own URL must win: on Vercel previews
-  // NEXT_PUBLIC_APP_URL is the production URL, so preferring it would
-  // send every server-side prefetch to production instead of this
-  // deployment's own API.
-  const vercelUrl = process.env.VERCEL_URL;
-  if (vercelUrl) return stripTrailingSlashes(`https://${vercelUrl}`);
+  // No deployment-URL env exists on Cloudflare Workers (there is no
+  // VERCEL_URL equivalent): NEXT_PUBLIC_APP_URL is the production
+  // URL, and a preview deployment must never loop back to production
+  // — that is what `getRequestBaseUrl()` is for. This fallback is
+  // only reached with no request context.
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
   if (appUrl) return stripTrailingSlashes(appUrl);
   return 'http://localhost:3000';
@@ -79,12 +80,11 @@ export function getServerBaseUrl(): string {
  * Loopback origin for server-side API calls (spec 170 F1).
  *
  * The incoming request's own host wins over `getServerBaseUrl()`:
- * on Vercel `VERCEL_URL` is a `*.vercel.app` deployment URL gated by
- * Vercel Authentication, so a loopback there is 302-redirected to the
- * SSO wall, which answers 200 HTML — `serverApiFetch` then fails JSON
- * parsing and the prefetch silently dehydrates nothing (the browser
- * refetches on mount). The request arrived on an unwalled host (the
- * tenant custom domain), so looping back to that same host reaches
+ * a preview deployment serves on its own `*.workers.dev` host while
+ * NEXT_PUBLIC_APP_URL is the production URL, so looping back to the
+ * production URL would send every server-side prefetch to production
+ * instead of this deployment's own API. The request arrived on this
+ * deployment's own host, so looping back to that same host reaches
  * the app. No request context (tests, scripts) falls back to
  * `getServerBaseUrl()`; an explicit `baseUrl` still wins everywhere.
  */
@@ -316,7 +316,7 @@ export interface ServerPrefetchEntry {
  * state and the client island fetches on mount instead. The failure
  * is still reported through `reportError` — a prefetch that dies
  * silently is how the accounts prefetch stayed dead (spec 170 F1:
- * the Vercel Authentication wall on the loopback origin) with
+ * the auth wall on the loopback origin) with
  * nothing in the server logs to show for it.
  */
 export async function prefetchServerQueries(

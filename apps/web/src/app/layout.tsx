@@ -7,7 +7,6 @@ import { DesktopTitleBar } from '@/components/desktop';
 import { DeferredWhatsAppSupportButton } from '@/components/support/deferred-whatsapp-support-button';
 import { BrandProvider } from '@/components/brand';
 import { getRequestBrand } from '@/lib/brand-server';
-import { Analytics } from '@vercel/analytics/next';
 import { PostHogProvider } from '@/components/posthog-provider';
 import { fontSansClassName } from './fonts';
 
@@ -119,7 +118,6 @@ export default async function RootLayout({
             <main>{children}</main>
             <DeferredWhatsAppSupportButton />
           </BrandProvider>
-          <Analytics />
         </PostHogProvider>
       </body>
     </html>

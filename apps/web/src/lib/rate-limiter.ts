@@ -369,18 +369,12 @@ export async function clearLockout(key: string): Promise<void> {
 
 /**
  * Helper to extract client IP from Next.js request headers.
- * Prioritizes verified platform headers (x-vercel-forwarded-for, cf-connecting-ip, x-real-ip)
- * and falls back to the rightmost IP in x-forwarded-for to prevent client-controlled leftmost spoofing.
+ * Prioritizes the trusted platform header (cf-connecting-ip, set by
+ * Cloudflare and not client-spoofable) and falls back to x-real-ip,
+ * then to the rightmost IP in x-forwarded-for to prevent
+ * client-controlled leftmost spoofing.
  */
 export function extractClientIp(headers: Headers): string {
-  const vercelForwardedFor = headers.get('x-vercel-forwarded-for');
-  if (vercelForwardedFor) {
-    const ips = vercelForwardedFor.split(',').map((ip) => ip.trim()).filter(Boolean);
-    if (ips.length > 0) {
-      return ips[ips.length - 1] ?? 'unknown';
-    }
-  }
-
   const cfConnectingIp = headers.get('cf-connecting-ip');
   if (cfConnectingIp?.trim()) {
     return cfConnectingIp.trim();

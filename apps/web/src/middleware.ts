@@ -80,7 +80,7 @@ function buildAuthenticatedWorkspaceRedirect(
   const isLocalRoot = rootDomain.includes('localhost') || rootDomain.includes('127.0.0.1');
   const isLocalHost = cleanHost.includes('localhost') || cleanHost.includes('127.0.0.1');
 
-  if (cleanHost.endsWith('.vercel.app') || (isLocalRoot && !isLocalHost)) {
+  if (cleanHost.endsWith('.workers.dev') || (isLocalRoot && !isLocalHost)) {
     return NextResponse.redirect(new URL(`/tenant/${session.subdomain}`, request.url));
   }
 
@@ -179,7 +179,7 @@ function isReturnUrlTargetingTenant(
     const expectedHost = `${tenantSubdomain}.${cleanRoot}`.toLowerCase();
     if (host === expectedHost) return true;
     if (
-      host.endsWith('.vercel.app') &&
+      host.endsWith('.workers.dev') &&
       (parsed.pathname === `/tenant/${tenantSubdomain}` ||
         parsed.pathname.startsWith(`/tenant/${tenantSubdomain}/`))
     ) {
@@ -605,7 +605,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
           // so a good shared-domain (.fbuploadpro.com) cookie is a
           // separate entry and SURVIVES — a user with a good shared
           // cookie is unaffected. Scoped to requests actually from
-          // production custom hosts only: on localhost / vercel
+          // production custom hosts only: on localhost / Cloudflare
           // preview the host-only cookie IS the session, so purging
           // it there would log those users out.
           //
@@ -613,12 +613,12 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
           // as well as the configured root domain. The previous gate
           // only looked at the root domain, but previews are built
           // with the production config, so a preview deployment serves
-          // on a *.vercel.app host while NEXT_PUBLIC_ROOT_DOMAIN is
+          // on a *.workers.dev host while NEXT_PUBLIC_ROOT_DOMAIN is
           // still fbuploadpro.com — the old gate passed and the purge
           // deleted the preview user's ONLY session cookie. Purge
           // only when the request actually came from a production
           // custom host: the host is the root or a subdomain of it,
-          // and it is not localhost, 127.0.0.1, or a *.vercel.app
+          // and it is not localhost, 127.0.0.1, or a *.workers.dev
           // preview host. This mirrors the host test in
           // lib/auth/clients.ts getCookieDomain, which cannot be
           // imported into Edge middleware (it imports
@@ -629,7 +629,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
           const isLocalOrPreviewHost =
             cleanHost.includes('localhost') ||
             cleanHost.includes('127.0.0.1') ||
-            cleanHost.endsWith('.vercel.app');
+            cleanHost.endsWith('.workers.dev');
           const isProductionCustomHost =
             !!cleanRoot &&
             !isLocalOrPreviewHost &&

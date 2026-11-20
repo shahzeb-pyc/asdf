@@ -254,7 +254,7 @@ export function getCookieDomain(requestHost?: string | null): string | undefined
     const cleanHost = requestHost.trim().toLowerCase().split(':')[0] || '';
     const isLocalHost =
       cleanHost.includes('localhost') || cleanHost.includes('127.0.0.1');
-    const isVercelHost = cleanHost.endsWith('.vercel.app');
+    const isPreviewHost = cleanHost.endsWith('.workers.dev');
 
     // Fail loud, never silently host-only, on a production custom
     // domain. A host-only cookie set on app.<root> can never be read
@@ -264,17 +264,17 @@ export function getCookieDomain(requestHost?: string | null): string | undefined
     // at login time (logged server-side, surfaced by the route's
     // error path) is strictly better than that silent loop.
     // Scoped so local dev and previews are untouched: localhost and
-    // *.vercel.app deployments serve tenant paths on the same host,
+    // *.workers.dev deployments serve tenant paths on the same host,
     // so a host-only cookie works there, and non-production callers
     // keep the old silent fallback.
-    if (process.env.NODE_ENV === 'production' && !isLocalHost && !isVercelHost) {
+    if (process.env.NODE_ENV === 'production' && !isLocalHost && !isPreviewHost) {
       const cookieDomain = cookieDomainOverride;
       const effectiveBase = (cookieDomain ? cookieDomain.replace(/^\./, '') : cleanRoot)
         .toLowerCase();
       const effectiveIsUsable =
         !effectiveBase.includes('localhost') &&
         !effectiveBase.includes('127.0.0.1') &&
-        !effectiveBase.endsWith('.vercel.app');
+        !effectiveBase.endsWith('.workers.dev');
       const coversHost =
         cleanHost === effectiveBase || cleanHost.endsWith(`.${effectiveBase}`);
       if (!effectiveIsUsable || !coversHost) {
@@ -295,7 +295,7 @@ export function getCookieDomain(requestHost?: string | null): string | undefined
 
     if (
       isLocalHost ||
-      isVercelHost ||
+      isPreviewHost ||
       (cleanHost !== cleanRoot && !cleanHost.endsWith(`.${cleanRoot}`))
     ) {
       return undefined;
@@ -305,7 +305,7 @@ export function getCookieDomain(requestHost?: string | null): string | undefined
   if (
     cleanRoot.includes('localhost') ||
     cleanRoot.includes('127.0.0.1') ||
-    cleanRoot.endsWith('.vercel.app')
+    cleanRoot.endsWith('.workers.dev')
   ) {
     return undefined;
   }

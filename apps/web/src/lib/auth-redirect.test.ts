@@ -28,8 +28,8 @@ describe('resolveAdminLoginRedirect', () => {
     ['/sellers/abc-123', '/admin/sellers/abc-123'],
     // Full URLs: the origin is dropped, the path maps the same way.
     ['https://e2e.localhost:3100/billing', '/admin/subscriptions'],
-    ['https://preview.vercel.app/tenant/e2e/sellers', '/admin/sellers'],
-    ['https://preview.vercel.app/tenant/e2e/sellers/abc-123', '/admin/sellers/abc-123'],
+    ['https://preview.workers.dev/tenant/e2e/sellers', '/admin/sellers'],
+    ['https://preview.workers.dev/tenant/e2e/sellers/abc-123', '/admin/sellers/abc-123'],
     // User sections are NOT honored.
     ['/inapp-schedule', '/admin/subscriptions'],
     ['/tenant/e2e/inapp-schedule', '/admin/subscriptions'],
