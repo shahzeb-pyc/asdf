@@ -44,6 +44,22 @@ export interface ImportProgressHeaderProps {
   totalBytes: number;
 }
 
+/**
+ * The completion title, shared by the header and the dialog title so the
+ * two can never disagree: a batch with nothing uploaded is a failure,
+ * not a completion.
+ */
+export function resolveCompleteTitle(
+  completedCount: number,
+  totalCount: number,
+  isAllCancelled: boolean
+): string {
+  if (isAllCancelled) return 'Import canceled';
+  if (completedCount === 0) return 'Import failed';
+  if (completedCount < totalCount) return 'Import finished';
+  return 'Import complete';
+}
+
 export function ImportProgressHeader({
   step,
   destinationFolderName,
@@ -56,20 +72,24 @@ export function ImportProgressHeader({
 }: Readonly<ImportProgressHeaderProps>) {
   const title =
     step === 'complete'
-      ? isAllCancelled
-        ? 'Import canceled'
-        : 'Import complete'
+      ? resolveCompleteTitle(completedCount, totalCount, isAllCancelled)
       : 'Importing media';
 
   const subtext =
     step === 'complete'
       ? isAllCancelled
         ? 'Import canceled — nothing was uploaded'
-        : `Import complete — ${completedCount} of ${totalCount} uploaded`
+        : completedCount === 0
+          ? `Import failed — 0 of ${totalCount} uploaded`
+          : completedCount < totalCount
+            ? `Import finished — ${completedCount} of ${totalCount} uploaded`
+            : `Import complete — ${completedCount} of ${totalCount} uploaded`
       : `Adding to ${destinationFolderName}`;
 
-  const barPercent =
-    step === 'complete' && !isAllCancelled ? 100 : overallProgressPercent;
+  // The bar always shows the real byte-weighted percent — never a forced
+  // 100%: when every file succeeds it is 100 anyway, and when files fail
+  // the bar must show what actually arrived (e.g. ~1% of 12.6 MB).
+  const barPercent = overallProgressPercent;
 
   return (
     <div className="flex flex-col gap-2">

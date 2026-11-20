@@ -54,6 +54,7 @@ import {
   ImportProgressHeader,
   ImportProgressFooter,
   MinimizedUploadPill,
+  resolveCompleteTitle,
 } from './media-import-progress';
 import { ImportProgressRow } from './media-import-progress-row';
 
@@ -414,13 +415,14 @@ export function MediaImportModal({
     completedItems.length === 0 &&
     (userInitiatedCancel || queue.every((it) => it.status === 'cancelled'));
 
+  // The completion title is shared with the progress header
+  // (resolveCompleteTitle) so the dialog heading can never say
+  // "Import complete" when nothing uploaded.
   const title =
     step === 'staging'
       ? 'Import media'
       : step === 'complete'
-        ? isAllCancelled
-          ? 'Import canceled'
-          : 'Import complete'
+        ? resolveCompleteTitle(completedItems.length, queue.length, isAllCancelled)
         : 'Importing media';
 
   // 1-based positions among the waiting files, for "queued · #n" (PB-3).
