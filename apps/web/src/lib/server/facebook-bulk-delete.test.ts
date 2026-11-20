@@ -172,11 +172,11 @@ describe('resolveDeleteCandidates', () => {
 });
 
 describe('bulkDeleteContent', () => {
-  it('returns per-item results and masks (#200) as "Failed to delete"', async () => {
+  it('returns per-item results and masks code 200 as "Failed to delete"', async () => {
     const fetchFn = makeFetch((url) => {
       if (url.includes('123_ok')) return jsonResponse({ success: true });
       return jsonResponse(
-        { error: { code: 200, message: '(#200) Requires pages_manage_posts' } },
+        { error: { code: 200, message: 'Graph error 200: Requires pages_manage_posts' } },
         403,
       );
     });
@@ -195,7 +195,7 @@ describe('bulkDeleteContent', () => {
   it('reports an already-deleted id as success so a retry cannot re-fail it', async () => {
     const fetchFn = makeFetch(() =>
       jsonResponse(
-        { error: { code: 803, message: '(#803) Some of the aliases you requested do not exist' } },
+        { error: { code: 803, message: 'Some of the aliases you requested do not exist' } },
         400,
       ),
     );

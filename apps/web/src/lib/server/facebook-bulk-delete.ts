@@ -23,7 +23,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * Old shapes kept from the old implementation
  * (`~/workspace/old-fbuploadpro`, page-tools-service.ts): the list
  * endpoints and fields, the `video_reels` → `videos` fallback, the
- * title fallbacks, permalink normalisation, and the `(#200)` masking
+ * title fallbacks, permalink normalisation, and the code-200 masking
  * to "Failed to delete". Deliberate divergences: Graph v26.0 (old was
  * v19.0), explicit fetch timeouts, and over-cap requests are rejected
  * instead of silently sliced.

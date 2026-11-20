@@ -1551,7 +1551,7 @@ function ContentCard({
           <span className="mb-1 inline-block rounded-full border border-line px-2 py-0.5 text-metadata font-bold uppercase tracking-body text-ink-sub">
             {typeLabel(candidate.type)}
           </span>
-          <span className="block text-body font-semibold leading-body text-ink [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
+          <span className="block text-body font-semibold leading-body text-ink line-clamp-2 overflow-hidden">
             {candidate.title}
           </span>
           <span className="mt-0.5 block text-metadata text-ink-sub">
