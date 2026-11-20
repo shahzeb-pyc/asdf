@@ -6,7 +6,7 @@
  * than waited out. Async UI is awaited by advancing the clock, never
  * by real time.
  */
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -117,7 +117,12 @@ function renderPage() {
 
 /** Flush pending queries/mutations by advancing the fake clock. */
 async function tick(ms = 100) {
-  await vi.advanceTimersByTimeAsync(ms);
+  // Fake timers: waitFor would deadlock, and state updates from the
+  // async delete run happen outside fireEvent's act() scope — the clock
+  // advance itself must be act-wrapped or React never flushes them.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
 }
 
 async function discoverOnePage() {
@@ -204,7 +209,7 @@ describe('BulkDeletePage', () => {
     expect((batchCalls()[0]?.[1] as { contentIds: string[] }).contentIds).toHaveLength(20);
 
     // Advancing the clock through the pause runs the last batch of 5.
-    await vi.advanceTimersByTimeAsync(60_000);
+    await tick(60_000);
     await tick();
     expect(screen.getByText('Deletion complete')).toBeInTheDocument();
     expect(batchCalls()).toHaveLength(2);
@@ -226,7 +231,12 @@ describe('BulkDeletePage', () => {
     renderPage();
     await tick();
     await discoverOnePage();
-    fireEvent.click(screen.getByRole('button', { name: 'Manual Curation' }));
+    // Radix Tabs activate on focus (automatic mode); a bare fireEvent.click
+    // never focuses the trigger, so the tab stays unselected. Focus first,
+    // as a real mouse click would, then click.
+    const manualTab = screen.getByRole('tab', { name: 'Manual Curation' });
+    fireEvent.focus(manualTab);
+    fireEvent.click(manualTab);
     await tick();
     expect(screen.getByText('Post 1')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Post 1'));
