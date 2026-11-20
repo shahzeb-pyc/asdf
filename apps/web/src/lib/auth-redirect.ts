@@ -37,15 +37,16 @@ function resolvePreviewContext(
 
   const isBrowserPreview =
     Boolean(browserHost) &&
-    (browserHost.endsWith('.vercel.app') || (isLocal && !isBrowserLocal));
+    (browserHost.endsWith('.workers.dev') || (isLocal && !isBrowserLocal));
 
   const cleanReqHost = requestHost?.trim().toLowerCase().split(':')[0] || '';
   let serverPreviewHost: string | null = null;
   if (!isBrowserPreview) {
-    if (cleanReqHost.endsWith('.vercel.app')) {
+    // Cloudflare preview deployments serve on *.workers.dev; there is
+    // no deployment-URL env (no VERCEL_URL equivalent), so the request
+    // host is the only preview signal — and it is the one that matters.
+    if (cleanReqHost.endsWith('.workers.dev')) {
       serverPreviewHost = cleanReqHost;
-    } else if (process.env.VERCEL_URL && (isLocal || cleanRoot === 'localhost')) {
-      serverPreviewHost = process.env.VERCEL_URL;
     }
   }
 
@@ -110,7 +111,7 @@ function isAllowedBrowserPreviewHost(
   }
   return Boolean(
     allSubdomains.length > 0 &&
-      actualHostname.endsWith('.vercel.app') &&
+      actualHostname.endsWith('.workers.dev') &&
       allSubdomains.some(
         (sub) =>
           parsed.pathname === `/tenant/${sub}` ||

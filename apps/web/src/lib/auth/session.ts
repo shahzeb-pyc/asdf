@@ -79,7 +79,7 @@ export async function validateSessionDetailed(
  * resolver, and every computation is guarded. A logout that throws
  * on domain resolution would answer 500 with nothing cleared —
  * the exact hole this replaces. The shared-domain variant is
- * skipped for localhost / 127.0.0.1 / `*.vercel.app` roots, where
+ * skipped for localhost / 127.0.0.1 / `*.workers.dev` roots, where
  * cookies are host-only by construction (and a shared-domain clear
  * would be rejected by the browser anyway).
  *
@@ -121,7 +121,7 @@ export function clearSessionCookiesBestEffort(
     cleanHost === '' ||
     cleanHost.includes('localhost') ||
     cleanHost.includes('127.0.0.1') ||
-    cleanHost.endsWith('.vercel.app');
+    cleanHost.endsWith('.workers.dev');
 
   // Shared-domain variant: only when the request host is actually
   // under the shared domain (tenant subdomain or apex host). A
@@ -147,7 +147,7 @@ export function clearSessionCookiesBestEffort(
     const rootIsUsable =
       !cleanRoot.includes('localhost') &&
       !cleanRoot.includes('127.0.0.1') &&
-      !cleanRoot.endsWith('.vercel.app');
+      !cleanRoot.endsWith('.workers.dev');
     if (rootIsUsable) {
       const shared = cookieDomain
         ? cookieDomain.startsWith('.')

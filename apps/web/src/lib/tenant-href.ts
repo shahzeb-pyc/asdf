@@ -4,7 +4,7 @@
  * On tenant subdomains (e.g. shahzebpyc.fbuploadpro.com) the middleware
  * rewrites clean paths (/accounts) to the internal /tenant/[subdomain]
  * route, so links should use clean paths to keep the address bar clean.
- * On Vercel previews (*.vercel.app) and apex-domain access there is no
+ * On Cloudflare previews (*.workers.dev) and apex-domain access there is no
  * subdomain to rewrite from, so the /tenant/[subdomain] prefix is required.
  *
  * This helper is for USER (tenant) links only. Admin and seller links
@@ -55,7 +55,7 @@ export function isTenantSubdomainHost(hostname: string, subdomain: string): bool
 /**
  * True when `hostname` carries a swappable subdomain label: a
  * `*.localhost` host with a label before it, or any host with at
- * least three labels that is not a `*.vercel.app` preview. Bare
+ * least three labels that is not a `*.workers.dev` preview. Bare
  * localhost / 127.0.0.1, bare apex hosts (two labels), and previews
  * return false — on those hosts a workspace switch must keep the
  * prefixed `/tenant/<subdomain>` form, because there is no own-host
@@ -66,7 +66,7 @@ export function hasSwappableSubdomain(hostname: string): boolean {
   const labels = host.split('.');
   if (labels.length < 2) return false;
   if (host === 'localhost' || host === '127.0.0.1') return false;
-  if (host.endsWith('.vercel.app')) return false;
+  if (host.endsWith('.workers.dev')) return false;
   if (labels[labels.length - 1] === 'localhost') return labels.length >= 2;
   return labels.length >= 3;
 }

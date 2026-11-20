@@ -10,7 +10,7 @@
  *
  * Local / preview behaviour is preserved, mirroring
  * `buildSubdomainOAuthRedirectUri` / `buildTenantUrl`: on localhost
- * (or with no/local root domain) and on Vercel preview hosts the
+ * (or with no/local root domain) and on Cloudflare preview hosts the
  * request origin already is the app host, so it is used as-is and
  * existing localhost expectations stay green. In production the app
  * host comes from the caller-supplied `appUrl` — the brand's app
@@ -41,8 +41,8 @@ export function buildMagicConnectUrl(
     !cleanRoot ||
     cleanRoot.includes('localhost') ||
     cleanRoot.includes('127.0.0.1');
-  const isVercelPreview = host.endsWith('.vercel.app');
-  if (isLocalHost || isLocalRoot || isVercelPreview) {
+  const isCloudflarePreview = host.endsWith('.workers.dev');
+  if (isLocalHost || isLocalRoot || isCloudflarePreview) {
     return new URL(pathname, requestOrigin.origin);
   }
   // Parse failure is recorded explicitly as "no app origin", not

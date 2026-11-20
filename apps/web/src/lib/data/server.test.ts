@@ -41,24 +41,15 @@ function setRequestHeaders(entries: Record<string, string>): void {
   }
 }
 
-const WALLED_VERCEL_URL = 'asdf-v2pn-shahzebhuyar-4438.vercel.app';
-
 describe('getServerBaseUrl', () => {
-  const originalVercelUrl = process.env.VERCEL_URL;
   const originalAppUrl = process.env.NEXT_PUBLIC_APP_URL;
 
   beforeEach(() => {
-    delete process.env.VERCEL_URL;
     delete process.env.NEXT_PUBLIC_APP_URL;
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
-    if (originalVercelUrl !== undefined) {
-      process.env.VERCEL_URL = originalVercelUrl;
-    } else {
-      delete process.env.VERCEL_URL;
-    }
     if (originalAppUrl !== undefined) {
       process.env.NEXT_PUBLIC_APP_URL = originalAppUrl;
     } else {
@@ -66,50 +57,33 @@ describe('getServerBaseUrl', () => {
     }
   });
 
-  it('prefers VERCEL_URL over NEXT_PUBLIC_APP_URL (the current deployment wins)', () => {
-    vi.stubEnv(
-      'VERCEL_URL',
-      'fbuploadpro-git-feat-pages-dedicated-redesign-velocta.vercel.app'
-    );
-    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.fbuploadpro.com');
-    expect(getServerBaseUrl()).toBe(
-      'https://fbuploadpro-git-feat-pages-dedicated-redesign-velocta.vercel.app'
-    );
-  });
-
-  it('uses VERCEL_URL alone as an https origin', () => {
-    vi.stubEnv('VERCEL_URL', 'fbuploadpro-git-main-velocta.vercel.app');
-    expect(getServerBaseUrl()).toBe('https://fbuploadpro-git-main-velocta.vercel.app');
-  });
-
-  it('falls back to NEXT_PUBLIC_APP_URL when VERCEL_URL is unset', () => {
+  it('uses NEXT_PUBLIC_APP_URL as the fallback origin', () => {
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.fbuploadpro.com');
     expect(getServerBaseUrl()).toBe('https://app.fbuploadpro.com');
   });
 
-  it('falls back to localhost when neither variable is set', () => {
+  it('falls back to localhost when NEXT_PUBLIC_APP_URL is unset', () => {
     expect(getServerBaseUrl()).toBe('http://localhost:3000');
   });
 
-  it('strips trailing slashes from both origins', () => {
-    vi.stubEnv('VERCEL_URL', 'preview.example.vercel.app///');
+  it('strips trailing slashes from the app URL', () => {
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.fbuploadpro.com///');
-    expect(getServerBaseUrl()).toBe('https://preview.example.vercel.app');
-    vi.unstubAllEnvs();
-    delete process.env.VERCEL_URL;
-    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.fbuploadpro.com///');
+    expect(getServerBaseUrl()).toBe('https://app.fbuploadpro.com');
+  });
+
+  it('ignores VERCEL_URL: no deployment-URL env exists on Cloudflare', () => {
+    vi.stubEnv('VERCEL_URL', 'fbuploadpro-git-main-velocta.vercel.app');
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.fbuploadpro.com');
     expect(getServerBaseUrl()).toBe('https://app.fbuploadpro.com');
   });
 });
 
 describe('getRequestBaseUrl (spec 170 F1)', () => {
-  const originalVercelUrl = process.env.VERCEL_URL;
   const originalAppUrl = process.env.NEXT_PUBLIC_APP_URL;
   const reported: Array<{ error: unknown; context: ReportErrorContext | undefined }> =
     [];
 
   beforeEach(() => {
-    delete process.env.VERCEL_URL;
     delete process.env.NEXT_PUBLIC_APP_URL;
     headerMocks.headers.clear();
     headerMocks.cookieHeader = '';
@@ -123,11 +97,6 @@ describe('getRequestBaseUrl (spec 170 F1)', () => {
   afterEach(() => {
     resetReportErrorTransport();
     vi.unstubAllEnvs();
-    if (originalVercelUrl !== undefined) {
-      process.env.VERCEL_URL = originalVercelUrl;
-    } else {
-      delete process.env.VERCEL_URL;
-    }
     if (originalAppUrl !== undefined) {
       process.env.NEXT_PUBLIC_APP_URL = originalAppUrl;
     } else {
@@ -135,8 +104,8 @@ describe('getRequestBaseUrl (spec 170 F1)', () => {
     }
   });
 
-  it('prefers the request host over VERCEL_URL (the wall-gated deployment URL)', async () => {
-    vi.stubEnv('VERCEL_URL', WALLED_VERCEL_URL);
+  it('prefers the request host over NEXT_PUBLIC_APP_URL (the production URL)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.fbuploadpro.com');
     setRequestHeaders({
       host: 'beekainternational.fbuploadpro.com',
       'x-forwarded-proto': 'https',
@@ -163,18 +132,18 @@ describe('getRequestBaseUrl (spec 170 F1)', () => {
   });
 
   it('falls back to getServerBaseUrl when no host header is present', async () => {
-    vi.stubEnv('VERCEL_URL', WALLED_VERCEL_URL);
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.fbuploadpro.com');
     await expect(getRequestBaseUrl()).resolves.toBe(
-      `https://${WALLED_VERCEL_URL}`
+      'https://app.fbuploadpro.com'
     );
     expect(reported).toHaveLength(0);
   });
 
   it('falls back to getServerBaseUrl when headers() throws, without reporting', async () => {
-    vi.stubEnv('VERCEL_URL', WALLED_VERCEL_URL);
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.fbuploadpro.com');
     headerMocks.throwOnHeaders = true;
     await expect(getRequestBaseUrl()).resolves.toBe(
-      `https://${WALLED_VERCEL_URL}`
+      'https://app.fbuploadpro.com'
     );
     // The fallback is the designed default for a missing request
     // context, not an error: no report is emitted. A prefetch that
@@ -185,7 +154,6 @@ describe('getRequestBaseUrl (spec 170 F1)', () => {
 });
 
 describe('serverApiFetch loopback origin (spec 170 F1)', () => {
-  const originalVercelUrl = process.env.VERCEL_URL;
   const originalAppUrl = process.env.NEXT_PUBLIC_APP_URL;
   const reported: Array<{ error: unknown; context: ReportErrorContext | undefined }> =
     [];
@@ -200,7 +168,6 @@ describe('serverApiFetch loopback origin (spec 170 F1)', () => {
   };
 
   beforeEach(() => {
-    delete process.env.VERCEL_URL;
     delete process.env.NEXT_PUBLIC_APP_URL;
     headerMocks.headers.clear();
     headerMocks.cookieHeader = '';
@@ -215,11 +182,6 @@ describe('serverApiFetch loopback origin (spec 170 F1)', () => {
   afterEach(() => {
     resetReportErrorTransport();
     vi.unstubAllEnvs();
-    if (originalVercelUrl !== undefined) {
-      process.env.VERCEL_URL = originalVercelUrl;
-    } else {
-      delete process.env.VERCEL_URL;
-    }
     if (originalAppUrl !== undefined) {
       process.env.NEXT_PUBLIC_APP_URL = originalAppUrl;
     } else {
@@ -227,8 +189,8 @@ describe('serverApiFetch loopback origin (spec 170 F1)', () => {
     }
   });
 
-  it('loops back to the request host, not the wall-gated VERCEL_URL, forwarding cookies', async () => {
-    vi.stubEnv('VERCEL_URL', WALLED_VERCEL_URL);
+  it('loops back to the request host, not NEXT_PUBLIC_APP_URL, forwarding cookies', async () => {
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.fbuploadpro.com');
     headerMocks.cookieHeader = 'fbup_session=session-123';
     setRequestHeaders({
       host: 'beekainternational.fbuploadpro.com',
