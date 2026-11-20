@@ -9,7 +9,7 @@ import {
   BulkDeleteContentRequestSchema,
   BulkDeletePreviewRequestSchema,
   BulkDeletePreviewResponseSchema,
-} from './bulk-delete';
+} from './bulk-delete.js';
 
 const basePreview = {
   accountId: '11111111-1111-4111-8111-111111111111',
