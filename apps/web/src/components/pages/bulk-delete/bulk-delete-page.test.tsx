@@ -189,6 +189,65 @@ describe('BulkDeletePage', () => {
     expect(screen.queryByText(/are you sure/i)).not.toBeInTheDocument();
   });
 
+  it('preview survives a failing page: the other page still loads, pre-selected, and the failed page is named', async () => {
+    const twoPageDiscover = {
+      ...discoverResponse,
+      pages: [
+        ...discoverResponse.pages,
+        {
+          fbPageId: '222',
+          pageName: 'Evening Bakes',
+          profilePictureUrl: null,
+          category: null,
+          currentFollowers: 50,
+          followersCount: 50,
+          tasks: [],
+          isImported: false,
+        },
+      ],
+      total: 2,
+    };
+    apiGet.mockImplementation(async (path: string) => {
+      if (path.includes('/pages/discover')) return twoPageDiscover;
+      if (path.includes('/bulk-delete/content')) {
+        return { items: candidates(25), paging: { after: null } };
+      }
+      return accountsResponse;
+    });
+    apiPost.mockImplementation(async (path: string, body: unknown) => {
+      if (path.includes('/bulk-delete/preview')) {
+        if ((body as { pageId: string }).pageId === '222') {
+          throw new Error('Page access token has expired.');
+        }
+        return { total: 25, candidates: candidates(25) };
+      }
+      throw new Error(`unexpected POST ${path}`);
+    });
+
+    renderPage();
+    await tick();
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByRole('button', { name: /Find pages/ }));
+    await tick();
+    fireEvent.click(screen.getByText('Morning Recipes'));
+    fireEvent.click(screen.getByText('Evening Bakes'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview Targets' }));
+    await tick();
+
+    // The working page's candidates still render, pre-selected —
+    // 25, not 50, so the failed page contributed nothing.
+    expect(screen.getByText('Items Found')).toBeInTheDocument();
+    expect(screen.getByText('Post 1')).toBeInTheDocument();
+    expect(screen.getByText('25 items selected')).toBeInTheDocument();
+    // The failed page is named with its reason, and there is no
+    // generic all-failed error.
+    expect(
+      screen.getByText(/Evening Bakes.*Page access token has expired/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't preview posts to delete/)).not.toBeInTheDocument();
+  });
+
   it('deletes in batches of 20 with a 60s pause, and already-deleted counts as success', async () => {
     renderPage();
     await tick();

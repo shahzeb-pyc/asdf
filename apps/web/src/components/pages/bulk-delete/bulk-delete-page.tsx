@@ -168,6 +168,12 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
   const [isPreviewing, setIsPreviewing] = React.useState(false);
   const [hasPreviewed, setHasPreviewed] = React.useState(false);
   const [previewPage, setPreviewPage] = React.useState(1);
+  // Pages whose preview call failed on the last Preview Targets run.
+  // Shown alongside the partial results so the user knows what is
+  // missing and can retry just those pages.
+  const [previewFailures, setPreviewFailures] = React.useState<
+    Array<{ pageName: string; reason: string }>
+  >([]);
 
   const [manualPageKeyOverride, setManualPageKeyOverride] = React.useState<string | null>(null);
   const [manualType, setManualType] = React.useState<BulkDeleteContentType>('posts');
@@ -300,6 +306,7 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
       setPreviewItems([]);
       setPreviewTotal(0);
       setHasPreviewed(false);
+      setPreviewFailures([]);
       // The manual list is derived (React Query + Load More appends), so
       // clearing it means clearing the appended extras and pagination.
       setExtraItems([]);
@@ -442,31 +449,50 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
       if (selectedPages.length === 0) return;
       setIsPreviewing(true);
       setErrorMessage(null);
+      setPreviewFailures([]);
       try {
         const merged: BulkDeleteCandidate[] = [];
+        const failures: Array<{ pageName: string; reason: string }> = [];
         // One page at a time, sequentially — bounded, rate-limit
-        // friendly, and a single page failing never blocks the rest.
+        // friendly. Each page is fetched in its own try/catch, so a
+        // single page failing (dead token, removed/unpublished page,
+        // transient Graph error) is recorded and the loop continues
+        // with the remaining pages instead of discarding everything.
         for (const page of selectedPages) {
-          const response = await api.post(
-            buildTenantApiPath(subdomain, '/bulk-delete/preview'),
-            {
-              accountId: page.accountId,
-              pageId: page.fbPageId,
-              type: previewType,
-              sort,
-              ...(dateFrom ? { dateFrom } : {}),
-              ...(dateTo ? { dateTo } : {}),
-            },
-            { schema: BulkDeletePreviewResponseSchema },
-          );
-          for (const item of response.candidates) {
-            merged.push({
-              ...item,
-              accountId: page.accountId,
-              pageId: page.fbPageId,
+          try {
+            const response = await api.post(
+              buildTenantApiPath(subdomain, '/bulk-delete/preview'),
+              {
+                accountId: page.accountId,
+                pageId: page.fbPageId,
+                type: previewType,
+                sort,
+                ...(dateFrom ? { dateFrom } : {}),
+                ...(dateTo ? { dateTo } : {}),
+              },
+              { schema: BulkDeletePreviewResponseSchema },
+            );
+            for (const item of response.candidates) {
+              merged.push({
+                ...item,
+                accountId: page.accountId,
+                pageId: page.fbPageId,
+                pageName: page.pageName,
+              });
+            }
+          } catch (error) {
+            failures.push({
               pageName: page.pageName,
+              reason: errorText(error, "Couldn't preview this page."),
             });
           }
+        }
+        if (merged.length === 0 && failures.length > 0) {
+          // Every page failed: keep the current behaviour — generic
+          // error, no stale preview presented as fresh.
+          setErrorMessage("Couldn't preview posts to delete. Please try again.");
+          setPreviewFailures(failures);
+          return;
         }
         const sorted = [...merged].sort((a, b) => {
           const av = a.createdTime ? Date.parse(a.createdTime) : 0;
@@ -478,6 +504,7 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
         setPreviewTotal(candidates.length);
         setHasPreviewed(true);
         setPreviewPage(1);
+        setPreviewFailures(failures);
         if (keepFailedIds) {
           const kept = new Set(candidates.map((c) => c.id));
           setSelectedContentIds((prev) => prev.filter((id) => keepFailedIds.has(id) && kept.has(id)));
@@ -485,10 +512,6 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
           // Old behaviour: everything previewed is pre-selected.
           setSelectedContentIds(candidates.map((c) => c.id));
         }
-      } catch (error) {
-        setErrorMessage(
-          errorText(error, "Couldn't preview posts to delete. Please try again."),
-        );
       } finally {
         setIsPreviewing(false);
       }
@@ -702,6 +725,29 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
           className="rounded-sm border border-signal-critical/35 bg-signal-critical/10 px-3 py-2.5 text-body leading-body text-ink"
         >
           {errorMessage}
+        </div>
+      )}
+
+      {previewFailures.length > 0 && (
+        <div
+          role="alert"
+          className="rounded-sm border border-signal-critical/35 bg-signal-critical/10 px-3 py-2.5 text-body leading-body text-ink"
+        >
+          <p className="font-semibold">
+            Couldn&apos;t preview{' '}
+            {previewFailures.length === 1 ? 'this page' : 'these pages'} — the posts below
+            are from the pages that did load:
+          </p>
+          <ul className="mt-1 list-disc pl-5">
+            {previewFailures.map((failure, index) => (
+              <li key={`${failure.pageName}-${index}`}>
+                {failure.pageName} — {failure.reason}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1">
+            Retry Preview Targets to try {previewFailures.length === 1 ? 'it' : 'them'} again.
+          </p>
         </div>
       )}
 
