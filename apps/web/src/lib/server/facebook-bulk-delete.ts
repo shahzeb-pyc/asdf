@@ -97,9 +97,9 @@ function parseGraphErrorBody(body: unknown): {
   const error = (body as GraphErrorBody).error;
   if (typeof error !== 'object' || error === null) return {};
   return {
-    code: typeof error.code === 'number' ? error.code : undefined,
-    subcode: typeof error.error_subcode === 'number' ? error.error_subcode : undefined,
-    message: typeof error.message === 'string' ? error.message : undefined,
+    ...(typeof error.code === 'number' ? { code: error.code } : {}),
+    ...(typeof error.error_subcode === 'number' ? { subcode: error.error_subcode } : {}),
+    ...(typeof error.message === 'string' ? { message: error.message } : {}),
   };
 }
 
@@ -183,7 +183,9 @@ async function graphDeleteId(
   // Attach the parsed Graph code to the error so the caller can map
   // already-deleted ids (803) and permission failures (200).
   const error = new BulkDeleteError('GRAPH_ERROR', message ?? 'Delete failed.');
-  (error as BulkDeleteError & { graphCode?: number }).graphCode = code;
+  if (code !== undefined) {
+    (error as BulkDeleteError & { graphCode?: number }).graphCode = code;
+  }
   throw error;
 }
 
@@ -287,8 +289,11 @@ export async function resolveAccountToken(
       cause: error,
     });
   }
-  const encrypted = data?.encrypted_access_token as string | null | undefined;
-  if (!encrypted) {
+  // Single-column select resolves `data` to `never` in this supabase-js
+  // version's types (same as the ADU route) — cast the row, as it does.
+  const encrypted = (data as { encrypted_access_token?: unknown } | null)
+    ?.encrypted_access_token;
+  if (typeof encrypted !== 'string' || !encrypted) {
     throw new BulkDeleteError(
       'ACCOUNT_NOT_FOUND',
       'Facebook account not found for this workspace.',
@@ -415,9 +420,9 @@ export async function resolveDeleteCandidates(
         pageId: params.pageId,
         type,
         limit: PREVIEW_PAGE_SIZE,
-        after,
-        dateFrom: params.dateFrom,
-        dateTo: params.dateTo,
+        ...(after ? { after } : {}),
+        ...(params.dateFrom ? { dateFrom: params.dateFrom } : {}),
+        ...(params.dateTo ? { dateTo: params.dateTo } : {}),
       });
       const items = page.items ?? [];
       if (items.length === 0) break;

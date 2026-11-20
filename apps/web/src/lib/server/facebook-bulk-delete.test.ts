@@ -9,7 +9,7 @@ import {
 import { encryptToken, getTokenEncryptionKey } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-type FetchStub = (url: string, init?: RequestInit) => Promise<Response>;
+type FetchStub = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -20,7 +20,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function makeFetch(handler: (url: string) => Response): FetchStub {
-  return vi.fn(async (url: string) => handler(url)) as FetchStub;
+  // The service always passes a URL string to fetch; String() keeps the
+  // handler's string contract while the stub accepts fetch's full input.
+  return vi.fn(async (input: string | URL | Request) => handler(String(input))) as FetchStub;
 }
 
 function makeSupabaseStub(encryptedToken: string | null): SupabaseClient {

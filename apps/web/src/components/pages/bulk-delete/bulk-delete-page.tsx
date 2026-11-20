@@ -171,10 +171,6 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
 
   const [manualPageKeyOverride, setManualPageKeyOverride] = React.useState<string | null>(null);
   const [manualType, setManualType] = React.useState<BulkDeleteContentType>('posts');
-  const [manualItems, setManualItems] = React.useState<BulkDeleteCandidate[]>([]);
-  const [manualAfter, setManualAfter] = React.useState<string | null>(null);
-  const [isLoadingManual, setIsLoadingManual] = React.useState(false);
-  const [hasLoadedManual, setHasLoadedManual] = React.useState(false);
   const [manualPage, setManualPage] = React.useState(1);
 
   const [selectedContentIds, setSelectedContentIds] = React.useState<string[]>([]);
@@ -304,9 +300,11 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
       setPreviewItems([]);
       setPreviewTotal(0);
       setHasPreviewed(false);
-      setManualItems([]);
-      setManualAfter(null);
-      setHasLoadedManual(false);
+      // The manual list is derived (React Query + Load More appends), so
+      // clearing it means clearing the appended extras and pagination.
+      setExtraItems([]);
+      setExtraAfter(undefined);
+      setManualPage(1);
       setSelectedContentIds([]);
       candidatesRef.current.clear();
       if (failures.length > 0) {
@@ -339,25 +337,27 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
   // The manual list browses one page at a time. The browsed page is
   // derived, never stored: the user's override while it is still
   // selected, otherwise the first selected page. No effect needed.
-  const manualPage =
+  const manualSelectedPage =
     selectedPages.find(
       (page) => `${page.accountId}:${page.fbPageId}` === manualPageKeyOverride,
     ) ?? selectedPages[0] ?? null;
-  const manualPageKey = manualPage ? `${manualPage.accountId}:${manualPage.fbPageId}` : null;
+  const manualPageKey = manualSelectedPage
+    ? `${manualSelectedPage.accountId}:${manualSelectedPage.fbPageId}`
+    : null;
 
   // ---- Manual list (React Query; Load More appends via event) ----
   const manualQuery = useQuery({
     queryKey: ['bulk-delete', 'content', subdomain, manualPageKey, manualType],
     enabled: manualPageKey !== null && mode === 'manual',
     queryFn: async ({ signal }) => {
-      if (!manualPage) throw new Error('No page selected.');
+      if (!manualSelectedPage) throw new Error('No page selected.');
       return api.get(
         buildTenantApiPath(subdomain, '/bulk-delete/content'),
         {
           schema: BulkDeleteContentResponseSchema,
           query: {
-            accountId: manualPage.accountId,
-            pageId: manualPage.fbPageId,
+            accountId: manualSelectedPage.accountId,
+            pageId: manualSelectedPage.fbPageId,
             type: manualType,
             limit: MANUAL_FETCH_LIMIT,
           },
@@ -372,14 +372,14 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
   const [isLoadingMore, setIsLoadingMore] = React.useState(false);
 
   const manualBaseItems = React.useMemo<BulkDeleteCandidate[]>(() => {
-    if (!manualPage || !manualQuery.data) return [];
+    if (!manualSelectedPage || !manualQuery.data) return [];
     return manualQuery.data.items.map((item) => ({
       ...item,
-      accountId: manualPage.accountId,
-      pageId: manualPage.fbPageId,
-      pageName: manualPage.pageName,
+      accountId: manualSelectedPage.accountId,
+      pageId: manualSelectedPage.fbPageId,
+      pageName: manualSelectedPage.pageName,
     }));
-  }, [manualQuery.data, manualPage]);
+  }, [manualQuery.data, manualSelectedPage]);
 
   const manualItems = React.useMemo(
     () => [...manualBaseItems, ...extraItems],
@@ -403,7 +403,7 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
   }, []);
 
   const handleLoadMoreManual = React.useCallback(async () => {
-    if (!manualPage || !manualCursor || isLoadingMore) return;
+    if (!manualSelectedPage || !manualCursor || isLoadingMore) return;
     setIsLoadingMore(true);
     try {
       const response = await api.get(
@@ -411,8 +411,8 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
         {
           schema: BulkDeleteContentResponseSchema,
           query: {
-            accountId: manualPage.accountId,
-            pageId: manualPage.fbPageId,
+            accountId: manualSelectedPage.accountId,
+            pageId: manualSelectedPage.fbPageId,
             type: manualType,
             limit: MANUAL_FETCH_LIMIT,
             after: manualCursor,
@@ -421,9 +421,9 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
       );
       const next: BulkDeleteCandidate[] = response.items.map((item) => ({
         ...item,
-        accountId: manualPage.accountId,
-        pageId: manualPage.fbPageId,
-        pageName: manualPage.pageName,
+        accountId: manualSelectedPage.accountId,
+        pageId: manualSelectedPage.fbPageId,
+        pageName: manualSelectedPage.pageName,
       }));
       setExtraItems((prev) => [...prev, ...next]);
       setExtraAfter(response.paging.after);
@@ -434,7 +434,7 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [manualPage, manualCursor, isLoadingMore, subdomain, manualType]);
+  }, [manualSelectedPage, manualCursor, isLoadingMore, subdomain, manualType]);
 
   // ---- Smart Filter preview ----
   const previewTargets = React.useCallback(

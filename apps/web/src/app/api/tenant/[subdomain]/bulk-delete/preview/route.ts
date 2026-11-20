@@ -62,8 +62,8 @@ export async function POST(
       pageId: parsed.data.pageId,
       type: parsed.data.type,
       sort: parsed.data.sort,
-      dateFrom: parsed.data.dateFrom,
-      dateTo: parsed.data.dateTo,
+      ...(parsed.data.dateFrom ? { dateFrom: parsed.data.dateFrom } : {}),
+      ...(parsed.data.dateTo ? { dateTo: parsed.data.dateTo } : {}),
     });
     return NextResponse.json(BulkDeletePreviewResponseSchema.parse(result));
   } catch (error) {

@@ -54,7 +54,7 @@ export async function GET(
       pageId: parsed.data.pageId,
       type: parsed.data.type,
       limit: parsed.data.limit,
-      after: parsed.data.after,
+      ...(parsed.data.after ? { after: parsed.data.after } : {}),
     });
     return NextResponse.json(BulkDeleteContentResponseSchema.parse(result));
   } catch (error) {
