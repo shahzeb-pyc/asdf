@@ -17,6 +17,7 @@ export interface MockDestinationRow {
   external_destination_id: string;
   name: string;
   avatar_url: string | null;
+  timezone?: string | null;
   metadata: Record<string, unknown> | null;
   status: string;
   // Spec 174 1B: the destinations table carries the section label.
@@ -153,10 +154,11 @@ class MockQuery extends Promise<MockQueryResult> {
   private rangeFrom: number | null = null;
   private rangeTo: number | null = null;
   private head = false;
+  private selectColumns: string | null = null;
 
   constructor(
     private readonly rows: MockDestinationRow[],
-    private readonly tracker: { returnedRowIds: string[] }
+    private readonly tracker: { returnedRowIds: string[]; selects: string[] }
   ) {
     let resolveResult!: (value: MockQueryResult) => void;
     let rejectResult!: (reason: unknown) => void;
@@ -189,8 +191,10 @@ class MockQuery extends Promise<MockQueryResult> {
     });
   }
 
-  select(_columns: string, options?: { count?: string; head?: boolean }): this {
+  select(columns: string, options?: { count?: string; head?: boolean }): this {
     this.head = options?.head === true;
+    this.selectColumns = columns;
+    this.tracker.selects.push(columns);
     this.schedule();
     return this;
   }
@@ -245,6 +249,41 @@ class MockQuery extends Promise<MockQueryResult> {
     return Promise.resolve({ data: { id: 'ws_123' }, error: null });
   }
 
+  /**
+   * Applies the recorded select list PostgREST-style: plain columns pass
+   * through, `metadata->key` / `metadata->>key` resolve against the
+   * seeded row's metadata into a flat `key`, and a `social_accounts(...)`
+   * embed passes the seeded embed through. A key the route stopped
+   * selecting therefore arrives as `undefined` — the double can now
+   * catch a slimmed projection that drops a rendered field, instead of
+   * silently handing the mapper the whole seeded row.
+   */
+  private project(row: MockDestinationRow): Record<string, unknown> {
+    if (this.selectColumns === null) {
+      return row as unknown as Record<string, unknown>;
+    }
+    const out: Record<string, unknown> = {};
+    for (const rawPart of splitTopLevel(this.selectColumns)) {
+      const part = rawPart.trim();
+      if (!part) continue;
+      if (part === '*') {
+        Object.assign(out, row as unknown as Record<string, unknown>);
+        continue;
+      }
+      const jsonKey = /^metadata->>?([A-Za-z0-9_]+)$/.exec(part);
+      if (jsonKey) {
+        out[jsonKey[1] as string] = row.metadata?.[jsonKey[1] as string] ?? null;
+        continue;
+      }
+      if (/^social_accounts(!inner)?\(.*\)$/.test(part)) {
+        out.social_accounts = row.social_accounts;
+        continue;
+      }
+      out[part] = (row as unknown as Record<string, unknown>)[part] ?? null;
+    }
+    return out;
+  }
+
   private execute(): MockQueryResult {
     let out = this.rows.filter((row) =>
       this.filters.every((cond) => {
@@ -275,13 +314,19 @@ class MockQuery extends Promise<MockQueryResult> {
     if (!this.head) {
       this.tracker.returnedRowIds.push(...out.map((r) => r.id));
     }
-    return { data: this.head ? [] : out, count, error: null };
+    return {
+      data: (this.head ? [] : out.map((r) => this.project(r))) as unknown as MockDestinationRow[],
+      count,
+      error: null,
+    };
   }
 }
 
 export interface MockSupabasePagesClient {
   from: (table: string) => unknown;
   returnedRowIds: string[];
+  /** Every select list the route requested, in order (spec 211). */
+  selects: string[];
   updates: unknown[];
 }
 
@@ -294,10 +339,11 @@ export interface MockSupabasePagesClient {
 export function createMockSupabasePages(
   rows: MockDestinationRow[]
 ): MockSupabasePagesClient {
-  const tracker = { returnedRowIds: [] as string[] };
+  const tracker = { returnedRowIds: [] as string[], selects: [] as string[] };
   const updates: unknown[] = [];
   return {
     returnedRowIds: tracker.returnedRowIds,
+    selects: tracker.selects,
     updates,
     from: (table: string) => {
       if (table === 'workspaces') {

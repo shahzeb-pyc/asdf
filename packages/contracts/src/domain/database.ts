@@ -302,35 +302,16 @@ export interface DatabaseUnifiedPublishLogRow {
   created_at: string;
 }
 
+/**
+ * What `claim_due_queue_items` returns (spec 211): the item id only.
+ * The claimer (`apps/worker/src/claimer.ts`) reads exactly `id` and the
+ * consumers re-load the full item/account/destination rows before
+ * publishing — the 29-column joined row the RPC used to return is gone
+ * (migration 20261120134000). Keep this in step with that migration's
+ * RETURNS TABLE; `Database.Functions` below records it as the return.
+ */
 export interface ClaimedUnifiedQueueItemRpcResult {
   id: string;
-  workspace_id: string;
-  destination_id: string;
-  account_id: string;
-  media_item_id: string | null;
-  kind: string;
-  platform_format: string | null;
-  link_url: string | null;
-  caption: string;
-  title: string | null;
-  first_comment: string | null;
-  platform_options: Record<string, unknown>;
-  scheduled_time: string;
-  status: string;
-  claimed_at: string | null;
-  retry_count: number;
-  max_retries: number;
-  external_post_id: string | null;
-  external_comment_id: string | null;
-  created_at: string;
-  updated_at: string;
-  external_destination_id: string;
-  encrypted_access_token: string;
-  encrypted_destination_token: string | null;
-  destination_name: string;
-  media_type: string | null;
-  media_url: string | null;
-  media_storage_key: string | null;
 }
 
 /**

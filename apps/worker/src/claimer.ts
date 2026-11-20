@@ -263,11 +263,10 @@ async function claimAndEnqueueLane(
 
     result.claimed += rows.length;
 
-    // Boundary validation (spec 139 B15): the claim RPC returns a
-    // PROJECTION of the queue_items row (see
-    // `ClaimedUnifiedQueueItemRpcResult`), and the claimer consumes
-    // exactly one field from it — the item id. Each claimed row is
-    // therefore validated ONCE, at load, by parsing the queue message
+    // Boundary validation (spec 139 B15): the claim RPC returns only
+    // the item id (spec 211 narrowed it from the 29-column joined row
+    // to `ClaimedUnifiedQueueItemRpcResult`, `{ id }`), and the claimer
+    // consumes exactly that one field. Each claimed row is therefore validated ONCE, at load, by parsing the queue message
     // it becomes through the contracts `PublishQueueMessageSchema`:
     // that enforces the claimed id is a real queue-item UUID and stamps
     // the `schemaVersion` the audit found missing. A malformed row

@@ -372,7 +372,18 @@ interface SupabaseDestinationJoinRow {
   name: string;
   avatar_url: string | null;
   timezone?: string | null;
-  metadata: Record<string, unknown> | null;
+  // Slim projection (spec 211): only the metadata keys the list renders,
+  // selected flat with `metadata->key` (JSON-typed, so numbers stay
+  // numbers) — never the whole `metadata` object. Mirrors the SQL path,
+  // which already selects these keys individually.
+  category: unknown;
+  starting_followers: unknown;
+  current_followers: unknown;
+  followers_updated_at: unknown;
+  tasks: unknown;
+  unmatched_post_types: unknown;
+  rate_limited_at: unknown;
+  fb_status: unknown;
   status: string;
   created_at: string;
   updated_at: string;
@@ -380,9 +391,9 @@ interface SupabaseDestinationJoinRow {
 }
 
 const SUPABASE_PAGE_COLUMNS =
-  'id, account_id, external_destination_id, name, avatar_url, timezone, metadata, status, created_at, updated_at, social_accounts(display_name, avatar_url)';
+  'id, account_id, external_destination_id, name, avatar_url, timezone, metadata->category, metadata->starting_followers, metadata->current_followers, metadata->followers_updated_at, metadata->tasks, metadata->unmatched_post_types, metadata->rate_limited_at, metadata->fb_status, status, created_at, updated_at, social_accounts(display_name, avatar_url)';
 const SUPABASE_PAGE_COLUMNS_INNER =
-  'id, account_id, external_destination_id, name, avatar_url, timezone, metadata, status, created_at, updated_at, social_accounts!inner(display_name, avatar_url)';
+  'id, account_id, external_destination_id, name, avatar_url, timezone, metadata->category, metadata->starting_followers, metadata->current_followers, metadata->followers_updated_at, metadata->tasks, metadata->unmatched_post_types, metadata->rate_limited_at, metadata->fb_status, status, created_at, updated_at, social_accounts!inner(display_name, avatar_url)';
 
 /**
  * The attention-first rank groups, in order. PostgREST cannot ORDER BY
@@ -569,7 +580,7 @@ function mapSupabaseDestinationRows(
   // Disconnected destinations are excluded (a paused page — stored as
   // disconnected + the fb_status marker — stays listed, as before).
   const visibleRows = pageRows.filter(
-    (p) => p.status !== 'disconnected' || p.metadata?.fb_status === 'paused'
+    (p) => p.status !== 'disconnected' || p.fb_status === 'paused'
   );
   return visibleRows.map((p) => ({
     id: p.id,
@@ -580,28 +591,23 @@ function mapSupabaseDestinationRows(
     page_name: p.name,
     profile_picture_url: p.avatar_url,
     timezone: p.timezone ?? null,
-    category: typeof p.metadata?.category === 'string' ? p.metadata.category : null,
+    category: typeof p.category === 'string' ? p.category : null,
     starting_followers:
-      typeof p.metadata?.starting_followers === 'number'
-        ? p.metadata.starting_followers
-        : null,
+      typeof p.starting_followers === 'number' ? p.starting_followers : null,
     current_followers:
-      typeof p.metadata?.current_followers === 'number'
-        ? p.metadata.current_followers
-        : null,
+      typeof p.current_followers === 'number' ? p.current_followers : null,
     followers_updated_at:
-      typeof p.metadata?.followers_updated_at === 'string'
-        ? p.metadata.followers_updated_at
-        : null,
-    status: unifiedDestinationStatusToWire(p.status, p.metadata),
-    tasks: p.metadata?.tasks ?? [],
-    unmatched_post_types: Array.isArray(p.metadata?.unmatched_post_types)
-      ? (p.metadata.unmatched_post_types as unknown[])
+      typeof p.followers_updated_at === 'string' ? p.followers_updated_at : null,
+    // unifiedDestinationStatusToWire reads only the fb_status marker
+    // from its metadata argument, so the one-key record carries
+    // exactly what it needs — no whole-metadata object is fetched.
+    status: unifiedDestinationStatusToWire(p.status, { fb_status: p.fb_status }),
+    tasks: p.tasks ?? [],
+    unmatched_post_types: Array.isArray(p.unmatched_post_types)
+      ? (p.unmatched_post_types as unknown[])
       : [],
     rate_limited_at:
-      typeof p.metadata?.rate_limited_at === 'string'
-        ? p.metadata.rate_limited_at
-        : null,
+      typeof p.rate_limited_at === 'string' ? p.rate_limited_at : null,
     created_at: p.created_at,
     updated_at: p.updated_at,
   }));
