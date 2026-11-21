@@ -23,6 +23,7 @@ type CapturedQuery = {
 
 function createMockDb(options: {
   heartbeat: Record<string, unknown> | null;
+  pollState?: Record<string, unknown> | null;
   dueCount?: number;
   stuckCount?: number;
   oldestScheduledTime?: string | null;
@@ -122,6 +123,9 @@ function createMockDb(options: {
       if (table === 'worker_heartbeats') {
         return { data: options.heartbeat, error: null };
       }
+      if (table === 'worker_poll_state') {
+        return { data: options.pollState ?? null, error: null };
+      }
       if (table === 'queue_items') {
         return {
           data: options.oldestScheduledTime
@@ -160,11 +164,18 @@ const freshHeartbeat = {
   last_settled_count: 3,
   last_skip_reason: null,
 };
+// Spec 212: a fresh poll-gate state row (last full tick 30s ago). Tests
+// that expect ok/degraded must pass this, or the poll-gate check flips
+// the probe unhealthy on a missing row.
+const freshPollState = {
+  last_full_tick_at: '2026-10-22T11:59:30.000Z',
+};
 
 describe('Internal Health Probe (/api/internal/health)', () => {
   it('returns ok when heartbeat is fresh, storage is up, and queue is clear', async () => {
     const db = createMockDb({
       heartbeat: freshHeartbeat,
+      pollState: freshPollState,
       pageCounts: { active: 10, rate_limited: 2 },
       accountCounts: { active: 4 },
     });
@@ -243,6 +254,7 @@ describe('Internal Health Probe (/api/internal/health)', () => {
   it('returns degraded when items are stuck in publishing beyond the recovery threshold', async () => {
     const db = createMockDb({
       heartbeat: freshHeartbeat,
+      pollState: freshPollState,
       stuckCount: 2,
       dueCount: 5,
       oldestScheduledTime: '2026-10-22T11:55:00.000Z',
@@ -262,6 +274,7 @@ describe('Internal Health Probe (/api/internal/health)', () => {
   it('reads queue counts from the unified queue_items table only (Phase 7: no legacy field)', async () => {
     const db = createMockDb({
       heartbeat: freshHeartbeat,
+      pollState: freshPollState,
       dueCount: 7,
       stuckCount: 0,
       oldestScheduledTime: '2026-10-22T11:50:00.000Z',
@@ -328,6 +341,7 @@ describe('Internal Health Probe (/api/internal/health)', () => {
   it('reports a stalled unified queue as degraded with the oldest due age', async () => {
     const db = createMockDb({
       heartbeat: freshHeartbeat,
+      pollState: freshPollState,
       dueCount: 42,
       stuckCount: 3,
       oldestScheduledTime: '2026-10-22T10:00:00.000Z',
@@ -345,6 +359,7 @@ describe('Internal Health Probe (/api/internal/health)', () => {
   it('reports sectionCheck clean when every destination is labelled', async () => {
     const db = createMockDb({
       heartbeat: freshHeartbeat,
+      pollState: freshPollState,
       pageCounts: { active: 10 },
       accountCounts: { active: 4 },
     });
@@ -365,6 +380,7 @@ describe('Internal Health Probe (/api/internal/health)', () => {
   it('flags unsectioned destinations in sectionCheck and degrades', async () => {
     const db = createMockDb({
       heartbeat: freshHeartbeat,
+      pollState: freshPollState,
       sectionCheck: { unsectioned: 1 },
     });
     const res = await probeInternalHealth({
@@ -393,6 +409,7 @@ describe('Internal Health Probe (/api/internal/health)', () => {
   it('flags wrong-section children in sectionCheck with per-table predicates', async () => {
     const db = createMockDb({
       heartbeat: freshHeartbeat,
+      pollState: freshPollState,
       sectionCheck: { slots: 1, queueItems: 2, aduConfigs: 0, slotClaims: 1 },
     });
     const res = await probeInternalHealth({
@@ -431,6 +448,54 @@ describe('Internal Health Probe (/api/internal/health)', () => {
     expect(adu?.neq['destinations.section']).toBe('adu');
     const queue = childQueries.find((q) => q.table === 'queue_items');
     expect(queue?.neq['destinations.section']).toBe('schedule');
+  });
+
+  it('reports pollGate ok when the last full tick is fresh (spec 212)', async () => {
+    const db = createMockDb({
+      heartbeat: freshHeartbeat,
+      pollState: freshPollState,
+    });
+    const res = await probeInternalHealth({
+      db,
+      checkStorage: async () => true,
+      now: NOW,
+    });
+    expect(res.payload.status).toBe('ok');
+    expect(res.payload.checks.pollGate.ok).toBe(true);
+    expect(res.payload.checks.pollGate.ageSeconds).toBe(30);
+    expect(res.payload.checks.pollGate.lastFullTickAt).toBe(
+      '2026-10-22T11:59:30.000Z'
+    );
+  });
+
+  it('flips to unhealthy when the poll gate is stale (full ticks stopped)', async () => {
+    const db = createMockDb({
+      heartbeat: freshHeartbeat,
+      pollState: { last_full_tick_at: '2026-10-22T11:50:00.000Z' },
+    });
+    const res = await probeInternalHealth({
+      db,
+      checkStorage: async () => true,
+      now: NOW,
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.payload.status).toBe('unhealthy');
+    expect(res.payload.checks.heartbeat.ok).toBe(true);
+    expect(res.payload.checks.pollGate.ok).toBe(false);
+    expect(res.payload.checks.pollGate.ageSeconds).toBe(600);
+  });
+
+  it('flips to unhealthy when the poll-gate state row is missing', async () => {
+    const db = createMockDb({ heartbeat: freshHeartbeat, pollState: null });
+    const res = await probeInternalHealth({
+      db,
+      checkStorage: async () => true,
+      now: NOW,
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.payload.status).toBe('unhealthy');
+    expect(res.payload.checks.pollGate.ok).toBe(false);
+    expect(res.payload.checks.pollGate.ageSeconds).toBeNull();
   });
 
   it('flips to unhealthy when storage is down', async () => {
