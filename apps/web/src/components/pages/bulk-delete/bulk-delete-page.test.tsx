@@ -377,6 +377,40 @@ describe('BulkDeletePage', () => {
     expect(screen.getByText('25 items selected')).toBeInTheDocument();
   });
 
+  it('the floating delete bar shows only on the preview step', async () => {
+    renderPage();
+    await tick();
+    await goToPreview();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview Targets' }));
+    await tick();
+    expect(screen.getByText('25 items selected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Delete Selected/ })).toBeInTheDocument();
+
+    // Stepper back to Pages: the selection is kept, but the bar — and
+    // its working Delete Selected button — must not follow.
+    fireEvent.click(screen.getByRole('button', { name: /Pages/ }));
+    expect(screen.queryByText(/items selected/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Delete Selected/ })).not.toBeInTheDocument();
+
+    // Stepper back to Accounts too.
+    fireEvent.click(screen.getByRole('button', { name: /Accounts/ }));
+    expect(screen.queryByText(/items selected/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Delete Selected/ })).not.toBeInTheDocument();
+
+    // Forward again: Continue from Accounts re-runs discovery (which
+    // clears the page selection), so re-select the page and re-preview
+    // — the bar returns.
+    fireEvent.click(screen.getByRole('button', { name: /Continue \(1 account\)/ }));
+    await tick();
+    fireEvent.click(screen.getByText('Morning Recipes'));
+    fireEvent.click(screen.getByRole('button', { name: /Continue \(1 page\)/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview Targets' }));
+    await tick();
+    expect(screen.getByText('Items Found')).toBeInTheDocument();
+    expect(screen.getByText('25 items selected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Delete Selected/ })).toBeInTheDocument();
+  });
+
   it('hides the floating bar when nothing is selected', async () => {
     renderPage();
     await tick();

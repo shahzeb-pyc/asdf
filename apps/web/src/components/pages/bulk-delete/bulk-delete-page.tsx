@@ -1517,7 +1517,7 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
         </div>
       )}
 
-      {selectedContentIds.length > 0 && !runState && (
+      {step === 'preview' && selectedContentIds.length > 0 && !runState && (
         <div className="fixed inset-x-3 bottom-6 z-40 mx-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-4 rounded-3xl border border-line bg-subtle px-5 py-2 shadow-elevated sm:flex-nowrap sm:whitespace-nowrap sm:rounded-full">
           <span className="text-body font-bold text-ink">
             {selectedContentIds.length} items selected
