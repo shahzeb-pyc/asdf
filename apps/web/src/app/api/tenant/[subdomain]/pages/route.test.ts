@@ -106,14 +106,16 @@ class FakeSupabaseQuery {
   table: string;
   isCount = false;
   private countShared: { n: number };
+  private selectColumns: string | null = null;
 
   constructor(table: string, countShared: { n: number }) {
     this.table = table;
     this.countShared = countShared;
   }
 
-  select(_columns: string, opts?: { count?: string; head?: boolean }) {
-    this.calls.push({ method: 'select', args: [_columns, opts] });
+  select(columns: string, opts?: { count?: string; head?: boolean }) {
+    this.calls.push({ method: 'select', args: [columns, opts] });
+    this.selectColumns = columns;
     this.isCount = opts?.head === true;
     return this;
   }
@@ -162,7 +164,48 @@ class FakeSupabaseQuery {
       this.countShared.n += 1;
       result = { data: [], error: null, count };
     } else {
-      result = { data: [SUPABASE_ROW], error: null, count: null };
+      // PostgREST-style projection (spec 211): `metadata->key`
+      // resolves against the seeded row's metadata into a flat key —
+      // a row handed back whole would let the mapper read keys the
+      // route never selected.
+      const row = { ...SUPABASE_ROW } as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      // Top-level split: the social_accounts(...) embed carries its
+      // own comma, so a naive split would shred it.
+      const parts: string[] = [];
+      let depth = 0;
+      let current = '';
+      for (const ch of this.selectColumns ?? '') {
+        if (ch === '(') depth++;
+        if (ch === ')') depth--;
+        if (ch === ',' && depth === 0) {
+          parts.push(current);
+          current = '';
+        } else {
+          current += ch;
+        }
+      }
+      if (current) parts.push(current);
+      for (const part of parts) {
+        const token = part.trim();
+        if (!token) continue;
+        if (token === '*') {
+          Object.assign(out, row);
+          continue;
+        }
+        const jsonKey = /^metadata->>?([A-Za-z0-9_]+)$/.exec(token);
+        if (jsonKey) {
+          const meta = row.metadata as Record<string, unknown> | null;
+          out[jsonKey[1] as string] = meta?.[jsonKey[1] as string] ?? null;
+          continue;
+        }
+        if (/^social_accounts(!inner)?\(.*\)$/.test(token)) {
+          out.social_accounts = row.social_accounts;
+          continue;
+        }
+        out[token] = row[token] ?? null;
+      }
+      result = { data: [out], error: null, count: null };
     }
     return Promise.resolve(result).then(onFulfilled, onRejected);
   }

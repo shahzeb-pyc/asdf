@@ -40,6 +40,18 @@ import { logServerError } from '@/lib/server-analytics';
 const OPEN_JOB_STATUSES = ['queued', 'resolving', 'downloading', 'failed'] as const;
 const CANCELLABLE_STATUSES = ['queued', 'resolving', 'downloading', 'processing'] as const;
 
+/**
+ * Slim projection (spec 211): exactly the 17 `DownloadJobRowSchema`
+ * fields, in schema order — the only columns the tray renders, via
+ * `parseDownloadJobRow`. Never `select('*')`: the table also carries
+ * wide columns the tray never sees (`metadata`, `custom_filename`,
+ * `pending_media_id`, `r2_upload_id`, `checkpoint_parts`,
+ * `checkpoint_bytes`, `checkpoint_stream_url`, `last_progress_at`).
+ * Exported so tests can pin the projection instead of duplicating it.
+ */
+export const DOWNLOAD_JOB_COLUMNS =
+  'id, user_id, source_url, source_platform, target_folder_id, status, progress_percent, total_bytes, downloaded_bytes, media_id, error_code, error_message, attempts, claimed_at, claimed_by, created_at, updated_at';
+
 function supabaseOr500(
   dbClient: SupabaseClient | undefined
 ): { supabase: SupabaseClient } | { error: NextResponse } {
@@ -162,7 +174,7 @@ async function fetchOwnedJob(
 ): Promise<{ row: Record<string, unknown> } | { error: NextResponse }> {
   const { data: job, error } = await supabase
     .from('media_download_jobs')
-    .select('*')
+    .select(DOWNLOAD_JOB_COLUMNS)
     .eq('id', jobId)
     .eq('user_id', userId)
     .maybeSingle();
@@ -278,7 +290,7 @@ export async function handleSubmitDownloadJobs(
   const { data: inserted, error: insertErr } = await supabase
     .from('media_download_jobs')
     .insert(rowsToInsert)
-    .select('*');
+    .select(DOWNLOAD_JOB_COLUMNS);
 
   if (insertErr || !inserted || inserted.length !== rowsToInsert.length) {
     logServerError('[downloader] Failed to enqueue download jobs', insertErr ?? new Error('Insert mismatch'), {
@@ -332,7 +344,7 @@ export async function handleGetDownloadJobs(
   try {
     const { data: rows, error } = await supabase
       .from('media_download_jobs')
-      .select('*')
+      .select(DOWNLOAD_JOB_COLUMNS)
       .eq('user_id', userId)
       .in('status', [...OPEN_JOB_STATUSES])
       .order('created_at', { ascending: true })
@@ -421,7 +433,7 @@ export async function handleRetryDownloadJob(
     })
     .eq('id', body.jobId)
     .eq('user_id', userId)
-    .select('*')
+    .select(DOWNLOAD_JOB_COLUMNS)
     .maybeSingle();
 
   if (updateErr || !updated) {
@@ -468,7 +480,7 @@ export async function handleCancelDownloadJob(
     .update({ status: 'cancelled' })
     .eq('id', body.jobId)
     .eq('user_id', userId)
-    .select('*')
+    .select(DOWNLOAD_JOB_COLUMNS)
     .maybeSingle();
 
   if (updateErr || !updated) {

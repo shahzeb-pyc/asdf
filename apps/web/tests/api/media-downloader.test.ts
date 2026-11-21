@@ -14,6 +14,7 @@ import {
   handleGetDownloadJobs,
   handleRetryDownloadJob,
   handleSubmitDownloadJobs,
+  DOWNLOAD_JOB_COLUMNS,
 } from '../../src/app/api/tenant/[subdomain]/downloader/route';
 import { POST as retryPost } from '../../src/app/api/tenant/[subdomain]/downloader/retry/route';
 import { POST as cancelPost } from '../../src/app/api/tenant/[subdomain]/downloader/cancel/route';
@@ -35,14 +36,20 @@ class FakeBuilder {
   private updateValues: Row = {};
   private filters: Array<(row: Row) => boolean> = [];
   private limitN: number | null = null;
+  private selectColumns: string | null = null;
 
   constructor(
     private readonly tables: Map<string, Row[]>,
     private readonly table: string,
-    private readonly nextId: () => string
+    private readonly nextId: () => string,
+    private readonly selects: Array<{ table: string; columns: string }>
   ) {}
 
-  select(): this {
+  select(columns?: string): this {
+    if (typeof columns === 'string') {
+      this.selectColumns = columns;
+      this.selects.push({ table: this.table, columns });
+    }
     return this;
   }
 
@@ -95,6 +102,27 @@ class FakeBuilder {
     return this.tables.get(this.table) as Row[];
   }
 
+  /**
+   * PostgREST-style projection (spec 211): when the route requested an
+   * explicit column list, only those columns are returned — a column the
+   * route stops selecting arrives missing, so `parseDownloadJobRow`
+   * fails and the job is skipped instead of silently rendering from a
+   * whole-row fake. No select recorded = whole row (update builders
+   * that never select, and the pre-projection default).
+   */
+  private project(rows: Row[]): Row[] {
+    if (this.selectColumns === null) return rows;
+    const wanted = this.selectColumns
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean);
+    return rows.map((row) => {
+      const out: Row = {};
+      for (const column of wanted) out[column] = row[column];
+      return out;
+    });
+  }
+
   private execute(): { data: Row[]; error: null } {
     if (this.mode === 'insert') {
       const now = new Date().toISOString();
@@ -105,16 +133,16 @@ class FakeBuilder {
         updated_at: now,
       }));
       this.rows().push(...written);
-      return { data: written, error: null };
+      return { data: this.project(written), error: null };
     }
     if (this.mode === 'update') {
       const matched = this.rows().filter((row) => this.filters.every((f) => f(row)));
       for (const row of matched) Object.assign(row, this.updateValues);
-      return { data: matched, error: null };
+      return { data: this.project(matched), error: null };
     }
     let matched = this.rows().filter((row) => this.filters.every((f) => f(row)));
     if (this.limitN !== null) matched = matched.slice(0, this.limitN);
-    return { data: matched, error: null };
+    return { data: this.project(matched), error: null };
   }
 }
 
@@ -122,12 +150,13 @@ function fakeSupabase() {
   const tables = new Map<string, Row[]>();
   let counter = 1;
   const nextId = () => fakeUuid(counter++);
+  const selects: Array<{ table: string; columns: string }> = [];
   tables.set('media_folders', [{ id: FOLDER_ID, user_id: USER_ID }]);
   tables.set('media_download_jobs', []);
   const client = {
-    from: (table: string) => new FakeBuilder(tables, table, nextId),
+    from: (table: string) => new FakeBuilder(tables, table, nextId, selects),
   };
-  return { client: client as never, tables };
+  return { client: client as never, tables, selects };
 }
 
 async function sessionCookie(): Promise<string> {
@@ -336,6 +365,95 @@ describe('Download jobs API (spec 149)', () => {
   it('the retry and cancel route files export POST handlers', () => {
     expect(typeof retryPost).toBe('function');
     expect(typeof cancelPost).toBe('function');
+  });
+
+  it('spec 211: every jobs select requests exactly the 17 rendered columns, never select(*)', async () => {
+    const { client, tables, selects } = fakeSupabase();
+    const jobs = tables.get('media_download_jobs') as Row[];
+    // A row carrying the wide columns the tray never sees: if any
+    // select fetched them, the projection would hand them to the
+    // parser — and if any rendered column were dropped from the
+    // projection, this job would fail parsing and vanish from the tray.
+    const wideId = fakeUuid(70);
+    const wideRow = jobRow(wideId, 'downloading');
+    Object.assign(wideRow, {
+      custom_filename: 'my-clip.mp4',
+      metadata: { resolvedTitle: 'A very long title ' + 'x'.repeat(500) },
+      pending_media_id: fakeUuid(71),
+      r2_upload_id: 'upload-z',
+      checkpoint_parts: [{ partNumber: 1, etag: 'etag-1' }],
+      checkpoint_bytes: 12,
+      checkpoint_stream_url: 'https://cdn.example.com/x.mp4',
+      last_progress_at: new Date().toISOString(),
+    });
+    jobs.push(wideRow);
+
+    const listed = await handleGetDownloadJobs(
+      requestWithCookie(cookie, JOBS_URL),
+      SUBDOMAIN,
+      client
+    );
+    expect(listed.status).toBe(200);
+    const listedBody = (await listed.json()) as {
+      jobs: Array<{ id: string; sourceUrl: string; status: string }>;
+    };
+    expect(listedBody.jobs).toHaveLength(1);
+    expect(listedBody.jobs[0]?.id).toBe(wideId);
+
+    const submitted = await handleSubmitDownloadJobs(
+      requestWithCookie(cookie, JOBS_URL, {
+        links: ['https://example.com/c.mp4'],
+        folderId: FOLDER_ID,
+      }),
+      SUBDOMAIN,
+      client
+    );
+    expect(submitted.status).toBe(201);
+
+    const failedId = fakeUuid(72);
+    jobs.push(jobRow(failedId, 'failed'));
+    const retried = await handleRetryDownloadJob(
+      requestWithCookie(cookie, JOBS_URL, { jobId: failedId }),
+      SUBDOMAIN,
+      client
+    );
+    expect(retried.status).toBe(200);
+
+    const activeId = fakeUuid(73);
+    jobs.push(jobRow(activeId, 'downloading'));
+    const cancelled = await handleCancelDownloadJob(
+      requestWithCookie(cookie, JOBS_URL, { jobId: activeId }),
+      SUBDOMAIN,
+      client
+    );
+    expect(cancelled.status).toBe(200);
+
+    const jobSelects = selects.filter((s) => s.table === 'media_download_jobs');
+    expect(jobSelects.length).toBeGreaterThan(0);
+    for (const { columns } of jobSelects) {
+      expect(columns).toBe(DOWNLOAD_JOB_COLUMNS);
+      expect(columns).not.toContain('*');
+    }
+    // Exactly the 17 DownloadJobRowSchema fields, in schema order.
+    expect(DOWNLOAD_JOB_COLUMNS.split(',').map((c) => c.trim())).toEqual([
+      'id',
+      'user_id',
+      'source_url',
+      'source_platform',
+      'target_folder_id',
+      'status',
+      'progress_percent',
+      'total_bytes',
+      'downloaded_bytes',
+      'media_id',
+      'error_code',
+      'error_message',
+      'attempts',
+      'claimed_at',
+      'claimed_by',
+      'created_at',
+      'updated_at',
+    ]);
   });
 });
 

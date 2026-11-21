@@ -366,14 +366,16 @@ export async function handleListQueueItems(
   const allWorkspacePages: Array<{
     id: string;
     status: string;
-    metadata: Record<string, unknown> | null;
+    // Slim projection (spec 211): the only metadata read below is the
+    // paused marker, so fetch that key alone — never whole `metadata`.
+    fb_status: string | null;
   }> = [];
   const DESTINATIONS_CHUNK = 1000;
   let destinationsError: { message: string } | null = null;
   for (let from = 0; ; from += DESTINATIONS_CHUNK) {
     const { data, error } = await supabase
       .from('destinations')
-      .select('id, status, metadata')
+      .select('id, status, metadata->>fb_status')
       .eq('workspace_id', workspaceId)
       .eq('platform', 'facebook')
       .range(from, from + DESTINATIONS_CHUNK - 1);
@@ -384,7 +386,7 @@ export async function handleListQueueItems(
     const page = (data || []) as Array<{
       id: string;
       status: string;
-      metadata: Record<string, unknown> | null;
+      fb_status: string | null;
     }>;
     allWorkspacePages.push(...page);
     if (page.length < DESTINATIONS_CHUNK) break;
@@ -403,11 +405,7 @@ export async function handleListQueueItems(
   // Visible destinations: everything not disconnected, plus paused
   // pages (stored as disconnected + the fb_status marker).
   const workspacePageIds = allWorkspacePages
-    .filter(
-      (p) =>
-        p.status !== 'disconnected' ||
-        (p.metadata as Record<string, unknown> | null)?.fb_status === 'paused'
-    )
+    .filter((p) => p.status !== 'disconnected' || p.fb_status === 'paused')
     .map((p) => p.id);
   if (workspacePageIds.length === 0) {
     return NextResponse.json({ items: [], total: 0, limit, offset }, { status: 200 });

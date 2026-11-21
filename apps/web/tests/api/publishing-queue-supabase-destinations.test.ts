@@ -61,11 +61,12 @@ describe('Publishing queue Supabase destinations fetch (R7)', () => {
   });
 
   function makeSupabase(opts: {
-    destinations: Array<{ id: string; status: string; metadata: Record<string, unknown> | null }>;
+    destinations: Array<{ id: string; status: string; fb_status: string | null }>;
     destinationsError: boolean;
     queueRows: Array<ReturnType<typeof queueRow>>;
   }) {
     const rangesLog: Array<[number, number]> = [];
+    const destSelects: string[] = [];
     const builder = (table: string) => {
       const state: {
         selectColumns: string | undefined;
@@ -78,6 +79,7 @@ describe('Publishing queue Supabase destinations fetch (R7)', () => {
         select: (columns: string, selOpts?: { head?: boolean; count?: string }) => {
           state.selectColumns = columns;
           state.head = selOpts?.head === true;
+          if (table === 'destinations') destSelects.push(columns);
           return chain;
         },
         eq: (column: string, value: unknown) => {
@@ -115,8 +117,18 @@ describe('Publishing queue Supabase destinations fetch (R7)', () => {
             result = { data: null, error: { message: 'destinations boom' } };
           } else {
             const [from, to] = state.range ?? [0, 999];
+            // PostgREST-style projection (spec 211): the slim select
+            // returns the flat `fb_status` key, never whole `metadata`.
+            // A bare-`metadata` select (the old shape) hands the seed
+            // rows through unprojected, so a regression to it fails the
+            // select assertion below instead of passing silently.
+            const cols = state.selectColumns ?? '';
+            const projected = opts.destinations.map((d) => {
+              if (/(^|,)\s*metadata\s*(,|$)/.test(cols)) return d;
+              return { id: d.id, status: d.status, fb_status: d.fb_status };
+            });
             result = {
-              data: opts.destinations.slice(from, to + 1),
+              data: projected.slice(from, to + 1),
               error: null,
             };
           }
@@ -151,6 +163,7 @@ describe('Publishing queue Supabase destinations fetch (R7)', () => {
     return {
       supabase: { from: vi.fn((table: string) => builder(table)) },
       rangesLog,
+      destSelects,
     };
   }
 
@@ -175,7 +188,7 @@ describe('Publishing queue Supabase destinations fetch (R7)', () => {
     const destinations = Array.from({ length: 1001 }, (_, i) => ({
       id: destId(i),
       status: 'active',
-      metadata: null,
+      fb_status: null,
     }));
     const beyondCap = destId(1000);
     const { supabase, rangesLog } = makeSupabase({
@@ -201,7 +214,7 @@ describe('Publishing queue Supabase destinations fetch (R7)', () => {
 
   it('counts publishing posts (R11) on the Supabase path', async () => {
     const { supabase } = makeSupabase({
-      destinations: [{ id: PAGE_ID, status: 'active', metadata: null }],
+      destinations: [{ id: PAGE_ID, status: 'active', fb_status: null }],
       destinationsError: false,
       queueRows: [
         queueRow(PAGE_ID),
@@ -223,7 +236,7 @@ describe('Publishing queue Supabase destinations fetch (R7)', () => {
     const postOwnedUrl =
       'https://media.fbuploadpro.com/users/11111111-1111-4111-a111-111111111111/post-media/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/clip.mp4';
     const { supabase } = makeSupabase({
-      destinations: [{ id: PAGE_ID, status: 'active', metadata: null }],
+      destinations: [{ id: PAGE_ID, status: 'active', fb_status: null }],
       destinationsError: false,
       queueRows: [
         {
@@ -249,5 +262,34 @@ describe('Publishing queue Supabase destinations fetch (R7)', () => {
     expect(json.items[0].media.name).toBe('clip.mp4');
     expect(json.items[0].media.mediaType).toBe('video');
     expect(json.items[0].media.thumbnailUrl).toBeNull();
+  });
+
+  it('spec 211: gate fetch selects only id/status/fb_status; paused pages list, disconnected ones hide', async () => {
+    const pausedId = '77777777-7777-4777-8777-777777777777';
+    const goneId = '88888888-8888-4888-8888-888888888888';
+    const { supabase, destSelects } = makeSupabase({
+      destinations: [
+        { id: PAGE_ID, status: 'active', fb_status: null },
+        { id: pausedId, status: 'disconnected', fb_status: 'paused' },
+        { id: goneId, status: 'disconnected', fb_status: null },
+      ],
+      destinationsError: false,
+      queueRows: [queueRow(PAGE_ID), queueRow(pausedId), queueRow(goneId)],
+    });
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/publishing/queue',
+      { headers: { cookie: validSessionCookie } },
+    );
+    const res = await handleListQueueItems(req, 'acme', supabase as never);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.total).toBe(2);
+    expect(json.items.map((i: { pageId: string }) => i.pageId).sort()).toEqual(
+      [PAGE_ID, pausedId].sort(),
+    );
+    expect(destSelects).toContain('id, status, metadata->>fb_status');
+    for (const select of destSelects) {
+      expect(select.replace(/metadata->>?[A-Za-z0-9_]+/g, '')).not.toContain('metadata');
+    }
   });
 });
