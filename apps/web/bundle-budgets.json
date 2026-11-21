@@ -534,12 +534,6 @@
         "routeSpecificGzipBytes": 42499,
         "routeSpecificRawBytes": 142997
       },
-      "/tenant/[subdomain]/bulk-delete-posts": {
-        "firstLoadGzipBytes": 171461,
-        "firstLoadRawBytes": 582921,
-        "routeSpecificGzipBytes": 31181,
-        "routeSpecificRawBytes": 109817
-      },
       "/tenant/[subdomain]/threads/auto-download-upload": {
         "firstLoadGzipBytes": 190000,
         "firstLoadRawBytes": 640000,
@@ -638,8 +632,8 @@
       }
     },
     "totalClientJs": {
-      "gzipBytes": 1574499,
-      "rawBytes": 4940951
+      "gzipBytes": 1485990,
+      "rawBytes": 4720834
     }
   }
 }
