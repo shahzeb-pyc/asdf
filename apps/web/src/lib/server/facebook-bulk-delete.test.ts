@@ -4,6 +4,8 @@ import {
   listPageContent,
   resolveAccountToken,
   resolveDeleteCandidates,
+  resolvePageAccessToken,
+  resolvePageToken,
   BulkDeleteError,
 } from './facebook-bulk-delete';
 import { encryptToken, getTokenEncryptionKey } from '@fbuploadpro/contracts';
@@ -168,6 +170,90 @@ describe('resolveDeleteCandidates', () => {
       dateTo: '2026-06-30',
     });
     expect(result.candidates.map((c) => c.id)).toEqual(['123_in']);
+  });
+});
+
+describe('resolvePageToken', () => {
+  const ACCOUNT_ID = '11111111-1111-4111-8111-111111111111';
+
+  it('exchanges the user token for the page token — the page token, never the user token, reaches page endpoints', async () => {
+    const seen: string[] = [];
+    const fetchFn = makeFetch((url) => {
+      seen.push(url);
+      if (url.includes('/me/accounts')) {
+        return jsonResponse({
+          data: [{ id: '123', access_token: 'EAABpage-token' }],
+          paging: {},
+        });
+      }
+      if (url.includes('/123/posts')) {
+        return jsonResponse({
+          data: [
+            { id: '123_1', message: 'Hello', created_time: '2026-01-02T00:00:00+0000' },
+          ],
+          paging: {},
+        });
+      }
+      return jsonResponse({ success: true });
+    });
+    const key = getTokenEncryptionKey();
+    const encrypted = await encryptToken('EAABuser-token', key);
+    const pageToken = await resolvePageToken(
+      fetchFn,
+      makeSupabaseStub(encrypted),
+      'workspace-1',
+      ACCOUNT_ID,
+      '123',
+    );
+    expect(pageToken).toBe('EAABpage-token');
+
+    // The composition the routes rely on: the resolved token is the
+    // one sent to the page endpoints, for list AND delete.
+    await listPageContent(fetchFn, pageToken, { pageId: '123', type: 'posts', limit: 25 });
+    await bulkDeleteContent(fetchFn, pageToken, ['123_1']);
+    const meAccountsCall = seen.find((u) => u.includes('/me/accounts'));
+    expect(meAccountsCall).toContain('EAABuser-token');
+    const pageCalls = seen.filter((u) => u.includes('/123/'));
+    expect(pageCalls.length).toBeGreaterThan(0);
+    for (const call of pageCalls) {
+      expect(call).toContain('EAABpage-token');
+      expect(call).not.toContain('EAABuser-token');
+    }
+  });
+
+  it('walks /me/accounts pages until the page is found', async () => {
+    const fetchFn = makeFetch((url) => {
+      if (url.includes('/me/accounts') && !url.includes('after=')) {
+        return jsonResponse({
+          data: [{ id: '999', access_token: 'EAABother' }],
+          paging: { cursors: { after: 'cursor-2' } },
+        });
+      }
+      return jsonResponse({
+        data: [{ id: '123', access_token: 'EAABpage-token' }],
+        paging: {},
+      });
+    });
+    const token = await resolvePageAccessToken(fetchFn, 'EAABuser-token', '123');
+    expect(token).toBe('EAABpage-token');
+  });
+
+  it('fails that page plainly when it is not in /me/accounts', async () => {
+    const fetchFn = makeFetch(() =>
+      jsonResponse({ data: [{ id: '999', access_token: 'EAABother' }], paging: {} }),
+    );
+    await expect(resolvePageAccessToken(fetchFn, 'EAABuser-token', '123')).rejects.toMatchObject({
+      code: 'PAGE_NOT_MANAGED',
+    });
+  });
+
+  it('fails loudly on a dead user token instead of returning a wrong token', async () => {
+    const fetchFn = makeFetch(() =>
+      jsonResponse({ error: { code: 190, error_subcode: 463, message: 'Token expired' } }, 400),
+    );
+    await expect(resolvePageAccessToken(fetchFn, 'EAABuser-token', '123')).rejects.toMatchObject({
+      code: 'TOKEN_DEAD',
+    });
   });
 });
 

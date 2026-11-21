@@ -1,10 +1,11 @@
 /**
- * Bulk Delete Posts shell (spec 213): discovery, preview pre-select,
- * and the client-driven delete run — against the mocked API client.
- * Fake timers drive the 60-second pause between batches; the clock
- * advances only when the test says so, so the pause is proven rather
- * than waited out. Async UI is awaited by advancing the clock, never
- * by real time.
+ * Bulk Delete Posts shell (spec 213, rebuilt as a wizard in spec 218):
+ * step gating and navigation, discovery, preview pre-select, inline
+ * partial failure, clear-on-retry, and the client-driven delete run —
+ * against the mocked API client. Fake timers drive the 60-second
+ * pause between batches; the clock advances only when the test says
+ * so, so the pause is proven rather than waited out. Async UI is
+ * awaited by advancing the clock, never by real time.
  */
 import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -125,11 +126,13 @@ async function tick(ms = 100) {
   });
 }
 
-async function discoverOnePage() {
+/** Walk the wizard to Step 3 with one page selected. */
+async function goToPreview() {
   fireEvent.click(screen.getByText('Shahzeb Malik'));
-  fireEvent.click(screen.getByRole('button', { name: /Find pages/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Continue \(1 account\)/ }));
   await tick();
   fireEvent.click(screen.getByText('Morning Recipes'));
+  fireEvent.click(screen.getByRole('button', { name: /Continue \(1 page\)/ }));
   expect(screen.getByText('Smart Filter')).toBeInTheDocument();
 }
 
@@ -170,15 +173,52 @@ afterEach(() => {
 });
 
 describe('BulkDeletePage', () => {
+  it('gates each step: Continue is disabled until something is selected', async () => {
+    renderPage();
+    await tick();
+    // Step 1: nothing selected yet — Continue is disabled.
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    expect(screen.getByRole('button', { name: /Continue \(1 account\)/ })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /Continue \(1 account\)/ }));
+    await tick();
+    // Step 2: no page selected yet — Continue is disabled again.
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+    fireEvent.click(screen.getByText('Morning Recipes'));
+    expect(screen.getByRole('button', { name: /Continue \(1 page\)/ })).not.toBeDisabled();
+  });
+
+  it('moves between steps without losing the selection', async () => {
+    renderPage();
+    await tick();
+    await goToPreview();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview Targets' }));
+    await tick();
+    expect(screen.getByText('Items Found')).toBeInTheDocument();
+    // Stepper back to Pages: the page is still selected.
+    fireEvent.click(screen.getByRole('button', { name: /Pages/ }));
+    expect(screen.getByText('Morning Recipes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Continue \(1 page\)/ })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /Continue \(1 page\)/ }));
+    expect(screen.getByText('Smart Filter')).toBeInTheDocument();
+    // The preview is still there — no re-preview was needed.
+    expect(screen.getByText('Items Found')).toBeInTheDocument();
+    // Change selection returns to Step 1 with the account still selected.
+    fireEvent.click(screen.getByRole('button', { name: 'Change selection' }));
+    expect(screen.getByRole('button', { name: /Continue \(1 account\)/ })).not.toBeDisabled();
+  });
+
   it('discovers pages, previews with everything pre-selected, and shows no dialog', async () => {
     renderPage();
     await tick();
     expect(screen.getByText('Shahzeb Malik')).toBeInTheDocument();
-    // Expired accounts render but are not selectable (no checkbox).
+    // Expired accounts render in the needs-attention section, not in
+    // the picker — and are not selectable (no checkbox).
     expect(screen.getByText('Old Account')).toBeInTheDocument();
     expect(screen.getByText('Session expired')).toBeInTheDocument();
+    expect(screen.getByText('Needs attention')).toBeInTheDocument();
 
-    await discoverOnePage();
+    await goToPreview();
 
     fireEvent.click(screen.getByRole('button', { name: 'Preview Targets' }));
     await tick();
@@ -227,10 +267,12 @@ describe('BulkDeletePage', () => {
     renderPage();
     await tick();
     fireEvent.click(screen.getByText('Shahzeb Malik'));
-    fireEvent.click(screen.getByRole('button', { name: /Find pages/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue \(1 account\)/ }));
     await tick();
     fireEvent.click(screen.getByText('Morning Recipes'));
     fireEvent.click(screen.getByText('Evening Bakes'));
+    fireEvent.click(screen.getByRole('button', { name: /Continue \(2 pages\)/ }));
+    expect(screen.getByText('Smart Filter')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Preview Targets' }));
     await tick();
@@ -248,10 +290,39 @@ describe('BulkDeletePage', () => {
     expect(screen.queryByText(/Couldn't preview posts to delete/)).not.toBeInTheDocument();
   });
 
+  it('an all-fail Preview Targets re-run clears the stale preview', async () => {
+    renderPage();
+    await tick();
+    await goToPreview();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview Targets' }));
+    await tick();
+    expect(screen.getByText('Post 1')).toBeInTheDocument();
+    expect(screen.getByText('25 items selected')).toBeInTheDocument();
+
+    // Now every page fails.
+    apiPost.mockImplementation(async (path: string) => {
+      if (path.includes('/bulk-delete/preview')) {
+        throw new Error('Page access token has expired.');
+      }
+      throw new Error(`unexpected POST ${path}`);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview Targets' }));
+    await tick();
+
+    // No stale results under the generic error, and the failed page
+    // is still named.
+    expect(screen.queryByText('Post 1')).not.toBeInTheDocument();
+    expect(screen.queryByText('25 items selected')).not.toBeInTheDocument();
+    expect(screen.getByText(/Couldn't preview posts to delete/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Morning Recipes.*Page access token has expired/),
+    ).toBeInTheDocument();
+  });
+
   it('deletes in batches of 20 with a 60s pause, and already-deleted counts as success', async () => {
     renderPage();
     await tick();
-    await discoverOnePage();
+    await goToPreview();
     fireEvent.click(screen.getByRole('button', { name: 'Preview Targets' }));
     await tick();
     expect(screen.getByText('Items Found')).toBeInTheDocument();
@@ -266,6 +337,8 @@ describe('BulkDeletePage', () => {
       apiPost.mock.calls.filter(([path]) => String(path).includes('/bulk-delete/batch-delete'));
     expect(batchCalls()).toHaveLength(1);
     expect((batchCalls()[0]?.[1] as { contentIds: string[] }).contentIds).toHaveLength(20);
+    // The batch carries the page the ids belong to (spec 218).
+    expect((batchCalls()[0]?.[1] as { pageId: string }).pageId).toBe('111');
 
     // Advancing the clock through the pause runs the last batch of 5.
     await tick(60_000);
@@ -289,7 +362,7 @@ describe('BulkDeletePage', () => {
   it('manual curation loads live content and selection is shared', async () => {
     renderPage();
     await tick();
-    await discoverOnePage();
+    await goToPreview();
     // Radix Tabs activate on focus (automatic mode); a bare fireEvent.click
     // never focuses the trigger, so the tab stays unselected. Focus first,
     // as a real mouse click would, then click.
@@ -307,7 +380,7 @@ describe('BulkDeletePage', () => {
   it('hides the floating bar when nothing is selected', async () => {
     renderPage();
     await tick();
-    await discoverOnePage();
+    await goToPreview();
     fireEvent.click(screen.getByRole('button', { name: 'Preview Targets' }));
     await tick();
     expect(screen.getByText('25 items selected')).toBeInTheDocument();
