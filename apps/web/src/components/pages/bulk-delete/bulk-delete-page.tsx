@@ -1,17 +1,22 @@
 'use client';
 
 /**
- * Bulk Delete Posts page (spec 213) — delete live published Facebook
- * posts in bulk. Modelled on Publish Now's wizard (accounts, then
- * pages discovered live from Facebook) and on the old bulk-delete
- * section (`~/workspace/old-fbuploadpro`,
- * agency/facebook/bulk-delete):
+ * Bulk Delete Posts page (spec 213, rebuilt as a wizard in spec 218)
+ * — delete live published Facebook posts in bulk. A real 3-step
+ * wizard, modelled on Publish Now (`view` state machine, one step
+ * visible at a time, centred max-w-2xl steps, Back/Continue):
  *
- *   Step 1 Select accounts (search, rows, Select All) — expired
- *     accounts shown but NOT selectable, with Reconnect.
- *   Step 2 Select pages (search, 2-column grid grouped by account,
- *     Select All / Deselect All, pages-found count). A page under two
- *     accounts is de-duplicated to the first account.
+ *   Step 1 Accounts — search, rows, Select All. Expired accounts are
+ *     NOT selectable and live in a separate "Needs attention" section
+ *     with Reconnect. Continuing runs live page discovery.
+ *   Step 2 Pages — pages discovered live from Facebook, grouped by
+ *     account, search, Select All. A page under two accounts is
+ *     de-duplicated to the first account.
+ *   Step 3 Preview & delete — summary bar, Smart Filter / Manual
+ *     Curation tabs, compact criteria row (type, sort, date From/To,
+ *     Preview Targets), preview grid (12/page Smart, 20/page Manual,
+ *     all pre-selected), floating bar with "Delete Selected".
+ *
  *   Smart Filter — type (All / Posts / Photos / Reels), sort
  *     (Oldest / Newest First), date From/To, Preview Targets.
  *     Preview returns up to 500 candidates across all selected
@@ -26,8 +31,15 @@
  *     closes. Progress overlay: ring %, Processed / Succeeded /
  *     Failed / ETA, failures panel.
  *
+ * Failures are inline in the step they belong to — never banners
+ * above the flow. A page whose preview failed is named in the
+ * preview step with a plain reason and a retry; when every page
+ * fails, the previous preview is cleared so stale results never
+ * show under the generic error.
+ *
  * Nothing here writes to the database. The account token is resolved
- * server-side by the API routes; the browser never sees or sends one.
+ * server-side by the API routes (exchanged for the page token via
+ * `/me/accounts`); the browser never sees or sends one.
  */
 
 import * as React from 'react';
@@ -84,6 +96,13 @@ const MANUAL_TYPES: Array<{ id: BulkDeleteContentType; label: string }> = [
   { id: 'posts', label: 'Posts' },
   { id: 'photos', label: 'Photos' },
   { id: 'reels', label: 'Reels' },
+];
+
+type BulkDeleteStep = 'accounts' | 'pages' | 'preview';
+const STEP_DEFS: Array<{ id: BulkDeleteStep; label: string }> = [
+  { id: 'accounts', label: 'Accounts' },
+  { id: 'pages', label: 'Pages' },
+  { id: 'preview', label: 'Preview & delete' },
 ];
 
 function errorText(error: unknown, fallback: string): string {
@@ -150,6 +169,7 @@ function typeLabel(type: BulkDeleteContentType): string {
 }
 
 export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
+  const [step, setStep] = React.useState<BulkDeleteStep>('accounts');
   const [selectedAccountIds, setSelectedAccountIds] = React.useState<string[]>([]);
   const [accountSearchQuery, setAccountSearchQuery] = React.useState('');
   const [pageSearchQuery, setPageSearchQuery] = React.useState('');
@@ -169,8 +189,8 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
   const [hasPreviewed, setHasPreviewed] = React.useState(false);
   const [previewPage, setPreviewPage] = React.useState(1);
   // Pages whose preview call failed on the last Preview Targets run.
-  // Shown alongside the partial results so the user knows what is
-  // missing and can retry just those pages.
+  // Shown inline in the preview step alongside the partial results
+  // so the user knows what is missing and can retry just those pages.
   const [previewFailures, setPreviewFailures] = React.useState<
     Array<{ pageName: string; reason: string }>
   >([]);
@@ -183,8 +203,8 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
   const [runState, setRunState] = React.useState<BulkDeleteRunState | null>(null);
 
   // Every listed candidate, keyed by id, so a delete run can resolve
-  // each selected id back to its account (the batch route is per
-  // account). Refilled on every preview / manual load.
+  // each selected id back to its account and page (the batch route is
+  // per account AND per page). Refilled on every preview / manual load.
   const candidatesRef = React.useRef(new Map<string, BulkDeleteCandidate>());
   const mountedRef = React.useRef(true);
   React.useEffect(() => {
@@ -244,6 +264,16 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
       }))
       .filter((group) => group.pages.length > 0);
   }, [groups, pageSearchQuery]);
+
+  const stepIndex = STEP_DEFS.findIndex((def) => def.id === step);
+
+  // Step changes clear a stale inline error — an error belongs to the
+  // step that produced it. (The Step 1 → Step 2 path sets the step
+  // directly after discovery, so a discovery failure still shows.)
+  const goToStep = React.useCallback((next: BulkDeleteStep) => {
+    setErrorMessage(null);
+    setStep(next);
+  }, []);
 
   const toggleAccount = React.useCallback((accountId: string) => {
     setSelectedAccountIds((prev) =>
@@ -327,6 +357,13 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
       setIsDiscovering(false);
     }
   }, [activeAccounts, selectedAccountIds, subdomain]);
+
+  // Continuing from Step 1 runs discovery, then shows Step 2. There
+  // is no separate "Find pages" button — discovery is the Continue.
+  const handleContinueFromAccounts = React.useCallback(async () => {
+    await handleDiscoverPages();
+    setStep('pages');
+  }, [handleDiscoverPages]);
 
   const togglePage = React.useCallback((key: string) => {
     setSelectedPageKeys((prev) =>
@@ -488,8 +525,13 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
           }
         }
         if (merged.length === 0 && failures.length > 0) {
-          // Every page failed: keep the current behaviour — generic
-          // error, no stale preview presented as fresh.
+          // Every page failed: clear the previous preview first, so a
+          // re-run never shows stale results under the generic error.
+          setPreviewItems([]);
+          setPreviewTotal(0);
+          setHasPreviewed(false);
+          setPreviewPage(1);
+          setSelectedContentIds([]);
           setErrorMessage("Couldn't preview posts to delete. Please try again.");
           setPreviewFailures(failures);
           return;
@@ -569,7 +611,12 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
   const executeDelete = React.useCallback(async () => {
     const ids = selectedContentIds;
     if (ids.length === 0 || runState !== null) return;
-    const byAccount = new Map<string, string[]>();
+    // Batches are per account AND per page (spec 218): the delete
+    // uses that page's token, resolved server-side.
+    const byAccountPage = new Map<
+      string,
+      { accountId: string; pageId: string; ids: string[] }
+    >();
     const missing: string[] = [];
     for (const id of ids) {
       const candidate = candidatesRef.current.get(id);
@@ -577,9 +624,14 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
         missing.push(id);
         continue;
       }
-      const list = byAccount.get(candidate.accountId) ?? [];
-      list.push(id);
-      byAccount.set(candidate.accountId, list);
+      const key = `${candidate.accountId}:${candidate.pageId}`;
+      const entry = byAccountPage.get(key) ?? {
+        accountId: candidate.accountId,
+        pageId: candidate.pageId,
+        ids: [],
+      };
+      entry.ids.push(id);
+      byAccountPage.set(key, entry);
     }
     if (missing.length > 0) {
       setErrorMessage(
@@ -587,10 +639,14 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
       );
       return;
     }
-    const batches: Array<{ accountId: string; ids: string[] }> = [];
-    for (const [accountId, accountIds] of byAccount) {
-      for (let i = 0; i < accountIds.length; i += BULK_DELETE_CLIENT_BATCH_SIZE) {
-        batches.push({ accountId, ids: accountIds.slice(i, i + BULK_DELETE_CLIENT_BATCH_SIZE) });
+    const batches: Array<{ accountId: string; pageId: string; ids: string[] }> = [];
+    for (const entry of byAccountPage.values()) {
+      for (let i = 0; i < entry.ids.length; i += BULK_DELETE_CLIENT_BATCH_SIZE) {
+        batches.push({
+          accountId: entry.accountId,
+          pageId: entry.pageId,
+          ids: entry.ids.slice(i, i + BULK_DELETE_CLIENT_BATCH_SIZE),
+        });
       }
     }
     const startedAt = Date.now();
@@ -619,7 +675,7 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
       try {
         const response = await api.post(
           buildTenantApiPath(subdomain, '/bulk-delete/batch-delete'),
-          { accountId: batch.accountId, contentIds: batch.ids },
+          { accountId: batch.accountId, pageId: batch.pageId, contentIds: batch.ids },
           { schema: BulkDeleteBatchResponseSchema },
         );
         for (const result of response.results) {
@@ -694,7 +750,6 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
     return remaining / rate + remainingBatches * BULK_DELETE_CLIENT_PAUSE_SECONDS;
   }, [runState]);
 
-  const pickersRef = React.useRef<HTMLDivElement>(null);
   const isRunActive = runState !== null && runState.status !== 'done';
   const selectedAccountNames = React.useMemo(
     () =>
@@ -703,7 +758,7 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-300 px-4 py-6 pb-32 sm:px-6">
       <div>
         <p className="mb-2 text-metadata text-ink-sub">
           Facebook&nbsp;&nbsp;/&nbsp;&nbsp;<b className="font-semibold text-ink-sub">Bulk Delete Posts</b>
@@ -719,251 +774,256 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
         </p>
       </div>
 
-      {errorMessage && (
-        <div
-          role="alert"
-          className="rounded-sm border border-signal-critical/35 bg-signal-critical/10 px-3 py-2.5 text-body leading-body text-ink"
-        >
-          {errorMessage}
-        </div>
-      )}
+      <nav
+        aria-label="Bulk delete steps"
+        className="mx-auto mb-6 mt-6 flex w-full max-w-2xl items-center"
+      >
+        {STEP_DEFS.map((def, index) => {
+          const done = index < stepIndex;
+          const current = index === stepIndex;
+          return (
+            <React.Fragment key={def.id}>
+              {index > 0 && (
+                <span
+                  aria-hidden
+                  className={cn('mx-2 h-px min-w-6 flex-1', done ? 'bg-brand-emerald' : 'bg-line')}
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (done) goToStep(def.id);
+                }}
+                disabled={!done && !current}
+                aria-current={current ? 'step' : undefined}
+                className={cn(
+                  'flex shrink-0 items-center gap-2 py-1 text-body font-bold outline-none',
+                  done && 'cursor-pointer text-ink-sub',
+                  current && 'text-ink',
+                  !done && !current && 'cursor-default text-ink-dim',
+                )}
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    'flex size-6 items-center justify-center rounded-full text-body font-bold',
+                    done && 'bg-brand-emerald text-on-primary',
+                    current && 'bg-primary text-on-primary',
+                    !done && !current && 'border border-line bg-subtle text-ink-sub',
+                  )}
+                >
+                  {done ? '✓' : index + 1}
+                </span>
+                <span className={cn(!current && 'hidden sm:inline')}>{def.label}</span>
+              </button>
+            </React.Fragment>
+          );
+        })}
+      </nav>
 
-      {previewFailures.length > 0 && (
-        <div
-          role="alert"
-          className="rounded-sm border border-signal-critical/35 bg-signal-critical/10 px-3 py-2.5 text-body leading-body text-ink"
-        >
-          <p className="font-semibold">
-            Couldn&apos;t preview{' '}
-            {previewFailures.length === 1 ? 'this page' : 'these pages'} — the posts below
-            are from the pages that did load:
-          </p>
-          <ul className="mt-1 list-disc pl-5">
-            {previewFailures.map((failure, index) => (
-              <li key={`${failure.pageName}-${index}`}>
-                {failure.pageName} — {failure.reason}
-              </li>
-            ))}
-          </ul>
-          <p className="mt-1">
-            Retry Preview Targets to try {previewFailures.length === 1 ? 'it' : 'them'} again.
-          </p>
-        </div>
-      )}
-
-      {selectedPages.length > 0 && (
-        <div className="flex items-center gap-3 rounded-2xl border border-line bg-subtle p-4">
-          <div className="flex items-center">
-            {selectedPages.slice(0, 3).map((page, index) => (
-              <span key={`${page.accountId}:${page.fbPageId}`} className={index > 0 ? '-ml-2' : ''}>
-                <Avatar name={page.pageName} pictureUrl={page.profilePictureUrl} />
-              </span>
-            ))}
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-body font-semibold text-ink">
-                {selectedPages.length} {selectedPages.length === 1 ? 'page' : 'pages'} selected
-              </span>
-              <span className="rounded-full border border-link px-2 py-0.5 text-metadata font-bold uppercase tracking-body text-link">
-                Selected
-              </span>
-            </div>
-            <div className="truncate text-metadata text-ink-sub">via {selectedAccountNames}</div>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="ml-auto shrink-0"
-            onClick={() => pickersRef.current?.scrollIntoView({ behavior: 'smooth' })}
-          >
-            Change selection
-          </Button>
-        </div>
-      )}
-
-      <div ref={pickersRef} className="space-y-6">
-        <div className="rounded-2xl border border-line bg-subtle p-4 sm:p-6">
-          <div className="mb-6 flex items-baseline gap-3">
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-body font-bold text-on-primary">
-              1
-            </span>
+      {step === 'accounts' && (
+        <div className="mx-auto w-full max-w-2xl">
+          <div className="rounded-2xl border border-line bg-subtle p-4 sm:p-6">
             <h2 className="text-xl font-semibold text-ink">Select accounts</h2>
-            <p className="text-metadata text-ink-sub">
+            <p className="mt-1 text-body leading-body text-ink-sub">
               Choose one or more accounts — pages are discovered live from Facebook.
             </p>
-          </div>
 
-          {accountsQuery.isPending && (
-            <div className="p-6 text-center text-body text-ink-sub">
-              Loading connected Facebook accounts...
-            </div>
-          )}
-          {accountsQuery.isError && (
-            <div className="p-6 text-center text-body text-ink-sub">
-              Couldn&apos;t load your Facebook accounts. Please try again.
-            </div>
-          )}
-          {!accountsQuery.isPending &&
-            !accountsQuery.isError &&
-            activeAccounts.length === 0 &&
-            nonSelectableAccounts.length === 0 && (
-              <div className="flex flex-col items-center p-6 text-center">
-                <div className="mb-1 text-body font-semibold text-ink">
-                  No Facebook accounts connected
-                </div>
-                <p className="mb-4 max-w-80 text-body leading-body text-ink-sub">
-                  Connect a Facebook account before deleting posts.
-                </p>
-                <Button asChild>
-                  <Link href={buildAccountsHref(subdomain)}>Go to Facebook Accounts</Link>
-                </Button>
+            {accountsQuery.isPending && (
+              <div className="p-6 text-center text-body text-ink-sub">
+                Loading connected Facebook accounts...
               </div>
             )}
+            {accountsQuery.isError && (
+              <div className="p-6 text-center text-body text-ink-sub">
+                Couldn&apos;t load your Facebook accounts. Please try again.
+              </div>
+            )}
+            {!accountsQuery.isPending &&
+              !accountsQuery.isError &&
+              activeAccounts.length === 0 &&
+              nonSelectableAccounts.length === 0 && (
+                <div className="flex flex-col items-center p-6 text-center">
+                  <div className="mb-1 text-body font-semibold text-ink">
+                    No Facebook accounts connected
+                  </div>
+                  <p className="mb-4 max-w-80 text-body leading-body text-ink-sub">
+                    Connect a Facebook account before deleting posts.
+                  </p>
+                  <Button asChild>
+                    <Link href={buildAccountsHref(subdomain)}>Go to Facebook Accounts</Link>
+                  </Button>
+                </div>
+              )}
 
-          {!accountsQuery.isPending && activeAccounts.length > 0 && (
-            <>
-              <div className="relative mb-4">
-                <SearchIcon
-                  className="pointer-events-none absolute left-4 top-3.5 size-4 text-ink-dim"
-                  aria-hidden
-                />
-                <Input
-                  type="text"
-                  value={accountSearchQuery}
-                  onChange={(event) => setAccountSearchQuery(event.target.value)}
-                  placeholder="Search accounts..."
-                  aria-label="Search accounts"
-                  className="border-line bg-canvas pl-11 shadow-none"
-                />
-              </div>
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-                <span className="text-metadata text-ink-sub">
-                  {accounts.length} {accounts.length === 1 ? 'account' : 'accounts'} ·{' '}
-                  {selectedAccountIds.length} of {activeAccounts.length} accounts selected
-                </span>
-                <button
-                  type="button"
-                  aria-pressed={activeAccounts.every((account) =>
-                    selectedAccountIds.includes(account.id),
+            {!accountsQuery.isPending && activeAccounts.length > 0 && (
+              <>
+                <div className="relative mb-4 mt-6">
+                  <SearchIcon
+                    className="pointer-events-none absolute left-4 top-3.5 size-4 text-ink-dim"
+                    aria-hidden
+                  />
+                  <Input
+                    type="text"
+                    value={accountSearchQuery}
+                    onChange={(event) => setAccountSearchQuery(event.target.value)}
+                    placeholder="Search accounts..."
+                    aria-label="Search accounts"
+                    className="border-line bg-canvas pl-11 shadow-none"
+                  />
+                </div>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                  <span className="text-metadata text-ink-sub">
+                    {accounts.length} {accounts.length === 1 ? 'account' : 'accounts'} ·{' '}
+                    {selectedAccountIds.length} of {activeAccounts.length} accounts selected
+                  </span>
+                  <button
+                    type="button"
+                    aria-pressed={activeAccounts.every((account) =>
+                      selectedAccountIds.includes(account.id),
+                    )}
+                    onClick={toggleSelectAllAccounts}
+                    className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
+                  >
+                    {activeAccounts.every((account) => selectedAccountIds.includes(account.id))
+                      ? 'Deselect All'
+                      : 'Select All'}
+                  </button>
+                </div>
+                <div className="flex flex-col gap-1">
+                  {filteredActiveAccounts.length === 0 && (
+                    <div className="p-8 text-center text-ink-sub">No accounts match your search</div>
                   )}
-                  onClick={toggleSelectAllAccounts}
-                  className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
-                >
-                  {activeAccounts.every((account) => selectedAccountIds.includes(account.id))
-                    ? 'Deselect All'
-                    : 'Select All'}
-                </button>
-              </div>
-              <div className="flex max-h-75 flex-col gap-1 overflow-y-auto pr-2">
-                {filteredActiveAccounts.length === 0 && (
-                  <div className="p-8 text-center text-ink-sub">No accounts match your search</div>
-                )}
-                {filteredActiveAccounts.map((account) => {
-                  const checked = selectedAccountIds.includes(account.id);
+                  {filteredActiveAccounts.map((account) => {
+                    const checked = selectedAccountIds.includes(account.id);
+                    return (
+                      <label
+                        key={account.id}
+                        className={cn(
+                          'flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-sm px-row py-row outline-none transition-colors hover:bg-hover sm:gap-4',
+                          checked && 'bg-hover',
+                        )}
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={() => toggleAccount(account.id)}
+                        />
+                        <Avatar
+                          name={account.displayName}
+                          pictureUrl={account.profilePictureUrl}
+                          size="lg"
+                        />
+                        <span className="min-w-0 truncate text-body font-semibold text-ink">
+                          {account.displayName}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            <div className="mt-6 flex flex-col gap-3 border-t border-line pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-body text-ink-sub">
+                {selectedAccountIds.length === 0
+                  ? 'Select at least one account to continue.'
+                  : `${selectedAccountIds.length} ${selectedAccountIds.length === 1 ? 'account' : 'accounts'} selected`}
+              </span>
+              <Button
+                type="button"
+                disabled={selectedAccountIds.length === 0 || isDiscovering}
+                onClick={() => void handleContinueFromAccounts()}
+                className="w-full sm:w-auto"
+              >
+                {isDiscovering
+                  ? 'Finding pages...'
+                  : selectedAccountIds.length === 0
+                    ? 'Continue'
+                    : `Continue (${selectedAccountIds.length} ${selectedAccountIds.length === 1 ? 'account' : 'accounts'})`}
+              </Button>
+            </div>
+          </div>
+
+          {nonSelectableAccounts.length > 0 && (
+            <div className="mt-4 rounded-2xl border border-line bg-subtle p-4 sm:p-6">
+              <h2 className="text-body font-semibold text-ink">Needs attention</h2>
+              <p className="mt-1 text-metadata leading-body text-ink-sub">
+                These accounts can&apos;t be selected until they are reconnected.
+              </p>
+              <div className="mt-4 flex flex-col gap-1">
+                {nonSelectableAccounts.map((account) => {
+                  const expired = getAccountHealth(account) === 'expired';
                   return (
-                    <label
+                    <div
                       key={account.id}
-                      className={cn(
-                        'flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-sm px-row py-row outline-none transition-colors hover:bg-hover sm:gap-4',
-                        checked && 'bg-hover',
-                      )}
+                      className="flex items-center justify-between gap-3 rounded-sm px-row py-row opacity-55 sm:gap-4"
                     >
-                      <Checkbox
-                        checked={checked}
-                        onCheckedChange={() => toggleAccount(account.id)}
-                      />
-                      <Avatar
-                        name={account.displayName}
-                        pictureUrl={account.profilePictureUrl}
-                        size="lg"
-                      />
-                      <span className="min-w-0 truncate text-lg font-semibold text-ink">
-                        {account.displayName}
-                      </span>
-                    </label>
+                      <div className="flex min-w-0 items-center gap-4">
+                        <Avatar
+                          name={account.displayName}
+                          pictureUrl={account.profilePictureUrl}
+                          size="lg"
+                        />
+                        <div className="min-w-0">
+                          <div className="truncate text-body font-semibold text-ink">
+                            {account.displayName}
+                          </div>
+                          <div className="mt-0.5 text-metadata text-ink-sub">
+                            {expired ? 'Session expired' : 'Disconnected'}
+                          </div>
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0 border-signal-critical/35 font-semibold text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
+                        onClick={() => {
+                          window.location.href = buildDirectConnectUrl({
+                            id: account.id,
+                            fbAccountId: account.fbAccountId,
+                            displayName: account.displayName,
+                            status: account.status,
+                            updatedAt: account.updatedAt,
+                          });
+                        }}
+                      >
+                        Reconnect
+                      </Button>
+                    </div>
                   );
                 })}
               </div>
-            </>
-          )}
-
-          {!accountsQuery.isPending && nonSelectableAccounts.length > 0 && (
-            <div className={cn('flex flex-col gap-1', activeAccounts.length > 0 && 'mt-4')}>
-              {nonSelectableAccounts.map((account) => {
-                const expired = getAccountHealth(account) === 'expired';
-                return (
-                  <div
-                    key={account.id}
-                    className="flex items-center justify-between gap-3 rounded-sm px-row py-row opacity-55 sm:gap-4"
-                  >
-                    <div className="flex min-w-0 items-center gap-4">
-                      <Avatar
-                        name={account.displayName}
-                        pictureUrl={account.profilePictureUrl}
-                        size="lg"
-                      />
-                      <div className="min-w-0">
-                        <div className="truncate text-body font-semibold text-ink">
-                          {account.displayName}
-                        </div>
-                        <div className="mt-0.5 text-metadata text-ink-sub">
-                          {expired ? 'Session expired' : 'Disconnected'}
-                        </div>
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="shrink-0 border-signal-critical/35 font-semibold text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
-                      onClick={() => {
-                        window.location.href = buildDirectConnectUrl({
-                          id: account.id,
-                          fbAccountId: account.fbAccountId,
-                          displayName: account.displayName,
-                          status: account.status,
-                          updatedAt: account.updatedAt,
-                        });
-                      }}
-                    >
-                      Reconnect
-                    </Button>
-                  </div>
-                );
-              })}
             </div>
           )}
-
-          <div className="mt-6 sm:text-right">
-            <Button
-              type="button"
-              disabled={selectedAccountIds.length === 0 || isDiscovering}
-              onClick={() => void handleDiscoverPages()}
-              className="w-full sm:w-auto"
-            >
-              {isDiscovering
-                ? 'Finding pages...'
-                : selectedAccountIds.length === 0
-                  ? 'Find pages'
-                  : `Find pages (${selectedAccountIds.length} ${selectedAccountIds.length === 1 ? 'account' : 'accounts'})`}
-            </Button>
-          </div>
         </div>
+      )}
 
-        {groups.length > 0 && (
+      {step === 'pages' && (
+        <div className="mx-auto w-full max-w-2xl">
           <div className="rounded-2xl border border-line bg-subtle p-4 sm:p-6">
-            <div className="mb-6 flex items-baseline gap-3">
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-body font-bold text-on-primary">
-                2
-              </span>
-              <h2 className="text-xl font-semibold text-ink">Select pages</h2>
-              <p className="text-metadata text-ink-sub">
-                Pick one page, or several at once. Pages from all selected accounts are shown,
-                grouped by account.
-              </p>
-            </div>
+            <h2 className="text-xl font-semibold text-ink">Select pages</h2>
+            <p className="mt-1 text-body leading-body text-ink-sub">
+              Pick one page, or several at once. Pages from all selected accounts are shown,
+              grouped by account.
+            </p>
+
+            {errorMessage && (
+              <div
+                role="alert"
+                className="mt-6 rounded-sm border border-signal-critical/35 bg-signal-critical/10 px-3 py-2.5 text-body leading-body text-ink"
+              >
+                <p>{errorMessage}</p>
+                <button
+                  type="button"
+                  onClick={() => void handleDiscoverPages()}
+                  className="mt-1 font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
+                >
+                  Retry finding pages →
+                </button>
+              </div>
+            )}
+
             {isDiscovering && (
               <div className="p-6 text-center text-body text-ink-sub">Finding Facebook Pages...</div>
             )}
@@ -974,7 +1034,7 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
             )}
             {!isDiscovering && allPages.length > 0 && (
               <>
-                <div className="relative mb-4">
+                <div className="relative mb-4 mt-6">
                   <SearchIcon
                     className="pointer-events-none absolute left-4 top-3.5 size-4 text-ink-dim"
                     aria-hidden
@@ -1008,7 +1068,7 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
                       : 'Select All'}
                   </button>
                 </div>
-                <div className="max-h-100 overflow-y-auto pr-2">
+                <div>
                   {filteredGroups.map((group) => (
                     <div key={group.accountId} className="mb-4">
                       <div className="mb-2 px-1 text-metadata font-semibold tracking-body text-ink-sub">
@@ -1048,36 +1108,149 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
                 </div>
               </>
             )}
-          </div>
-        )}
-      </div>
 
-      {selectedPages.length > 0 && (
-        <Tabs
-          value={mode}
-          onValueChange={(value) => setMode(value === 'manual' ? 'manual' : 'smart')}
-        >
-          <div className="flex justify-center">
-            <TabsList>
-              <TabsTrigger value="smart">Smart Filter</TabsTrigger>
-              <TabsTrigger value="manual">Manual Curation</TabsTrigger>
-            </TabsList>
+            <div className="mt-6 flex flex-col gap-3 border-t border-line pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => goToStep('accounts')}
+                className="w-full sm:w-auto"
+              >
+                ← Back
+              </Button>
+              <Button
+                type="button"
+                disabled={selectedPages.length === 0}
+                onClick={() => {
+                  setErrorMessage(null);
+                  setStep('preview');
+                }}
+                className="w-full sm:w-auto"
+              >
+                {selectedPages.length === 0
+                  ? 'Continue'
+                  : `Continue (${selectedPages.length} ${selectedPages.length === 1 ? 'page' : 'pages'})`}
+              </Button>
+            </div>
           </div>
+        </div>
+      )}
 
-          <TabsContent value="smart" className="mt-6">
-            <div className="rounded-2xl border border-line bg-subtle p-4 sm:p-6">
-              <div className="mb-4">
-                <h2 className="text-xl font-semibold text-ink">Bulk Delete Criteria</h2>
-                <p className="text-metadata text-ink-sub">
-                  Filter live posts to delete by date range and type.
-                </p>
-              </div>
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                <div>
-                  <span className="mb-2 block text-body font-semibold text-ink-sub">
-                    Date Range
+      {step === 'preview' && (
+        <div className="w-full">
+          {selectedPages.length > 0 && (
+            <div className="mb-6 flex items-center gap-3 rounded-2xl border border-line bg-subtle p-4">
+              <div className="flex items-center">
+                {selectedPages.slice(0, 3).map((page, index) => (
+                  <span key={`${page.accountId}:${page.fbPageId}`} className={index > 0 ? '-ml-2' : ''}>
+                    <Avatar name={page.pageName} pictureUrl={page.profilePictureUrl} />
                   </span>
-                  <div className="grid grid-cols-2 gap-3">
+                ))}
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-body font-semibold text-ink">
+                    {selectedPages.length} {selectedPages.length === 1 ? 'page' : 'pages'} selected
+                  </span>
+                  <span className="rounded-full border border-link px-2 py-0.5 text-metadata font-bold uppercase tracking-body text-link">
+                    Selected
+                  </span>
+                </div>
+                <div className="truncate text-metadata text-ink-sub">via {selectedAccountNames}</div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="ml-auto shrink-0"
+                onClick={() => goToStep('accounts')}
+              >
+                Change selection
+              </Button>
+            </div>
+          )}
+
+          {errorMessage && previewFailures.length > 0 && (
+            <div
+              role="alert"
+              className="mb-6 rounded-sm border border-signal-critical/35 bg-signal-critical/10 px-3 py-2.5 text-body leading-body text-ink"
+            >
+              <p className="font-semibold">
+                {previewItems.length > 0
+                  ? `Couldn't preview ${previewFailures.length === 1 ? 'this page' : 'these pages'} — the posts below are from the pages that did load:`
+                  : errorMessage}
+              </p>
+              <ul className="mt-1 list-disc pl-5">
+                {previewFailures.map((failure, index) => (
+                  <li key={`${failure.pageName}-${index}`}>
+                    {failure.pageName} — {failure.reason}
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={() => void previewTargets()}
+                className="mt-1 font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
+              >
+                Retry Preview Targets to try {previewFailures.length === 1 ? 'it' : 'them'} again →
+              </button>
+            </div>
+          )}
+          {errorMessage && previewFailures.length === 0 && (
+            <div
+              role="alert"
+              className="mb-6 rounded-sm border border-signal-critical/35 bg-signal-critical/10 px-3 py-2.5 text-body leading-body text-ink"
+            >
+              {errorMessage}
+            </div>
+          )}
+          {!errorMessage && previewFailures.length > 0 && previewItems.length > 0 && (
+            <div
+              role="alert"
+              className="mb-6 rounded-sm border border-signal-critical/35 bg-signal-critical/10 px-3 py-2.5 text-body leading-body text-ink"
+            >
+              <p className="font-semibold">
+                Couldn&apos;t preview{' '}
+                {previewFailures.length === 1 ? 'this page' : 'these pages'} — the posts below
+                are from the pages that did load:
+              </p>
+              <ul className="mt-1 list-disc pl-5">
+                {previewFailures.map((failure, index) => (
+                  <li key={`${failure.pageName}-${index}`}>
+                    {failure.pageName} — {failure.reason}
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={() => void previewTargets()}
+                className="mt-1 font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
+              >
+                Retry Preview Targets to try {previewFailures.length === 1 ? 'it' : 'them'} again →
+              </button>
+            </div>
+          )}
+
+          {selectedPages.length > 0 && (
+            <Tabs
+              value={mode}
+              onValueChange={(value) => setMode(value === 'manual' ? 'manual' : 'smart')}
+            >
+              <div className="flex justify-center">
+                <TabsList>
+                  <TabsTrigger value="smart">Smart Filter</TabsTrigger>
+                  <TabsTrigger value="manual">Manual Curation</TabsTrigger>
+                </TabsList>
+              </div>
+
+              <TabsContent value="smart" className="mt-6">
+                <div className="rounded-2xl border border-line bg-subtle p-4 sm:p-6">
+                  <h2 className="text-xl font-semibold text-ink">Bulk Delete Criteria</h2>
+                  <p className="mt-1 text-metadata leading-body text-ink-sub">
+                    Filter live posts to delete by date range and type. Preview up to 500 items
+                    · live published posts only — queued / scheduled posts are not touched.
+                  </p>
+                  <div className="mt-4 flex flex-wrap items-end gap-4">
                     <label className="block">
                       <span className="mb-1 block text-metadata font-semibold uppercase tracking-body text-ink-sub">
                         From
@@ -1102,248 +1275,246 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
                         className="border-line bg-canvas shadow-none"
                       />
                     </label>
+                    <div>
+                      <span className="mb-1 block text-metadata font-semibold uppercase tracking-body text-ink-sub">
+                        Type
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {PREVIEW_TYPES.map((type) => (
+                          <FilterChip
+                            key={type.id}
+                            active={previewType === type.id}
+                            onClick={() => setPreviewType(type.id)}
+                          >
+                            {type.label}
+                          </FilterChip>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="mb-1 block text-metadata font-semibold uppercase tracking-body text-ink-sub">
+                        Sort
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        <FilterChip active={sort === 'oldest_first'} onClick={() => setSort('oldest_first')}>
+                          Oldest First
+                        </FilterChip>
+                        <FilterChip active={sort === 'newest_first'} onClick={() => setSort('newest_first')}>
+                          Newest First
+                        </FilterChip>
+                      </div>
+                    </div>
+                    <span className="flex-1" />
+                    <Button
+                      type="button"
+                      disabled={isPreviewing}
+                      onClick={() => void previewTargets()}
+                    >
+                      {isPreviewing ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" aria-hidden /> Previewing...
+                        </>
+                      ) : (
+                        'Preview Targets'
+                      )}
+                    </Button>
                   </div>
                 </div>
-                <div>
-                  <span className="mb-2 block text-body font-semibold text-ink-sub">
-                    Content Settings
-                  </span>
-                  <span className="mb-1 block text-metadata text-ink-sub">Type</span>
+
+                {hasPreviewed && (
+                  <div className="mt-6">
+                    <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+                      <div>
+                        <h2 className="text-xl font-semibold text-ink">
+                          <span className="mr-2 inline-flex size-8 items-center justify-center rounded-full bg-primary/10 font-bold text-link">
+                            {previewTotal}
+                          </span>
+                          Items Found
+                        </h2>
+                        <p className="mt-1 text-metadata text-ink-sub">
+                          Previewing matches based on your criteria. All items on this page are
+                          pre-selected.
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button type="button" variant="outline" size="sm" onClick={selectAllPreview}>
+                          Select All
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={deselectAllPreview}>
+                          Deselect All
+                        </Button>
+                      </div>
+                    </div>
+                    {previewItems.length === 0 ? (
+                      <div className="rounded-2xl border border-line bg-subtle p-8 text-center text-body text-ink-sub">
+                        No posts match these criteria.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                          {previewPageItems.map((item) => (
+                            <ContentCard
+                              key={item.id}
+                              candidate={item}
+                              checked={selectedContentIds.includes(item.id)}
+                              onToggle={() => toggleContent(item.id)}
+                            />
+                          ))}
+                        </div>
+                        <div className="mt-4 flex items-center justify-center gap-4 text-metadata text-ink-sub">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={previewPage <= 1}
+                            onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
+                          >
+                            Previous
+                          </Button>
+                          <span>
+                            Page {previewPage} of {previewPageCount} · {PREVIEW_PAGE_SIZE} per page
+                          </span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={previewPage >= previewPageCount}
+                            onClick={() => setPreviewPage((p) => Math.min(previewPageCount, p + 1))}
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="manual" className="mt-6">
+                {selectedPages.length > 1 && (
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    {selectedPages.map((page) => {
+                      const key = `${page.accountId}:${page.fbPageId}`;
+                      return (
+                        <FilterChip
+                          key={key}
+                          active={manualPageKey === key}
+                          onClick={() => {
+                            setManualPageKeyOverride(key);
+                            resetManualExtras();
+                          }}
+                        >
+                          {page.pageName}
+                        </FilterChip>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap gap-2">
-                    {PREVIEW_TYPES.map((type) => (
+                    {MANUAL_TYPES.map((type) => (
                       <FilterChip
                         key={type.id}
-                        active={previewType === type.id}
-                        onClick={() => setPreviewType(type.id)}
+                        active={manualType === type.id}
+                        onClick={() => {
+                          setManualType(type.id);
+                          resetManualExtras();
+                        }}
                       >
                         {type.label}
                       </FilterChip>
                     ))}
                   </div>
-                  <span className="mb-1 mt-3 block text-metadata text-ink-sub">Sort</span>
-                  <div className="flex flex-wrap gap-2">
-                    <FilterChip active={sort === 'oldest_first'} onClick={() => setSort('oldest_first')}>
-                      Oldest First
-                    </FilterChip>
-                    <FilterChip active={sort === 'newest_first'} onClick={() => setSort('newest_first')}>
-                      Newest First
-                    </FilterChip>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
-                <p className="text-metadata text-ink-sub">
-                  Preview up to 500 items · live published posts only — queued / scheduled posts
-                  are not touched.
-                </p>
-                <Button
-                  type="button"
-                  disabled={isPreviewing}
-                  onClick={() => void previewTargets()}
-                >
-                  {isPreviewing ? (
-                    <>
-                      <Loader2 className="size-4 animate-spin" aria-hidden /> Previewing...
-                    </>
-                  ) : (
-                    'Preview Targets'
-                  )}
-                </Button>
-              </div>
-            </div>
-
-            {hasPreviewed && (
-              <div className="mt-6">
-                <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-                  <div>
-                    <h2 className="text-xl font-semibold text-ink">
-                      <span className="mr-2 inline-flex size-8 items-center justify-center rounded-full bg-primary/10 font-bold text-link">
-                        {previewTotal}
-                      </span>
-                      Items Found
-                    </h2>
-                    <p className="mt-1 text-metadata text-ink-sub">
-                      Previewing matches based on your criteria. All items on this page are
-                      pre-selected.
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button type="button" variant="outline" size="sm" onClick={selectAllPreview}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-metadata text-ink-sub">
+                      <b className="text-ink">{selectedContentIds.length} selected</b>
+                    </span>
+                    <Button type="button" variant="outline" size="sm" onClick={selectAllManual}>
                       Select All
                     </Button>
-                    <Button type="button" variant="outline" size="sm" onClick={deselectAllPreview}>
+                    <Button type="button" variant="outline" size="sm" onClick={deselectAllManual}>
                       Deselect All
                     </Button>
                   </div>
                 </div>
-                {previewItems.length === 0 ? (
+                {manualQuery.isPending && (
                   <div className="rounded-2xl border border-line bg-subtle p-8 text-center text-body text-ink-sub">
-                    No posts match these criteria.
+                    Loading live page content...
                   </div>
-                ) : (
+                )}
+                {manualQuery.isError && (
+                  <div className="rounded-2xl border border-line bg-subtle p-8 text-center text-body text-ink-sub">
+                    Couldn&apos;t load this page&apos;s content. Please try again.
+                  </div>
+                )}
+                {!manualQuery.isPending && !manualQuery.isError && (
                   <>
-                    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                      {previewPageItems.map((item) => (
-                        <ContentCard
-                          key={item.id}
-                          candidate={item}
-                          checked={selectedContentIds.includes(item.id)}
-                          onToggle={() => toggleContent(item.id)}
-                        />
-                      ))}
-                    </div>
-                    <div className="mt-4 flex items-center justify-center gap-4 text-metadata text-ink-sub">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={previewPage <= 1}
-                        onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
-                      >
-                        Previous
-                      </Button>
-                      <span>
-                        Page {previewPage} of {previewPageCount} · {PREVIEW_PAGE_SIZE} per page
-                      </span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={previewPage >= previewPageCount}
-                        onClick={() => setPreviewPage((p) => Math.min(previewPageCount, p + 1))}
-                      >
-                        Next
-                      </Button>
-                    </div>
+                    {manualItems.length === 0 ? (
+                      <div className="rounded-2xl border border-line bg-subtle p-8 text-center text-body text-ink-sub">
+                        No {typeLabel(manualType).toLowerCase()} found on this page.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                          {manualPageItems.map((item) => (
+                            <ContentCard
+                              key={item.id}
+                              candidate={item}
+                              checked={selectedContentIds.includes(item.id)}
+                              onToggle={() => toggleContent(item.id)}
+                            />
+                          ))}
+                        </div>
+                        <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-metadata text-ink-sub">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={manualPage <= 1}
+                            onClick={() => setManualPage((p) => Math.max(1, p - 1))}
+                          >
+                            Previous
+                          </Button>
+                          <span>
+                            Page {manualPage} of {manualPageCount} · {MANUAL_PAGE_SIZE} per page
+                          </span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={manualPage >= manualPageCount}
+                            onClick={() => setManualPage((p) => Math.min(manualPageCount, p + 1))}
+                          >
+                            Next
+                          </Button>
+                          {manualCursor && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isLoadingMore}
+                              onClick={() => void handleLoadMoreManual()}
+                            >
+                              {isLoadingMore ? 'Loading...' : 'Load More'}
+                            </Button>
+                          )}
+                        </div>
+                        <p className="mt-2 text-center text-metadata text-ink-sub">
+                          Manual lists live page content with cursor paging — “Load More” loads the
+                          next 25.
+                        </p>
+                      </>
+                    )}
                   </>
                 )}
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="manual" className="mt-6">
-            {selectedPages.length > 1 && (
-              <div className="mb-4 flex flex-wrap gap-2">
-                {selectedPages.map((page) => {
-                  const key = `${page.accountId}:${page.fbPageId}`;
-                  return (
-                    <FilterChip
-                      key={key}
-                      active={manualPageKey === key}
-                      onClick={() => {
-                        setManualPageKeyOverride(key);
-                        resetManualExtras();
-                      }}
-                    >
-                      {page.pageName}
-                    </FilterChip>
-                  );
-                })}
-              </div>
-            )}
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap gap-2">
-                {MANUAL_TYPES.map((type) => (
-                  <FilterChip
-                    key={type.id}
-                    active={manualType === type.id}
-                    onClick={() => {
-                      setManualType(type.id);
-                      resetManualExtras();
-                    }}
-                  >
-                    {type.label}
-                  </FilterChip>
-                ))}
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-metadata text-ink-sub">
-                  <b className="text-ink">{selectedContentIds.length} selected</b>
-                </span>
-                <Button type="button" variant="outline" size="sm" onClick={selectAllManual}>
-                  Select All
-                </Button>
-                <Button type="button" variant="outline" size="sm" onClick={deselectAllManual}>
-                  Deselect All
-                </Button>
-              </div>
-            </div>
-            {manualQuery.isPending && (
-              <div className="rounded-2xl border border-line bg-subtle p-8 text-center text-body text-ink-sub">
-                Loading live page content...
-              </div>
-            )}
-            {manualQuery.isError && (
-              <div className="rounded-2xl border border-line bg-subtle p-8 text-center text-body text-ink-sub">
-                Couldn&apos;t load this page&apos;s content. Please try again.
-              </div>
-            )}
-            {!manualQuery.isPending && !manualQuery.isError && (
-              <>
-                {manualItems.length === 0 ? (
-                  <div className="rounded-2xl border border-line bg-subtle p-8 text-center text-body text-ink-sub">
-                    No {typeLabel(manualType).toLowerCase()} found on this page.
-                  </div>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                      {manualPageItems.map((item) => (
-                        <ContentCard
-                          key={item.id}
-                          candidate={item}
-                          checked={selectedContentIds.includes(item.id)}
-                          onToggle={() => toggleContent(item.id)}
-                        />
-                      ))}
-                    </div>
-                    <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-metadata text-ink-sub">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={manualPage <= 1}
-                        onClick={() => setManualPage((p) => Math.max(1, p - 1))}
-                      >
-                        Previous
-                      </Button>
-                      <span>
-                        Page {manualPage} of {manualPageCount} · {MANUAL_PAGE_SIZE} per page
-                      </span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={manualPage >= manualPageCount}
-                        onClick={() => setManualPage((p) => Math.min(manualPageCount, p + 1))}
-                      >
-                        Next
-                      </Button>
-                      {manualCursor && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={isLoadingMore}
-                          onClick={() => void handleLoadMoreManual()}
-                        >
-                          {isLoadingMore ? 'Loading...' : 'Load More'}
-                        </Button>
-                      )}
-                    </div>
-                    <p className="mt-2 text-center text-metadata text-ink-sub">
-                      Manual lists live page content with cursor paging — “Load More” loads the
-                      next 25.
-                    </p>
-                  </>
-                )}
-              </>
-            )}
-          </TabsContent>
-        </Tabs>
+              </TabsContent>
+            </Tabs>
+          )}
+        </div>
       )}
 
       {selectedContentIds.length > 0 && !runState && (
-        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-4 whitespace-nowrap rounded-full border border-line bg-subtle px-5 py-2 shadow-elevated">
+        <div className="fixed bottom-6 left-1/2 z-40 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-4 rounded-3xl border border-line bg-subtle px-5 py-2 shadow-elevated sm:flex-nowrap sm:whitespace-nowrap sm:rounded-full">
           <span className="text-body font-bold text-ink">
             {selectedContentIds.length} items selected
           </span>
