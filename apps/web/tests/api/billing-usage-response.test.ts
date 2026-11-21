@@ -290,7 +290,15 @@ function makeClient() {
   return { client: client as unknown as SupabaseClient, tables, queryLog };
 }
 
-const NOW = new Date('2026-11-01T12:00:00.000Z');
+/**
+ * Anchored to the real wall clock at runtime, not a fixed date: the
+ * route reads the entitlement with `new Date()`, so a fixed seed
+ * window expired in real time (the 2026-11-01 window ended
+ * 2026-11-21T12:00:00Z) and the gate then correctly 403'd the
+ * lapsed period. The window stays starts −10d / ends +20d around
+ * runtime, so the seeded period is always active when the tests run.
+ */
+const NOW = new Date();
 const DAY = 86_400_000;
 const USER_ID = 'user-1';
 const DISCONNECTED_DESTINATION_ID = '22222222-2222-4222-8222-222222222222';
