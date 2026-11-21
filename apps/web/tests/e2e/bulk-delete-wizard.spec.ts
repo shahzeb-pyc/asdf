@@ -173,7 +173,7 @@ test.describe('bulk delete wizard layout', () => {
     await walkToPreview(page);
     await page.getByRole('button', { name: 'Preview Targets' }).click();
     await expect(page.getByText('Items Found')).toBeVisible();
-    await expect(page.getByText('E2E post 1')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'E2E post 1 — Posts' })).toBeVisible();
     await expect(page.getByText('12 items selected')).toBeVisible();
 
     // Step 3: the preview grid is max-w-300 (1200px), still narrower
@@ -207,7 +207,7 @@ test.describe('bulk delete wizard layout', () => {
     await walkToPreview(page);
     await page.getByRole('button', { name: 'Preview Targets' }).click();
     await expect(page.getByText('Items Found')).toBeVisible();
-    await expect(page.getByText('E2E post 1')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'E2E post 1 — Posts' })).toBeVisible();
 
     // The floating delete bar wraps inside the viewport instead of
     // overflowing it, and the page never scrolls horizontally.
