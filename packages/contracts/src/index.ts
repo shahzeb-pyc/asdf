@@ -34,6 +34,7 @@ export * from './domain/desktop-bridge.js';
 export * from './domain/workspace.js';
 export * from './domain/database.js';
 export * from './publishing/bulk.js';
+export * from './publishing/bulk-delete.js';
 export * from './publishing/publisher.js';
 export * from './publishing/queue-message.js';
 export * from './publishing/lanes.js';
