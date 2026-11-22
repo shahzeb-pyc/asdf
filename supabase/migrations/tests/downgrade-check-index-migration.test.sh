@@ -12,7 +12,7 @@
 # (status, is_downgrade, scheduled_starts_at) serves the equality
 # + the range + the order.
 #
-# Spins up a throwaway PostgreSQL 16 cluster as the `postgres` system
+# Spins up a throwaway PostgreSQL cluster as an unprivileged system
 # user (postgres refuses to run as root), seeds a minimal
 # subscription_payments table plus the live pre-existing index, seeds
 # 5 due downgrades and a 20k-row noise pile that matches no part of
@@ -42,22 +42,36 @@
 # NOTE: CI's sql-rigs job also applies this migration (bootstrap + every
 # supabase/migrations file, in filename order, against postgres:16), so
 # a syntax or dependency break fails the PR checks even without this script.
+#
+# Environment overrides (defaults are the repo convention — system
+# PostgreSQL 16, postgres user). On a machine whose system disk was
+# wiped (no /usr/lib/postgresql, no postgres user), point them at an
+# extracted PGDG server instead, e.g. the persistent PG17 .deb in
+# ~/workspace/tools/pg17-server, staged at /var/lib/postgresql/pg17rig:
+#   PG_BIN=/var/lib/postgresql/pg17rig/usr/lib/postgresql/17/bin \
+#   PG_USER=pgtest PG_LIB=/var/lib/postgresql/pg17rig/lib \
+#   bash supabase/migrations/tests/downgrade-check-index-migration.test.sh
 set -euo pipefail
 
-PG_BIN=/usr/lib/postgresql/16/bin
+PG_BIN="${PG_BIN:-/usr/lib/postgresql/16/bin}"
+PG_USER="${PG_USER:-postgres}"
+PG_LIB="${PG_LIB:-}"
+if [ -n "$PG_LIB" ]; then
+  export LD_LIBRARY_PATH="$PG_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 MIGRATION="$ROOT/supabase/migrations/20261122213000_subscription_payments_status_downgrade_starts_index.sql"
 
 [ -f "$MIGRATION" ] || { echo "MIGRATION NOT FOUND: $MIGRATION"; exit 1; }
-id postgres >/dev/null 2>&1 || { echo "no postgres system user"; exit 1; }
-[ -x "$PG_BIN/initdb" ] || { echo "no postgres 16 binaries at $PG_BIN"; exit 1; }
+id "$PG_USER" >/dev/null 2>&1 || { echo "no $PG_USER system user"; exit 1; }
+[ -x "$PG_BIN/initdb" ] || { echo "no postgres binaries at $PG_BIN"; exit 1; }
 
 # The postgres user cannot read the worktree (/home/hatch is not
 # world-traversable), so stage the migration file where it can read it.
 STAGE=/var/lib/postgresql/16/test-downgrade-idx-stage
 mkdir -p "$STAGE"
 cp "$MIGRATION" "$STAGE/forward.sql"
-chown -R postgres:postgres "$STAGE"
+chown -R "$PG_USER:$PG_USER" "$STAGE"
 
 # Plan/scan captures go under TMPDIR (~/workspace/tmpdir on this VM:
 # /tmp is a near-full ~512MB tmpfs), never under /tmp directly.
@@ -70,16 +84,16 @@ PORT=55441
 setup_cluster() {
   rm -rf "$WORKDIR"
   mkdir -p "$WORKDIR" "$WORKDIR/sock"
-  chown -R postgres:postgres "$WORKDIR"
+  chown -R "$PG_USER:$PG_USER" "$WORKDIR"
   chmod 700 "$WORKDIR"
-  su postgres -c "$PG_BIN/initdb -D '$WORKDIR/data' -U postgres --auth=trust" >/dev/null
-  su postgres -c "$PG_BIN/pg_ctl -D '$WORKDIR/data' -o \"-k '$WORKDIR/sock' -p $PORT -c listen_addresses=''\" -l '$WORKDIR/log' start" >/dev/null
-  su postgres -c "$PG_BIN/createdb -h '$WORKDIR/sock' -p $PORT testdowngradeidx" >/dev/null
+  su "$PG_USER" -c "$PG_BIN/initdb -D '$WORKDIR/data' -U postgres --auth=trust" >/dev/null
+  su "$PG_USER" -c "$PG_BIN/pg_ctl -D '$WORKDIR/data' -o \"-k '$WORKDIR/sock' -p $PORT -c listen_addresses=''\" -l '$WORKDIR/log' start" >/dev/null
+  su "$PG_USER" -c "$PG_BIN/createdb -h '$WORKDIR/sock' -p $PORT testdowngradeidx" >/dev/null
 }
 
 stop_cluster() {
   if [ -d "$WORKDIR/data" ]; then
-    su postgres -c "$PG_BIN/pg_ctl -D '$WORKDIR/data' -m immediate stop" >/dev/null 2>&1 || true
+    su "$PG_USER" -c "$PG_BIN/pg_ctl -D '$WORKDIR/data' -m immediate stop" >/dev/null 2>&1 || true
   fi
   rm -rf "$WORKDIR"
 }
@@ -91,7 +105,7 @@ cleanup() {
 trap cleanup EXIT
 
 PSQL() {
-  su postgres -c "$PG_BIN/psql -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -t -A"
+  su "$PG_USER" -c "$PG_BIN/psql -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -t -A"
 }
 
 # Minimal subscription_payments: only the columns the tick scan and
@@ -221,8 +235,8 @@ BEFORE_USERS="$(cut -d'|' -f1 "$PLAN_DIR/before.scan")"
 echo "before-scan returns the expected 5 due downgrades, earliest first"
 
 # --- (3) apply the forward migration (twice: idempotent) ------------------
-su postgres -c "$PG_BIN/psql -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -f '$STAGE/forward.sql'"
-su postgres -c "$PG_BIN/psql -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -f '$STAGE/forward.sql'"
+su "$PG_USER" -c "$PG_BIN/psql -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -f '$STAGE/forward.sql'"
+su "$PG_USER" -c "$PG_BIN/psql -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -f '$STAGE/forward.sql'"
 echo "forward migration applied twice (idempotent)"
 
 PSQL <<'SQL'
