@@ -124,6 +124,13 @@ describe('Add Page edges', () => {
   const fetchMock = vi.fn();
   const realFetch = global.fetch;
 
+  /** How many times the modal called the live discover route. */
+  function discoverCallCount() {
+    return fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('/pages/discover')
+    ).length;
+  }
+
   beforeEach(() => {
     fetchMock.mockReset();
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -182,8 +189,11 @@ describe('Add Page edges', () => {
   });
 
   it('K9: a failed discover shows an error + Retry, never the empty state, and Retry recovers', async () => {
+    // Spec 226: the failure must be auth-dead (403) for this path —
+    // a transient 500 would be retried automatically and the error
+    // would never render for the manual Retry to recover from.
     fetchMock
-      .mockResolvedValueOnce(jsonResponse({ error: 'boom' }, 500))
+      .mockResolvedValueOnce(jsonResponse({ error: 'boom' }, 403))
       .mockResolvedValueOnce(
         jsonResponse({
           accountId: sarahAccount.id,
@@ -220,9 +230,14 @@ describe('Add Page edges', () => {
       "Couldn't load pages from this Facebook account."
     );
     expect(screen.queryByTestId('no-discovered-pages-state')).toBeNull();
+    // Spec 226: an auth-dead 403 is tried exactly once — retrying a
+    // dead token cannot help.
+    expect(discoverCallCount()).toBe(1);
     fireEvent.click(screen.getByTestId('discover-retry-btn'));
     await screen.findByTestId('discovered-pages-list');
     expect(screen.queryByTestId('discover-error-state')).toBeNull();
+    // The manual Retry re-runs discover once more.
+    expect(discoverCallCount()).toBe(2);
   });
 
   it('R14/K9: a truncated discover warns instead of presenting a partial list as complete', async () => {
