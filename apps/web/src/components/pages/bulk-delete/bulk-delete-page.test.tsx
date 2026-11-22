@@ -421,4 +421,73 @@ describe('BulkDeletePage', () => {
     fireEvent.click(screen.getByLabelText('Clear selection'));
     expect(screen.queryByText(/items selected/)).not.toBeInTheDocument();
   });
+
+  it('picker lists stay bounded with many accounts and pages (spec 219)', async () => {
+    const manyAccounts = {
+      accounts: Array.from({ length: 17 }, (_, i) => ({
+        id: `00000000-0000-4000-8000-0000000000${String(i + 1).padStart(2, '0')}`,
+        fbAccountId: `fb-acc-${i + 1}`,
+        displayName: `Account ${i + 1}`,
+        profilePictureUrl: null,
+        gender: null,
+        accountLink: null,
+        status: 'active',
+        tokenExpiresAt: null,
+        connectedPagesCount: 1,
+        connectedPages: [],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      })),
+      total: 17,
+    };
+    const manyPagesDiscover = {
+      ...discoverResponse,
+      pages: Array.from({ length: 12 }, (_, i) => ({
+        fbPageId: `10${i + 1}`,
+        pageName: `Page ${i + 1}`,
+        profilePictureUrl: null,
+        category: null,
+        currentFollowers: 100,
+        followersCount: 100,
+        tasks: [],
+        isImported: false,
+      })),
+      total: 12,
+    };
+    apiGet.mockImplementation(async (path: string) => {
+      if (path.includes('/pages/discover')) return manyPagesDiscover;
+      if (path.includes('/bulk-delete/content')) {
+        return { items: candidates(25), paging: { after: null } };
+      }
+      return manyAccounts;
+    });
+
+    renderPage();
+    await tick();
+
+    // All 17 accounts render — the list scrolls, it does not page.
+    expect(screen.getByText('Account 17')).toBeInTheDocument();
+    const accountsList = screen.getByTestId('bulk-delete-accounts-list');
+    expect(accountsList.classList.contains('max-h-72')).toBe(true);
+    expect(accountsList.classList.contains('overflow-y-auto')).toBe(true);
+
+    // Step 2: the pages list is bounded the same way.
+    fireEvent.click(screen.getByText('Account 1'));
+    fireEvent.click(screen.getByRole('button', { name: /Continue \(1 account\)/ }));
+    await tick();
+    expect(screen.getByText('Page 12')).toBeInTheDocument();
+    const pagesList = screen.getByTestId('bulk-delete-pages-list');
+    expect(pagesList.classList.contains('max-h-72')).toBe(true);
+    expect(pagesList.classList.contains('overflow-y-auto')).toBe(true);
+  });
+
+  it('a short picker list keeps the max cap but gets no fixed height (spec 219)', async () => {
+    renderPage();
+    await tick();
+    // Default fixture: one selectable account. The cap is a max, not a
+    // fixed height — the list stays content-sized, with no dead space.
+    const accountsList = screen.getByTestId('bulk-delete-accounts-list');
+    expect(accountsList.classList.contains('max-h-72')).toBe(true);
+    expect(accountsList.classList.contains('h-72')).toBe(false);
+  });
 });

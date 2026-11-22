@@ -9,6 +9,9 @@
  * - The wizard itself walks end to end in a real browser: accounts
  *   → pages → preview, with the preview grid rendering.
  *
+ * Spec 219: with many accounts/pages the picker lists stay bounded
+ * (max-h-72, ~6 rows) — the step never grows unboundedly tall.
+ *
  * Data comes from page.route fixtures registered AFTER
  * installApiFixtures (Playwright matches routes in reverse
  * registration order, so the bulk-delete fixtures win over the
@@ -147,6 +150,84 @@ async function walkToPreview(page: Page) {
   await expect(page.getByText('Smart Filter')).toBeVisible();
 }
 
+function manyAccounts(count: number) {
+  return Array.from({ length: count }, (_, i) => ({
+    ...CONNECTED_ACCOUNT,
+    id: `33333333-3333-4333-8333-3333333333${String(i + 1).padStart(2, '0')}`,
+    fbAccountId: `100000000000${String(100 + i)}`,
+    displayName: `E2E Account ${i + 1}`,
+  }));
+}
+
+function manyPages(count: number) {
+  return Array.from({ length: count }, (_, i) => ({
+    fbPageId: `100000000000${String(200 + i)}`,
+    pageName: `E2E Page ${i + 1}`,
+    profilePictureUrl: null,
+    category: 'Business Page',
+    currentFollowers: 100,
+    followersCount: 100,
+    tasks: [],
+    isImported: false,
+  }));
+}
+
+/** Like setup(), but with 17 accounts and 12 pages for the first one. */
+async function setupMany(page: Page) {
+  const accounts = manyAccounts(17);
+  const state = createFixtureState({ accounts });
+  await installApiFixtures(page, state);
+  await installBulkDeleteFixtures(page);
+  // Discover for the first many-account returns 12 pages.
+  await page.route(
+    `**/api/tenant/${TENANT.subdomain}/accounts/${accounts[0].id}/pages/discover`,
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          accountId: accounts[0].id,
+          accountDisplayName: accounts[0].displayName,
+          pages: manyPages(12),
+          total: 12,
+        }),
+      })
+  );
+  await useUserSession(page.context());
+  await page.goto(`/tenant/${TENANT.subdomain}/bulk-delete-posts`);
+  await expect(page.getByRole('heading', { name: 'Select accounts' })).toBeVisible();
+}
+
+/** With 17 accounts and 12 pages, both picker lists measure ≤ 288px. */
+async function expectBoundedPickers(page: Page) {
+  // Step 1: all 17 accounts render, but the list is capped at max-h-72.
+  await expect(page.getByText('E2E Account 17', { exact: true })).toBeVisible();
+  const accountsList = page.getByTestId('bulk-delete-accounts-list');
+  const accountsBox = await accountsList.boundingBox();
+  expect(accountsBox).not.toBeNull();
+  expect(accountsBox!.height).toBeLessThanOrEqual(289);
+  // The footer stays reachable without the page blowing out.
+  await expectWithinViewport(
+    page.getByRole('button', { name: 'Continue', exact: true }),
+    page
+  );
+
+  // Step 2: 12 pages render, bounded the same way.
+  await page.getByText('E2E Account 1', { exact: true }).click();
+  await page.getByRole('button', { name: 'Continue (1 account)' }).click();
+  await expect(page.getByRole('heading', { name: 'Select pages' })).toBeVisible();
+  await expect(page.getByText('E2E Page 12')).toBeVisible();
+  const pagesList = page.getByTestId('bulk-delete-pages-list');
+  const pagesBox = await pagesList.boundingBox();
+  expect(pagesBox).not.toBeNull();
+  expect(pagesBox!.height).toBeLessThanOrEqual(289);
+  await expectWithinViewport(
+    page.getByRole('button', { name: 'Continue', exact: true }),
+    page
+  );
+  await expectNoDocumentOverflow(page);
+}
+
 test.describe('bulk delete wizard layout', () => {
   test('desktop 1280px: wizard is a centred constrained column, preview step wide', async ({
     page,
@@ -213,5 +294,21 @@ test.describe('bulk delete wizard layout', () => {
     // overflowing it, and the page never scrolls horizontally.
     await expectWithinViewport(page.getByText('12 items selected'), page);
     await expectNoDocumentOverflow(page);
+  });
+
+  test('desktop 1280px: picker lists stay bounded with many accounts and pages (spec 219)', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupMany(page);
+    await expectBoundedPickers(page);
+  });
+
+  test('phone 390px: picker lists stay bounded with many accounts and pages (spec 219)', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setupMany(page);
+    await expectBoundedPickers(page);
   });
 });
