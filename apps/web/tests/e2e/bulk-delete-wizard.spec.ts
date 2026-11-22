@@ -12,6 +12,12 @@
  * Spec 219: with many accounts/pages the picker lists stay bounded
  * (max-h-72, ~6 rows) — the step never grows unboundedly tall.
  *
+ * Spec 226: a transient discover failure (429/5xx) is retried per
+ * account inside the dialog, and Step 2 waits out the retries — so
+ * a burst 429 no longer shows the "check the account connection"
+ * error for an account whose connection is fine. A transient that
+ * never clears says Facebook was busy, never the connection message.
+ *
  * Data comes from page.route fixtures registered AFTER
  * installApiFixtures (Playwright matches routes in reverse
  * registration order, so the bulk-delete fixtures win over the
@@ -172,6 +178,98 @@ function manyPages(count: number) {
   }));
 }
 
+function discoverPayload(
+  accountId: string,
+  accountName: string,
+  pages: { fbPageId: string; pageName: string }[],
+) {
+  return {
+    accountId,
+    accountDisplayName: accountName,
+    pages: pages.map((p) => ({
+      fbPageId: p.fbPageId,
+      pageName: p.pageName,
+      profilePictureUrl: null,
+      category: 'Business Page',
+      currentFollowers: 100,
+      followersCount: 100,
+      tasks: [],
+      isImported: false,
+    })),
+    total: pages.length,
+    truncated: false,
+    partial: false,
+    droppedCount: 0,
+  };
+}
+
+/**
+ * Spec 226 setup: two accounts. Account A always discovers fine;
+ * account B is scripted — 'flaky-429' fails the first discover
+ * with a 429 (retryAfterSeconds 1) then succeeds, 'always-500'
+ * fails every discover with a 500. Returns B's discover call
+ * count, read after the assertions.
+ */
+async function setupDiscoverRetry(
+  page: Page,
+  discoverB: 'flaky-429' | 'always-500',
+) {
+  const accounts = manyAccounts(2);
+  const state = createFixtureState({ accounts });
+  await installApiFixtures(page, state);
+  await installBulkDeleteFixtures(page);
+  let discoverBCalls = 0;
+  await page.route(
+    `**/api/tenant/${TENANT.subdomain}/accounts/${accounts[0].id}/pages/discover`,
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(
+          discoverPayload(accounts[0].id, 'E2E Account 1', [
+            { fbPageId: '100000000000201', pageName: 'E2E Page A1' },
+          ]),
+        ),
+      }),
+  );
+  await page.route(
+    `**/api/tenant/${TENANT.subdomain}/accounts/${accounts[1].id}/pages/discover`,
+    (route) => {
+      discoverBCalls += 1;
+      if (discoverB === 'flaky-429' && discoverBCalls === 1) {
+        return route.fulfill({
+          status: 429,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            error: 'Too many requests. Please wait 1 seconds before trying again.',
+            retryAfterSeconds: 1,
+          }),
+        });
+      }
+      if (discoverB === 'always-500') {
+        return route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Failed to query Facebook Graph API' }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(
+          discoverPayload(accounts[1].id, 'E2E Account 2', [
+            { fbPageId: '100000000000202', pageName: 'E2E Page B1' },
+          ]),
+        ),
+      });
+    },
+  );
+  await useUserSession(page.context());
+  await page.goto(`/tenant/${TENANT.subdomain}/bulk-delete-posts`);
+  await expect(page.getByRole('heading', { name: 'Select accounts' })).toBeVisible();
+  return { getDiscoverBCalls: () => discoverBCalls };
+}
+
 /** Like setup(), but with 17 accounts and 12 pages for the first one. */
 async function setupMany(page: Page) {
   const accounts = manyAccounts(17);
@@ -310,5 +408,52 @@ test.describe('bulk delete wizard layout', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await setupMany(page);
     await expectBoundedPickers(page);
+  });
+
+  test('a transient discover 429 recovers on retry, and Step 2 waits it out (spec 226)', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const { getDiscoverBCalls } = await setupDiscoverRetry(page, 'flaky-429');
+    await page.getByText('E2E Account 1', { exact: true }).click();
+    await page.getByText('E2E Account 2', { exact: true }).click();
+    await page.getByRole('button', { name: 'Continue (2 accounts)' }).click();
+    // The gate holds through the retry: the Continue button is still
+    // finding pages and Step 2 is not rendered yet — the fast
+    // account's pages must not appear before the retrying account
+    // settles. ('Finding Facebook Pages...' is NOT the signal here:
+    // it only renders on a manual retry from Step 2, while the
+    // Continue flow discovers with Step 1 still showing and the
+    // button reading 'Finding pages...'.)
+    await expect(page.getByRole('button', { name: 'Finding pages...' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Select pages' })).toHaveCount(0);
+    // Once the retry lands, Step 2 shows both accounts' pages with
+    // no error and no manual Retry clicked.
+    await expect(page.getByRole('heading', { name: 'Select pages' })).toBeVisible();
+    await expect(page.getByText('E2E Page A1')).toBeVisible();
+    await expect(page.getByText('E2E Page B1')).toBeVisible();
+    await expect(
+      page.getByText(/Facebook was busy|check the account connection/),
+    ).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Retry finding pages/ })).toHaveCount(0);
+    // Exactly two discover calls for B: the failed attempt + retry.
+    expect(getDiscoverBCalls()).toBe(2);
+  });
+
+  test('a discover 500 that never clears ends in the busy message, not the connection message (spec 226)', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const { getDiscoverBCalls } = await setupDiscoverRetry(page, 'always-500');
+    await page.getByText('E2E Account 1', { exact: true }).click();
+    await page.getByText('E2E Account 2', { exact: true }).click();
+    await page.getByRole('button', { name: 'Continue (2 accounts)' }).click();
+    await expect(page.getByRole('heading', { name: 'Select pages' })).toBeVisible();
+    await expect(page.getByText('E2E Page A1')).toBeVisible();
+    await expect(page.getByText(/Facebook was busy/)).toBeVisible();
+    await expect(page.getByText(/check the account connection/)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Retry finding pages/ })).toBeVisible();
+    // Exactly three attempts: initial + two retries, then it stops.
+    expect(getDiscoverBCalls()).toBe(3);
   });
 });

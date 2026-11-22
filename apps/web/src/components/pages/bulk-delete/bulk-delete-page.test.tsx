@@ -13,6 +13,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BulkDeletePage } from './bulk-delete-page';
+import { ApiError } from '@/lib/api/errors';
 
 const ACCOUNT_ID = '11111111-1111-4111-8111-111111111111';
 const EXPIRED_ID = '22222222-2222-4222-8222-222222222222';
@@ -86,11 +87,22 @@ const apiMocks = vi.hoisted(() => ({
 }));
 const apiGet = apiMocks.get;
 const apiPost = apiMocks.post;
+const reportErrorMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/lib/api', () => ({
-  api: apiMocks,
-  buildTenantApiPath: (subdomain: string, path: string) => `/api/tenant/${subdomain}${path}`,
-  isApiError: () => false,
+// The component classifies discover errors through the real
+// `isApiError` (spec 226: a mocked `() => false` would make every
+// error unretryable), while `api` itself stays mocked.
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    api: apiMocks,
+    buildTenantApiPath: (subdomain: string, path: string) => `/api/tenant/${subdomain}${path}`,
+  };
+});
+
+vi.mock('@/lib/report-error', () => ({
+  reportError: reportErrorMock,
 }));
 
 vi.mock('@/components/shared/ui/toast', () => ({
@@ -489,5 +501,102 @@ describe('BulkDeletePage', () => {
     const accountsList = screen.getByTestId('bulk-delete-accounts-list');
     expect(accountsList.classList.contains('max-h-72')).toBe(true);
     expect(accountsList.classList.contains('h-72')).toBe(false);
+  });
+
+  it('a discover 429 recovers on retry and shows the pages, with no error (spec 226)', async () => {
+    let discoverCalls = 0;
+    apiGet.mockImplementation(async (path: string) => {
+      if (path.includes('/pages/discover')) {
+        discoverCalls += 1;
+        if (discoverCalls === 1) {
+          throw new ApiError(
+            'http',
+            'Too many requests. Please wait 1 seconds before trying again.',
+            { status: 429, cause: { retryAfterSeconds: 1 } },
+          );
+        }
+        return discoverResponse;
+      }
+      if (path.includes('/bulk-delete/content')) {
+        return { items: candidates(25), paging: { after: null } };
+      }
+      return accountsResponse;
+    });
+
+    renderPage();
+    await tick();
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByRole('button', { name: /Continue \(1 account\)/ }));
+    // The 429's Retry-After is 1s: advance the clock through the
+    // retry, then flush — Step 2 renders only after the retry
+    // settles, with the recovered pages.
+    await tick(1000);
+    await tick();
+    expect(screen.getByText('Morning Recipes')).toBeInTheDocument();
+    expect(screen.queryByText(/check the account connection/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Facebook was busy/)).not.toBeInTheDocument();
+    expect(discoverCalls).toBe(2);
+    // A transient that recovers is not an error: nothing reported.
+    expect(reportErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('an auth-dead 403 is not retried and keeps the connection message (spec 226)', async () => {
+    let discoverCalls = 0;
+    apiGet.mockImplementation(async (path: string) => {
+      if (path.includes('/pages/discover')) {
+        discoverCalls += 1;
+        throw new ApiError('http', 'Forbidden', { status: 403 });
+      }
+      if (path.includes('/bulk-delete/content')) {
+        return { items: candidates(25), paging: { after: null } };
+      }
+      return accountsResponse;
+    });
+
+    renderPage();
+    await tick();
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByRole('button', { name: /Continue \(1 account\)/ }));
+    await tick();
+    // A dead token is tried exactly once — retrying it cannot help.
+    expect(discoverCalls).toBe(1);
+    expect(screen.getByText(/check the account connection/)).toBeInTheDocument();
+    expect(screen.queryByText(/Facebook was busy/)).not.toBeInTheDocument();
+    expect(screen.getByText('Retry finding pages →')).toBeInTheDocument();
+    expect(reportErrorMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a 429 that never clears ends in the busy message, not the connection message (spec 226)', async () => {
+    let discoverCalls = 0;
+    apiGet.mockImplementation(async (path: string) => {
+      if (path.includes('/pages/discover')) {
+        discoverCalls += 1;
+        throw new ApiError(
+          'http',
+          'Too many requests. Please wait 1 seconds before trying again.',
+          { status: 429, cause: { retryAfterSeconds: 1 } },
+        );
+      }
+      if (path.includes('/bulk-delete/content')) {
+        return { items: candidates(25), paging: { after: null } };
+      }
+      return accountsResponse;
+    });
+
+    renderPage();
+    await tick();
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByRole('button', { name: /Continue \(1 account\)/ }));
+    // Exactly three attempts: initial + two retries, each waiting
+    // out the 1s Retry-After — then it stops.
+    await tick(2000);
+    await tick();
+    expect(discoverCalls).toBe(3);
+    expect(screen.getByText(/Facebook was busy/)).toBeInTheDocument();
+    expect(screen.queryByText(/check the account connection/)).not.toBeInTheDocument();
+    // The manual Retry is still there, and the failure is reported
+    // once — not once per attempt.
+    expect(screen.getByText('Retry finding pages →')).toBeInTheDocument();
+    expect(reportErrorMock).toHaveBeenCalledTimes(1);
   });
 });

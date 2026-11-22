@@ -35,7 +35,11 @@
  * above the flow. A page whose preview failed is named in the
  * preview step with a plain reason and a retry; when every page
  * fails, the previous preview is cleared so stale results never
- * show under the generic error.
+ * show under the generic error. Discovery retries transient
+ * failures per account (spec 226): a 429/5xx/timeout is tried up
+ * to 3 times before the account fails, and a transient that
+ * never clears says Facebook was busy — never that the
+ * connection is dead.
  *
  * Nothing here writes to the database. The account token is resolved
  * server-side by the API routes (exchanged for the page token via
@@ -60,6 +64,7 @@ import {
   type BulkDeleteSort,
 } from '@fbuploadpro/contracts';
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
+import { reportError } from '@/lib/report-error';
 import { ListFacebookAccountsResponseSchema } from '@/lib/api/schemas/accounts';
 import { Button } from '@/components/shared/ui/button';
 import { Checkbox } from '@/components/shared/ui/checkbox';
@@ -166,6 +171,96 @@ function typeLabel(type: BulkDeleteContentType): string {
   if (type === 'posts') return 'Posts';
   if (type === 'photos') return 'Photos';
   return 'Reels';
+}
+
+/**
+ * Spec 226 — retry policy for the Bulk Delete discover call.
+ *
+ * Continuing from Step 1 fires one live Graph discover per
+ * account in parallel, and the tail of the burst 429s on the
+ * route's 60/min per-workspace cap (or trips a Graph timeout,
+ * which surfaces as a 5xx). Those failures are transient: the
+ * account and its connection are fine, so the discover tries
+ * again instead of failing the account at once. Auth-dead
+ * failures (400/403, and the 401 that arrives as a
+ * session-expired error) are never retried — retrying a dead
+ * token cannot help.
+ *
+ * Retryable: an HTTP 429 or 5xx, or a network failure (the
+ * request never produced a response — offline, DNS, or a
+ * dropped connection). Everything else fails at once, as before.
+ */
+const DISCOVER_MAX_ATTEMPTS = 3;
+const DISCOVER_RETRY_BASE_DELAY_MS = 500;
+const DISCOVER_MAX_RETRY_AFTER_SECONDS = 60;
+
+function isRetryableDiscoverError(error: unknown): boolean {
+  if (!isApiError(error)) return false;
+  if (error.kind === 'network') return true;
+  if (error.kind === 'http') {
+    const status = error.status;
+    return status === 429 || (typeof status === 'number' && status >= 500);
+  }
+  return false;
+}
+
+/**
+ * The seconds the server says to wait before retrying a 429, read
+ * off the error body's `retryAfterSeconds` (the typed client keeps
+ * the parsed error body as the error's cause). Capped at the
+ * limiter's 60s window; null when the value is absent or unusable,
+ * in which case the caller falls back to exponential backoff.
+ */
+function discoverRetryAfterMs(error: unknown): number | null {
+  if (!isApiError(error) || error.status !== 429) return null;
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause !== null && typeof cause === 'object' && 'retryAfterSeconds' in cause) {
+    const seconds = (cause as { retryAfterSeconds: unknown }).retryAfterSeconds;
+    if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0) {
+      return Math.min(seconds, DISCOVER_MAX_RETRY_AFTER_SECONDS) * 1000;
+    }
+  }
+  return null;
+}
+
+function discoverRetryDelayMs(error: unknown, attempt: number): number {
+  const retryAfter = discoverRetryAfterMs(error);
+  if (retryAfter !== null) return retryAfter;
+  // 500ms, then 1s: transient Graph failures clear fast, and a
+  // longer wait would only stall the step for nothing.
+  return DISCOVER_RETRY_BASE_DELAY_MS * 2 ** attempt;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Discovers one account's pages live from Facebook. Spec 226: a
+ * transient failure is retried (with backoff) inside this call,
+ * so the caller — `handleDiscoverPages`, which awaits every
+ * account before Step 2 renders — waits out the retries too.
+ * Only the final failure is reported, and the call throws it so
+ * the caller can classify it: a transient that recovers is not
+ * an error, and one report per account keeps the log meaningful.
+ */
+async function discoverAccountPages(subdomain: string, accountId: string) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < DISCOVER_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await api.get(
+        buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover`),
+        { schema: DiscoverPagesResponseSchema },
+      );
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 < DISCOVER_MAX_ATTEMPTS && isRetryableDiscoverError(error)) {
+        await sleep(discoverRetryDelayMs(error, attempt));
+        continue;
+      }
+      break;
+    }
+  }
+  reportError(lastError, { source: 'bulk-delete-discover' });
+  throw lastError;
 }
 
 export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
@@ -296,22 +391,29 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
     try {
       // Live discovery: the selected accounts' pages are discovered
       // live from Facebook each time — nothing is imported or saved.
-      // One account failing never blocks the others.
+      // One account failing never blocks the others. Spec 226: the
+      // retries live inside `discoverAccountPages`, so this wait
+      // covers them too — Step 2 never renders while an account is
+      // still trying.
       const settled = await Promise.allSettled(
-        selectedAccounts.map((account) =>
-          api.get(buildTenantApiPath(subdomain, `/accounts/${account.id}/pages/discover`), {
-            schema: DiscoverPagesResponseSchema,
-          }),
-        ),
+        selectedAccounts.map((account) => discoverAccountPages(subdomain, account.id)),
       );
       const seenPageIds = new Set<string>();
       const nextGroups: BulkDeleteDiscoveredGroup[] = [];
       const failures: string[] = [];
+      const transientFailures: string[] = [];
+      const authFailures: string[] = [];
       settled.forEach((result, index) => {
         const account = selectedAccounts[index];
         if (!account) return;
         if (result.status === 'rejected') {
+          const reason: unknown = result.reason;
           failures.push(account.displayName);
+          if (isRetryableDiscoverError(reason)) {
+            transientFailures.push(account.displayName);
+          } else {
+            authFailures.push(account.displayName);
+          }
           nextGroups.push({ accountId: account.id, accountName: account.displayName, pages: [] });
           return;
         }
@@ -345,8 +447,15 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
       setSelectedContentIds([]);
       candidatesRef.current.clear();
       if (failures.length > 0) {
+        // The step has one shared error message (unlike ADU's
+        // per-account messages): when every failure is transient
+        // the busy message is honest, but any auth-dead failure
+        // means at least one account genuinely needs a connection
+        // check, so the connection message wins.
         setErrorMessage(
-          "Couldn't load pages from this Facebook account. Please check the account connection and try again.",
+          transientFailures.length > 0 && authFailures.length === 0
+            ? "Facebook was busy and couldn't load this account's pages. Please try again."
+            : "Couldn't load pages from this Facebook account. Please check the account connection and try again.",
         );
       }
     } catch (error) {
