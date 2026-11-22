@@ -88,7 +88,7 @@ setup_cluster() {
   chmod 700 "$WORKDIR"
   su "$PG_USER" -c "$PG_BIN/initdb -D '$WORKDIR/data' -U postgres --auth=trust" >/dev/null
   su "$PG_USER" -c "$PG_BIN/pg_ctl -D '$WORKDIR/data' -o \"-k '$WORKDIR/sock' -p $PORT -c listen_addresses=''\" -l '$WORKDIR/log' start" >/dev/null
-  su "$PG_USER" -c "$PG_BIN/createdb -h '$WORKDIR/sock' -p $PORT testdowngradeidx" >/dev/null
+  su "$PG_USER" -c "$PG_BIN/createdb -U postgres -h '$WORKDIR/sock' -p $PORT testdowngradeidx" >/dev/null
 }
 
 stop_cluster() {
@@ -105,7 +105,7 @@ cleanup() {
 trap cleanup EXIT
 
 PSQL() {
-  su "$PG_USER" -c "$PG_BIN/psql -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -t -A"
+  su "$PG_USER" -c "$PG_BIN/psql -U postgres -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -t -A"
 }
 
 # Minimal subscription_payments: only the columns the tick scan and
@@ -235,8 +235,8 @@ BEFORE_USERS="$(cut -d'|' -f1 "$PLAN_DIR/before.scan")"
 echo "before-scan returns the expected 5 due downgrades, earliest first"
 
 # --- (3) apply the forward migration (twice: idempotent) ------------------
-su "$PG_USER" -c "$PG_BIN/psql -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -f '$STAGE/forward.sql'"
-su "$PG_USER" -c "$PG_BIN/psql -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -f '$STAGE/forward.sql'"
+su "$PG_USER" -c "$PG_BIN/psql -U postgres -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -f '$STAGE/forward.sql'"
+su "$PG_USER" -c "$PG_BIN/psql -U postgres -h '$WORKDIR/sock' -p $PORT -d testdowngradeidx -v ON_ERROR_STOP=1 -q -f '$STAGE/forward.sql'"
 echo "forward migration applied twice (idempotent)"
 
 PSQL <<'SQL'
