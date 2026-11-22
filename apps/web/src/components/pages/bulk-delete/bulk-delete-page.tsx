@@ -894,7 +894,10 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
                       : 'Select All'}
                   </button>
                 </div>
-                <div className="flex flex-col gap-1">
+                <div
+                  data-testid="bulk-delete-accounts-list"
+                  className="flex max-h-72 flex-col gap-1 overflow-y-auto overscroll-contain pr-2"
+                >
                   {filteredActiveAccounts.length === 0 && (
                     <div className="p-8 text-center text-ink-sub">No accounts match your search</div>
                   )}
@@ -1072,7 +1075,10 @@ export function BulkDeletePage({ subdomain }: Readonly<{ subdomain: string }>) {
                       : 'Select All'}
                   </button>
                 </div>
-                <div>
+                <div
+                  data-testid="bulk-delete-pages-list"
+                  className="max-h-72 overflow-y-auto overscroll-contain pr-2"
+                >
                   {filteredGroups.map((group) => (
                     <div key={group.accountId} className="mb-4">
                       <div className="mb-2 px-1 text-metadata font-semibold tracking-body text-ink-sub">
