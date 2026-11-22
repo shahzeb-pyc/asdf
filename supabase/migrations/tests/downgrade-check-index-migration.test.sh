@@ -87,7 +87,11 @@ setup_cluster() {
   chown -R "$PG_USER:$PG_USER" "$WORKDIR"
   chmod 700 "$WORKDIR"
   su "$PG_USER" -c "$PG_BIN/initdb -D '$WORKDIR/data' -U postgres --auth=trust" >/dev/null
-  su "$PG_USER" -c "$PG_BIN/pg_ctl -D '$WORKDIR/data' -o \"-k '$WORKDIR/sock' -p $PORT -c listen_addresses=''\" -l '$WORKDIR/log' start" >/dev/null
+  su "$PG_USER" -c "$PG_BIN/pg_ctl -D '$WORKDIR/data' -o \"-k '$WORKDIR/sock' -p $PORT -c listen_addresses='' -c jit=off\" -l '$WORKDIR/log' start" >/dev/null
+  # jit=off: the PGDG PostgreSQL 16 build's llvmjit.so needs
+  # libLLVM.so.19.1, which is NOT installed in this sandbox — a
+  # JIT-eligible query would fail loading it. JIT is irrelevant to
+  # index plans, so it stays off for the whole rig.
   su "$PG_USER" -c "$PG_BIN/createdb -U postgres -h '$WORKDIR/sock' -p $PORT testdowngradeidx" >/dev/null
 }
 
@@ -203,7 +207,11 @@ $SEED_NOISE
 SQL
 
 # Snapshot the table shape before the migration (index-only proof).
-PSQL -c "select column_name || ':' || data_type from information_schema.columns where table_schema='public' and table_name='subscription_payments' order by ordinal_position;" > "$PLAN_DIR/columns-before.txt"
+# (Heredoc, like every other PSQL call: PSQL forwards no arguments,
+# so a -c flag here would silently produce an empty file.)
+PSQL <<SQL > "$PLAN_DIR/columns-before.txt"
+select column_name || ':' || data_type from information_schema.columns where table_schema='public' and table_name='subscription_payments' order by ordinal_position;
+SQL
 
 # --- (1) BEFORE: the scan must sort ---------------------------------------
 echo "=== EXPLAIN BEFORE (no new index) ==="
@@ -258,7 +266,9 @@ end $$;
 SQL
 
 # Index-only: the table's columns must be byte-identical.
-PSQL -c "select column_name || ':' || data_type from information_schema.columns where table_schema='public' and table_name='subscription_payments' order by ordinal_position;" > "$PLAN_DIR/columns-after.txt"
+PSQL <<SQL > "$PLAN_DIR/columns-after.txt"
+select column_name || ':' || data_type from information_schema.columns where table_schema='public' and table_name='subscription_payments' order by ordinal_position;
+SQL
 diff "$PLAN_DIR/columns-before.txt" "$PLAN_DIR/columns-after.txt" || {
   echo "INDEX-ONLY CHECK FAILED: subscription_payments columns changed"
   exit 1
