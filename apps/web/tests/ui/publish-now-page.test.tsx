@@ -119,6 +119,25 @@ let mockAccountsData: typeof ACCOUNTS = ACCOUNTS;
 let mockDiscoverFailAccountIds: string[] = [];
 let mockDiscoverPages: typeof DISCOVERED = DISCOVERED;
 let mockAccountsShouldFail = false;
+// Spec 226: per-account discover failures with an ApiError shape
+// (kind/status/cause, as the typed client throws). `errorStatuses`
+// fail every discover call for the account with that status;
+// `transient` fails the first `times` calls with `status` (and,
+// for a 429, `retryAfterSeconds`), then succeeds. Lets a test
+// prove a transient failure recovers by retry instead of erroring,
+// and that a failure that never clears is tried exactly
+// DISCOVER_MAX_ATTEMPTS times.
+let mockDiscoverErrorStatuses: Record<string, number> = {};
+let mockDiscoverTransient: Record<
+  string,
+  { status: number; times: number; retryAfterSeconds?: number }
+> = {};
+let mockDiscoverCallCounts: Record<string, number> = {};
+
+/** How many times the page called discover for one account. */
+function discoverCallCount(accountId: string): number {
+  return mockDiscoverCallCounts[accountId] ?? 0;
+}
 
 const DISCOVER_PATH = '/pages/discover';
 
@@ -161,6 +180,16 @@ vi.mock('@/lib/api', () => ({
       }
       if (path.includes(DISCOVER_PATH)) {
         const accountId = path.split('/accounts/')[1]?.split('/')[0] ?? '';
+        mockDiscoverCallCounts[accountId] =
+          (mockDiscoverCallCounts[accountId] ?? 0) + 1;
+        const fail = mockDiscoverTransient[accountId];
+        if (fail && (mockDiscoverCallCounts[accountId] ?? 0) <= fail.times) {
+          throw mockApiError(fail.status, fail.retryAfterSeconds);
+        }
+        const errorStatus = mockDiscoverErrorStatuses[accountId];
+        if (errorStatus) {
+          throw mockApiError(errorStatus);
+        }
         if (mockDiscoverFailAccountIds.includes(accountId)) {
           throw new Error('discover failed');
         }
@@ -182,8 +211,36 @@ vi.mock('@/lib/api', () => ({
   },
   buildTenantApiPath: (subdomain: string, path: string) =>
     `/api/tenant/${subdomain}${path}`,
-  isApiError: () => false,
+  // The component's `isApiError` is `instanceof ApiError`; the mock
+  // answers structurally on the same shape `apiError` builds below,
+  // so the retry classification under test sees the real taxonomy.
+  isApiError: (error: unknown) =>
+    error instanceof Error &&
+    (error as { name?: unknown }).name === 'ApiError' &&
+    typeof (error as { kind?: unknown }).kind === 'string',
 }));
+
+/**
+ * A typed-client-shaped discover failure: an Error carrying the
+ * ApiError fields the component's retry classification reads
+ * (`kind`, `status`, and the server body's `retryAfterSeconds` on
+ * the error's cause). The `mock` prefix is what lets the hoisted
+ * `vi.mock` factory above reference it.
+ */
+function mockApiError(status: number, retryAfterSeconds?: number): Error {
+  const error = new Error(
+    status === 429
+      ? 'Too many requests. Please wait 1 seconds before trying again.'
+      : `Request failed with status ${status}`
+  ) as Error & { kind: string; status: number; cause?: unknown };
+  error.name = 'ApiError';
+  error.kind = 'http';
+  error.status = status;
+  if (retryAfterSeconds !== undefined) {
+    error.cause = { retryAfterSeconds };
+  }
+  return error;
+}
 
 function renderPage() {
   const client = new QueryClient({
@@ -916,6 +973,140 @@ describe('PublishNowPage wizard', () => {
       expect(screen.getByText('Sunnie James')).toBeTruthy();
     } finally {
       mockDiscoverFailAccountIds = [];
+    }
+  });
+
+  it('a 429 on one account retries and loads its pages instead of erroring (spec 226)', async () => {
+    const flakyAccount = '22222222-2222-4222-a222-222222222222';
+    mockDiscoverTransient = {
+      [flakyAccount]: { status: 429, times: 1, retryAfterSeconds: 1 },
+    };
+    mockDiscoverCallCounts = {};
+    try {
+      renderPage();
+      await waitFor(
+        () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+        { timeout: 5000 }
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
+      fireEvent.click(
+        screen.getByRole('button', { name: /Continue \(2 accounts\)/ })
+      );
+      // The 429'd account recovers on retry: its pages join the
+      // list, no error renders, and the step still advances — one
+      // failure never blocks the others.
+      await waitFor(
+        () => expect(screen.getByText(/2 pages found/)).toBeTruthy(),
+        { timeout: 5000 }
+      );
+      expect(screen.getByText('Maddie Lippy')).toBeTruthy();
+      expect(screen.getByText('Sunnie James')).toBeTruthy();
+      expect(
+        screen.queryByText(/Couldn't load pages from this Facebook account/)
+      ).toBeNull();
+      expect(screen.queryByText(/Facebook was busy/)).toBeNull();
+      // Exactly two discover calls: the failed first attempt + the retry.
+      expect(discoverCallCount(flakyAccount)).toBe(2);
+    } finally {
+      mockDiscoverTransient = {};
+    }
+  });
+
+  it('a transient 500 on one account retries and loads its pages (spec 226)', async () => {
+    const flakyAccount = '22222222-2222-4222-a222-222222222222';
+    mockDiscoverTransient = {
+      [flakyAccount]: { status: 500, times: 1 },
+    };
+    mockDiscoverCallCounts = {};
+    try {
+      renderPage();
+      await waitFor(
+        () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+        { timeout: 5000 }
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
+      fireEvent.click(
+        screen.getByRole('button', { name: /Continue \(2 accounts\)/ })
+      );
+      await waitFor(
+        () => expect(screen.getByText(/2 pages found/)).toBeTruthy(),
+        { timeout: 5000 }
+      );
+      expect(screen.getByText('Maddie Lippy')).toBeTruthy();
+      expect(
+        screen.queryByText(/Couldn't load pages from this Facebook account/)
+      ).toBeNull();
+      expect(screen.queryByText(/Facebook was busy/)).toBeNull();
+      expect(discoverCallCount(flakyAccount)).toBe(2);
+    } finally {
+      mockDiscoverTransient = {};
+    }
+  });
+
+  it('an auth-dead 403 is not retried and keeps the connection message (spec 226)', async () => {
+    const deadAccount = '22222222-2222-4222-a222-222222222222';
+    mockDiscoverErrorStatuses = { [deadAccount]: 403 };
+    mockDiscoverCallCounts = {};
+    try {
+      renderPage();
+      await waitFor(
+        () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+        { timeout: 5000 }
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
+      fireEvent.click(
+        screen.getByRole('button', { name: /Continue \(2 accounts\)/ })
+      );
+      await waitFor(
+        () =>
+          expect(
+            screen.getByText(/Couldn't load pages from this Facebook account/)
+          ).toBeTruthy(),
+        { timeout: 5000 }
+      );
+      // A dead token is tried exactly once — retrying it cannot help.
+      expect(discoverCallCount(deadAccount)).toBe(1);
+      // The healthy account's pages stay listed.
+      expect(screen.getByText('Maddie Lippy')).toBeTruthy();
+      expect(screen.getByText('Sunnie James')).toBeTruthy();
+    } finally {
+      mockDiscoverErrorStatuses = {};
+    }
+  });
+
+  it('a 429 that never clears ends in the busy message, not the connection message (spec 226)', async () => {
+    const busyAccount = '22222222-2222-4222-a222-222222222222';
+    mockDiscoverTransient = {
+      [busyAccount]: { status: 429, times: 5, retryAfterSeconds: 1 },
+    };
+    mockDiscoverCallCounts = {};
+    try {
+      renderPage();
+      await waitFor(
+        () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+        { timeout: 5000 }
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
+      fireEvent.click(
+        screen.getByRole('button', { name: /Continue \(2 accounts\)/ })
+      );
+      await waitFor(
+        () =>
+          expect(
+            screen.getByText(/Facebook was busy and couldn't load/)
+          ).toBeTruthy(),
+        { timeout: 8000 }
+      );
+      expect(
+        screen.queryByText(/Couldn't load pages from this Facebook account/)
+      ).toBeNull();
+      // The healthy account's pages stay listed.
+      expect(screen.getByText('Maddie Lippy')).toBeTruthy();
+      expect(screen.getByText('Sunnie James')).toBeTruthy();
+      // Exactly three attempts: initial + two retries, then it stops.
+      expect(discoverCallCount(busyAccount)).toBe(3);
+    } finally {
+      mockDiscoverTransient = {};
     }
   });
 
