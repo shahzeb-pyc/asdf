@@ -996,41 +996,120 @@ const EMPTY_DISCOVER_ENTRY: DiscoverEntry = {
 };
 
 /**
+ * Spec 222 — retry policy for the ADU Add Page discover call.
+ *
+ * A big select-all fires one live Graph discover per account in
+ * parallel, and the tail of the burst 429s on the route's 60/min
+ * per-workspace cap (or trips a Graph timeout, which surfaces as
+ * a 5xx). Those failures are transient: the account and its
+ * connection are fine, so the discover tries again instead of
+ * failing the account at once. Auth-dead failures (400/403, and
+ * the 401 that arrives as a session-expired error) are never
+ * retried — retrying a dead token cannot help, and the account is
+ * marked 'error' server-side for those.
+ *
+ * Retryable: an HTTP 429 or 5xx, or a network failure (the request
+ * never produced a response — offline, DNS, or a dropped
+ * connection). Everything else fails at once, as before.
+ */
+const DISCOVER_MAX_ATTEMPTS = 3;
+const DISCOVER_RETRY_BASE_DELAY_MS = 500;
+const DISCOVER_MAX_RETRY_AFTER_SECONDS = 60;
+
+function isRetryableDiscoverError(error: unknown): boolean {
+  if (!isApiError(error)) return false;
+  if (error.kind === 'network') return true;
+  if (error.kind === 'http') {
+    const status = error.status;
+    return status === 429 || (typeof status === 'number' && status >= 500);
+  }
+  return false;
+}
+
+/**
+ * The seconds the server says to wait before retrying a 429, read
+ * off the error body's `retryAfterSeconds` (the typed client keeps
+ * the parsed error body as the error's cause). Capped at the
+ * limiter's 60s window; null when the value is absent or unusable,
+ * in which case the caller falls back to exponential backoff.
+ */
+function discoverRetryAfterMs(error: unknown): number | null {
+  if (!isApiError(error) || error.status !== 429) return null;
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause !== null && typeof cause === 'object' && 'retryAfterSeconds' in cause) {
+    const seconds = (cause as { retryAfterSeconds: unknown }).retryAfterSeconds;
+    if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0) {
+      return Math.min(seconds, DISCOVER_MAX_RETRY_AFTER_SECONDS) * 1000;
+    }
+  }
+  return null;
+}
+
+function discoverRetryDelayMs(error: unknown, attempt: number): number {
+  const retryAfter = discoverRetryAfterMs(error);
+  if (retryAfter !== null) return retryAfter;
+  // 500ms, then 1s: transient Graph/DB failures clear fast, and a
+  // longer wait would only stall the step for nothing.
+  return DISCOVER_RETRY_BASE_DELAY_MS * 2 ** attempt;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
  * Loads one account's pages live from Facebook, through the same
  * typed discover call the Pages picker uses. Mirrors
  * `executeDiscoverPages` in `components/pages/add-page-modal.tsx`:
  * a capped/partial fetch is still a success (its warnings travel
  * with it); a failure is reported, never silent, and carries the
  * user-facing message.
+ *
+ * Spec 222: a transient failure is retried (with backoff) inside
+ * this call, so the caller — `discoverAccounts`, which awaits
+ * every account before step 2 renders — waits out the retries
+ * too. Only the final failure is reported: a transient that
+ * recovers is not an error, and one report per account keeps the
+ * log meaningful. A transient that never clears gets its own
+ * message (Facebook was busy), never the connection message —
+ * that one is kept for auth-dead failures only.
  */
 async function executeDiscoverPages(subdomain: string, accountId: string) {
-  try {
-    const data = await api.get(
-      buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover?section=adu`),
-      { schema: DiscoverPagesResponseSchema },
-    );
-    return {
-      success: true as const,
-      pages: data.pages,
-      truncated: data.truncated,
-      partial: data.partial,
-      droppedCount: data.droppedCount,
-      error: null,
-    };
-  } catch (error) {
-    reportError(error, { source: 'adu-add-page-discover' });
-    return {
-      success: false as const,
-      pages: [] as DiscoveredPage[],
-      truncated: false,
-      partial: false,
-      droppedCount: 0,
-      error:
-        isApiError(error) && error.kind === 'http'
-          ? "Couldn't load pages from this Facebook account. Please check the account connection and try again."
-          : 'An error occurred while loading pages from Facebook. Please try again.',
-    };
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < DISCOVER_MAX_ATTEMPTS; attempt++) {
+    try {
+      const data = await api.get(
+        buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover?section=adu`),
+        { schema: DiscoverPagesResponseSchema },
+      );
+      return {
+        success: true as const,
+        pages: data.pages,
+        truncated: data.truncated,
+        partial: data.partial,
+        droppedCount: data.droppedCount,
+        error: null,
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 < DISCOVER_MAX_ATTEMPTS && isRetryableDiscoverError(error)) {
+        await sleep(discoverRetryDelayMs(error, attempt));
+        continue;
+      }
+      break;
+    }
   }
+  reportError(lastError, { source: 'adu-add-page-discover' });
+  return {
+    success: false as const,
+    pages: [] as DiscoveredPage[],
+    truncated: false,
+    partial: false,
+    droppedCount: 0,
+    error: isRetryableDiscoverError(lastError)
+      ? "Facebook was busy and couldn't load this account's pages. Please try again."
+      : isApiError(lastError) && lastError.kind === 'http'
+        ? "Couldn't load pages from this Facebook account. Please check the account connection and try again."
+        : 'An error occurred while loading pages from Facebook. Please try again.',
+  };
 }
 
 /**
@@ -1212,7 +1291,9 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   // each account's previous result in place. The promise resolves only
   // after every account has settled (the Publish Now pattern): the
   // pages step must never render on a partial list, and one account's
-  // failure never touches another account's pages.
+  // failure never touches another account's pages. Spec 222: the
+  // retries live inside `executeDiscoverPages`, so the wait covers
+  // them too — step 2 never renders while an account is still trying.
   const discoverAccounts = async (accountIds: string[]) => {
     for (const accountId of accountIds) {
       setDiscoverByAccount((prev) => ({ ...prev, [accountId]: { ...EMPTY_DISCOVER_ENTRY } }));

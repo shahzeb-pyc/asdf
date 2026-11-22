@@ -97,7 +97,15 @@ function mockFetch(
   // pages view, and a 429 must surface as that account's error only.
   delays: Record<string, number> = {},
   errorStatuses: Record<string, number> = {},
+  // Spec 222: per-account transient failures — the first `times`
+  // discover calls for the account fail with `status` (and, for a
+  // 429, `retryAfterSeconds`), then succeed. Lets a test prove a
+  // transient failure recovers by retry instead of erroring, and
+  // that a failure that never clears is tried exactly
+  // DISCOVER_MAX_ATTEMPTS times.
+  transient: Record<string, { status: number; times: number; retryAfterSeconds?: number }> = {},
 ) {
+  const callCounts: Record<string, number> = {};
   return vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     if (init?.method === 'POST') {
       if (init.body) postBodies.push(JSON.parse(init.body));
@@ -105,8 +113,17 @@ function mockFetch(
     }
     if (url.includes('/pages/discover')) {
       const accountId = url.split('/accounts/')[1]?.split('/')[0];
+      if (accountId) callCounts[accountId] = (callCounts[accountId] ?? 0) + 1;
       const delay = accountId ? delays[accountId] ?? 0 : 0;
       if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      const fail = accountId ? transient[accountId] : undefined;
+      if (fail && (callCounts[accountId] ?? 0) <= fail.times) {
+        return jsonResponse(
+          { error: 'Too many requests. Please wait 60 seconds before trying again.', retryAfterSeconds: fail.retryAfterSeconds ?? 1 },
+          false,
+          fail.status,
+        );
+      }
       const errorStatus = accountId ? errorStatuses[accountId] : undefined;
       if (errorStatus) {
         return jsonResponse({ error: 'Too many requests. Please wait 60 seconds before trying again.', retryAfterSeconds: 60 }, false, errorStatus);
@@ -124,14 +141,23 @@ async function openDialog(
   discover: Record<string, unknown> = DISCOVER,
   delays: Record<string, number> = {},
   errorStatuses: Record<string, number> = {},
+  transient: Record<string, { status: number; times: number; retryAfterSeconds?: number }> = {},
 ) {
   const onCreated = vi.fn();
-  vi.stubGlobal('fetch', mockFetch(postBodies, discover, delays, errorStatuses));
+  const fetchMock = mockFetch(postBodies, discover, delays, errorStatuses, transient);
+  vi.stubGlobal('fetch', fetchMock);
   render(
     <AddPageDialog subdomain="testws" open onOpenChange={() => {}} onCreated={onCreated} />
   );
   await screen.findByText('Shahzeb Malik');
-  return { onCreated };
+  return { onCreated, fetchMock };
+}
+
+/** How many times the dialog called discover for one account. */
+function discoverCallCount(fetchMock: ReturnType<typeof mockFetch>, accountId: string) {
+  return fetchMock.mock.calls.filter(
+    ([url]) => typeof url === 'string' && url.includes(`/accounts/${accountId}/pages/discover`),
+  ).length;
 }
 
 function checkboxState(testId: string) {
@@ -376,19 +402,85 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect(screen.getByText('Example Page')).toBeTruthy();
   });
 
-  it('a 429 on one account shows its error without dropping the other account (spec 210)', async () => {
-    const { onCreated } = await openDialog([], DISCOVER, {}, { '22222222-2222-4222-8222-222222222222': 429 });
+  it('a 429 on one account retries and loads its pages instead of erroring (spec 222)', async () => {
+    const { onCreated, fetchMock } = await openDialog([], DISCOVER, {}, {}, { '22222222-2222-4222-8222-222222222222': { status: 429, times: 1, retryAfterSeconds: 1 } });
     expect(onCreated).toBeDefined();
     fireEvent.click(screen.getByText('Shahzeb Malik'));
     fireEvent.click(screen.getByText('Example Account'));
     fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
-    // The 429'd account renders its error + Retry; the healthy
-    // account's pages are listed, and the step still advances — one
-    // failure never blocks the others.
+    // The 429'd account recovers on retry: its pages join the list,
+    // no error renders, and the step still advances — one failure
+    // never blocks the others.
+    await screen.findByTestId('adu-pages-list', {}, { timeout: 5000 });
+    expect(screen.getByText('Example Page')).toBeTruthy();
+    expect(screen.getByText('Ellie Blossom')).toBeTruthy();
+    expect(screen.queryByTestId('adu-discover-error-22222222-2222-4222-8222-222222222222')).toBeNull();
+    expect(screen.getByText('7 pages found')).toBeTruthy();
+    // Exactly two discover calls: the failed first attempt + the retry.
+    expect(discoverCallCount(fetchMock, '22222222-2222-4222-8222-222222222222')).toBe(2);
+  });
+
+  it('a transient 500 on one account retries and loads its pages (spec 222)', async () => {
+    const { onCreated, fetchMock } = await openDialog([], DISCOVER, {}, {}, { '22222222-2222-4222-8222-222222222222': { status: 500, times: 1 } });
+    expect(onCreated).toBeDefined();
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByText('Example Account'));
+    fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
+    await screen.findByTestId('adu-pages-list', {}, { timeout: 5000 });
+    expect(screen.getByText('Example Page')).toBeTruthy();
+    expect(screen.queryByTestId('adu-discover-error-22222222-2222-4222-8222-222222222222')).toBeNull();
+    expect(discoverCallCount(fetchMock, '22222222-2222-4222-8222-222222222222')).toBe(2);
+  });
+
+  it('an auth-dead 403 is not retried and keeps the connection message (spec 222)', async () => {
+    const { onCreated, fetchMock } = await openDialog([], DISCOVER, {}, { '22222222-2222-4222-8222-222222222222': 403 });
+    expect(onCreated).toBeDefined();
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByText('Example Account'));
+    fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
     await screen.findByTestId('adu-discover-error-22222222-2222-4222-8222-222222222222');
     expect(screen.getByText(/Example Account: Couldn't load pages/)).toBeTruthy();
+    // A dead token is tried exactly once — retrying it cannot help.
+    expect(discoverCallCount(fetchMock, '22222222-2222-4222-8222-222222222222')).toBe(1);
+    expect(screen.getByText('Janhvi Kapoor Lovers')).toBeTruthy();
+  });
+
+  it('a 429 that never clears ends in the busy message, not the connection message (spec 222)', async () => {
+    const { onCreated, fetchMock } = await openDialog([], DISCOVER, {}, {}, { '22222222-2222-4222-8222-222222222222': { status: 429, times: 5, retryAfterSeconds: 1 } });
+    expect(onCreated).toBeDefined();
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByText('Example Account'));
+    fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
+    await screen.findByTestId('adu-discover-error-22222222-2222-4222-8222-222222222222', {}, { timeout: 5000 });
+    expect(screen.getByText(/Example Account: Facebook was busy/)).toBeTruthy();
+    expect(screen.queryByText(/check the account connection/)).toBeNull();
+    // The manual Retry is still there, and the healthy account's
+    // pages stay listed.
+    expect(screen.getByTestId('adu-discover-retry-22222222-2222-4222-8222-222222222222')).toBeTruthy();
+    expect(screen.getByText('Janhvi Kapoor Lovers')).toBeTruthy();
+    // Exactly three attempts: initial + two retries, then it stops.
+    expect(discoverCallCount(fetchMock, '22222222-2222-4222-8222-222222222222')).toBe(3);
+  });
+
+  it('step 2 does not render while a retry is still in flight (spec 222)', async () => {
+    const { onCreated } = await openDialog([], DISCOVER, {}, {}, { '22222222-2222-4222-8222-222222222222': { status: 429, times: 1, retryAfterSeconds: 2 } });
+    expect(onCreated).toBeDefined();
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByText('Example Account'));
+    fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
+    // The gate holds through the retry: still on step 1, Next
+    // disabled with its spinner, and no pages list yet — the fast
+    // account's pages must not appear before the retrying account
+    // settles, or Select All would miss them.
+    expect(screen.getByText('Step 1 of 4: Select Accounts')).toBeTruthy();
+    expect(screen.queryByTestId('adu-pages-list')).toBeNull();
+    expect(screen.queryByText('Ellie Blossom')).toBeNull();
+    expect((screen.getByTestId('adu-accounts-next-btn') as HTMLButtonElement).disabled).toBe(true);
+    // Once the retry lands, step 2 renders with both accounts.
+    await screen.findByTestId('adu-pages-list', {}, { timeout: 5000 });
+    expect(screen.getByText('Step 2 of 4: Select Pages')).toBeTruthy();
     expect(screen.getByText('Ellie Blossom')).toBeTruthy();
-    expect(screen.getByText('5 pages found')).toBeTruthy();
+    expect(screen.getByText('Example Page')).toBeTruthy();
   });
 
   it('step 4 submits the existing shape for pages from the selected account', async () => {
