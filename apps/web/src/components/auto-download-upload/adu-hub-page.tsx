@@ -1675,7 +1675,7 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                   </div>
                 </div>
               ) : null}
-              <div className="mt-2 flex flex-col gap-2">
+              <div data-testid="adu-add-page-sources-list" className="mt-2 flex max-h-85 flex-col gap-2 overflow-y-auto">
                 {selectedRows.map((row) => (
                   <div key={row.key} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
                     <span className="min-w-0 flex-1 truncate">{row.pageName}</span>
