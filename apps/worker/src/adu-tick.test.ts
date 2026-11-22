@@ -9,6 +9,8 @@
  *   page, not stop at the first.
  * - Intake dedupe (23505) continues without throwing; a config with
  *   nothing downloadable and nothing busy completes.
+ * - Spec 225: the intake config load projects only the 5 columns the
+ *   loop reads; a row carrying only those columns still mints its job.
  * - A job already carrying a Graph post id settles published without
  *   calling the publisher; an auth failure marks the account expired.
  * - Retention deletes only settled jobs older than 90 days.
@@ -47,8 +49,8 @@ class FakeBuilder {
     private readonly handler: (table: string, ops: Op[], payload?: unknown) => unknown,
   ) {}
 
-  select() {
-    this.ops.push({ kind: 'select', args: [] });
+  select(cols?: string, opts?: Record<string, unknown>) {
+    this.ops.push({ kind: 'select', args: [cols, opts] });
     return this;
   }
 
@@ -269,6 +271,75 @@ describe('runAduTick', () => {
     expect(configCalls.length).toBe(2);
     expect(configCalls[1]!.ops.find((o) => o.kind === 'gt')?.args[1]).toBe(
       `c${String(ADU_TICK_PAGE_SIZE - 1).padStart(4, '0')}`,
+    );
+  });
+
+  it('spec 225: intake mints a job from config rows carrying only the 5 projected columns', async () => {
+    // The intake config load projects exactly the columns the loop
+    // reads (id, destination_id, timezone, posts_per_day,
+    // posting_times). The mocked rows carry ONLY those 5 columns, so
+    // a dropped needed column fails this test: the loop would skip
+    // the config (bad/missing timezone, no posting_times match) or
+    // throw, and no job would be minted.
+    const slimConfig = {
+      id: 'c1',
+      destination_id: 'dest-1',
+      timezone: 'UTC',
+      posts_per_day: 1,
+      posting_times: ['09:00'],
+    };
+    const db = makeDb((table, ops) => {
+      if (
+        table === 'adu_configs' &&
+        ops.some((o) => o.kind === 'eq' && o.args[0] === 'status' && o.args[1] === 'active')
+      ) {
+        return { data: [slimConfig], error: null };
+      }
+      if (table === 'adu_configs') return { data: [], error: null };
+      if (
+        table === 'adu_reels' &&
+        ops.some((o) => o.kind === 'eq' && o.args[1] === 'download_failed')
+      ) {
+        return { count: 0, data: [], error: null };
+      }
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'update')) {
+        return { data: [{ id: 'reel-1' }], error: null };
+      }
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return {
+          data: { id: 'reel-1', media_url: 'https://example.invalid/r.mp4' },
+          error: null,
+        };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'insert')) {
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      // Spec 174 3A: the intake gate reads the destination row; the
+      // fake answers it as the active ADU copy.
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { id: 'dest-1', section: 'adu', status: 'active' }, error: null };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(null),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(result.intakeJobsCreated).toBe(1);
+    // The intake load must project exactly the 5 columns the loop
+    // reads — never `*`, never a wider list.
+    const intakeCall = db.calls.find(
+      (c) =>
+        c.table === 'adu_configs' &&
+        c.ops.some((o) => o.kind === 'eq' && o.args[0] === 'status' && o.args[1] === 'active'),
+    );
+    expect(intakeCall?.ops.find((o) => o.kind === 'select')?.args[0]).toBe(
+      'id, destination_id, timezone, posts_per_day, posting_times',
     );
   });
 

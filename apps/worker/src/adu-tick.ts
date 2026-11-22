@@ -54,13 +54,10 @@ export interface AduTickResult {
 
 interface AduConfigRow {
   id: string;
-  workspace_id: string;
   destination_id: string;
   timezone: string;
   posts_per_day: number;
   posting_times: string[];
-  status: string;
-  sync_status: string;
 }
 
 function isMissingTable(error: { code?: string } | null | undefined): boolean {
@@ -787,7 +784,7 @@ export async function runAduTick(options: {
     for (;;) {
       let configQuery = supabase
         .from('adu_configs')
-        .select('*')
+        .select('id, destination_id, timezone, posts_per_day, posting_times')
         .eq('status', 'active')
         .eq('sync_status', 'synced')
         .order('id', { ascending: true })
