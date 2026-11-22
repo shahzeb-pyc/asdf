@@ -182,7 +182,7 @@ cat /tmp/adu-claim-idx-before.plan
 # A plain Sort node (not Incremental Sort, which only sorts the
 # equal-created_at group the index stream already delivers in
 # order) proves the old index cannot serve the ORDER BY.
-grep -Eq '^ *Sort ' /tmp/adu-claim-idx-before.plan || {
+grep -Eq '(^ *|-> *)Sort +[(]cost' /tmp/adu-claim-idx-before.plan || {
   echo "NEGATIVE CONTROL FAILED: before-plan has no plain Sort node — the old index already serves the order?"
   exit 1
 }
@@ -228,9 +228,9 @@ declare
   v_def text;
   v_count int;
 begin
-  select pg_get_indexdef(i.indexrelid) into v_def
-    from pg_indexes i
-   where i.schemaname = 'public' and i.indexname = 'idx_adu_reels_config_status_created_at';
+  select indexdef into v_def
+    from pg_indexes
+   where schemaname = 'public' and indexname = 'idx_adu_reels_config_status_created_at';
   if v_def is null then raise exception 'index idx_adu_reels_config_status_created_at missing after migration'; end if;
   if v_def not like '%(config_id, status, created_at)%' then raise exception 'index definition wrong: %', v_def; end if;
   select count(*) into v_count from pg_indexes
@@ -253,7 +253,7 @@ grep -q "idx_adu_reels_config_status_created_at" /tmp/adu-claim-idx-after.plan |
 # A plain Sort node would mean the whole 50k-row set is still
 # sorted; an Incremental Sort over the index-ordered stream is
 # expected and fine (it only sorts rows sharing one created_at).
-grep -Eq '^ *Sort ' /tmp/adu-claim-idx-after.plan && {
+grep -Eq '(^ *|-> *)Sort +[(]cost' /tmp/adu-claim-idx-after.plan && {
   echo "AFTER PLAN FAILED: plan still sorts the full set despite the new index"
   cat /tmp/adu-claim-idx-after.plan
   exit 1
@@ -271,8 +271,9 @@ select 'nontiksecdef:' || p.prosecdef::text || ':svc=' || has_function_privilege
 SQL
 cat /tmp/adu-claim-idx-after.claims
 for key in tiktok nontiktok tikdef nontikdef tiksecdef nontiksecdef; do
-  before="$(grep "^$key:" /tmp/adu-claim-idx-before.claims)"
-  after="$(grep "^$key:" /tmp/adu-claim-idx-after.claims)"
+  # psql aligned output pads each value with a leading space.
+  before="$(grep -E "^ *$key:" /tmp/adu-claim-idx-before.claims)"
+  after="$(grep -E "^ *$key:" /tmp/adu-claim-idx-after.claims)"
   if [ "$before" != "$after" ]; then
     echo "PARITY FAILED for $key:"
     echo "  before: $before"
@@ -289,7 +290,7 @@ SQL
 PSQL_A <<SQL > /tmp/adu-claim-idx-rollback.plan
 $EXPLAIN_LOOKUP
 SQL
-grep -Eq '^ *Sort ' /tmp/adu-claim-idx-rollback.plan || {
+grep -Eq '(^ *|-> *)Sort +[(]cost' /tmp/adu-claim-idx-rollback.plan || {
   echo "ROLLBACK CHECK FAILED: after dropping the index the plan still does not sort"
   exit 1
 }
