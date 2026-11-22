@@ -18,6 +18,9 @@
  * merges as "Not affected" and keeps serving the old deploy with
  * the old secret value, so flipping this flag off requires a real
  * file change (like this comment) to force a fresh build.
+ *
+ * Enabled 2026-11-22 during the Supabase Disk IO outage (redeploy
+ * trigger so the MAINTENANCE_MODE=true secret takes effect).
  */
 export function isMaintenanceMode(): boolean {
   return process.env.MAINTENANCE_MODE === 'true';
