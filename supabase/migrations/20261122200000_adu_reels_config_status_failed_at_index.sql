@@ -1,0 +1,22 @@
+-- Failed-count check index (spec 229, DB optimisation plan item 5).
+--
+-- Inside every download claim (`claim_tiktok_buffer_downloads` and
+-- `claim_non_tiktok_buffer_downloads`, from
+-- 20261117183523_adu_discovery_rank.sql), the database counts, per
+-- source, how many downloads failed in the last 24 hours — and
+-- skips the source if there are more than 10:
+--   where r.config_id = c.id
+--     and r.status = 'download_failed'
+--     and r.download_failed_at >= now() - interval '24 hours'
+-- The existing index `idx_adu_reels_config_download_failed_at` is
+-- on (config_id, download_failed_at): it serves the source and the
+-- time range but not the status, so the status is filtered by hand
+-- afterwards. Spec 223's index (config_id, status, created_at)
+-- does not serve this count either (its third column is the
+-- creation time, not the failure time).
+--
+-- Index-only: neither claim RPC is redefined, no grants change,
+-- and the failed-count rule (> 10 failures in 24 hours skips the
+-- source) is unchanged.
+create index if not exists idx_adu_reels_config_status_failed_at
+  on public.adu_reels (config_id, status, download_failed_at);
