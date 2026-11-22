@@ -320,6 +320,40 @@ describe('AduHubPage Add Page dialog 4-step flow', () => {
     expect(inputs).toHaveLength(3);
   });
 
+  it('step 3: sources list is capped and scrolls internally with many pages picked', async () => {
+    const user = userEvent.setup();
+    // 12 pages on one account: the uncapped list ran ~736px tall and
+    // grew the dialog (spec 221); the cap (max-h-85, same as steps
+    // 1–2) keeps it at 340px and scrolls inside itself.
+    const manyPages = Array.from({ length: 12 }, (_, i) => ({
+      id: `page-${i + 1}`,
+      account_id: '11111111-1111-4111-8111-111111111111',
+      external_destination_id: `${100 + i}`,
+      name: `Page ${i + 1}`,
+      avatar_url: null,
+      status: 'connected',
+      metadata: null,
+    }));
+    installFetch({ ...OPTIONS_BODY, pages: manyPages });
+    await openDialog(user);
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Select All' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('Step 3 of 4: Sources')).toBeTruthy();
+    const dialog = screen.getByRole('dialog');
+    const list = within(dialog).getByTestId('adu-add-page-sources-list');
+    expect(list.className).toContain('max-h-85');
+    expect(list.className).toContain('overflow-y-auto');
+    // Every picked page still renders its row: name, platform
+    // picker, and username input.
+    for (let i = 1; i <= 12; i++) {
+      expect(within(dialog).getByText(`Page ${i}`)).toBeTruthy();
+    }
+    expect(within(dialog).getAllByRole('combobox')).toHaveLength(12);
+    expect(within(dialog).getAllByPlaceholderText('@username')).toHaveLength(12);
+  });
+
   it('step 3: Next is gated until every selected page has a source; step 4: Start Automation is then enabled', async () => {
     const user = userEvent.setup();
     await openDialog(user);
