@@ -36,6 +36,9 @@ export function MaintenanceContent({
         <p className="text-body leading-body text-ink-sub">
           We&apos;ll be back in an hour.
         </p>
+        <p className="text-body leading-body text-ink-sub">
+          Your scheduled posts will keep publishing.
+        </p>
       </Card>
     </main>
   );
