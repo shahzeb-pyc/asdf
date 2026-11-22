@@ -212,6 +212,27 @@ describe('overview groups', () => {
     expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.getByText('108')).toBeInTheDocument();
   });
+
+  it('shows Posted tiles in the hub-card green, Pending dark, Failed red (spec 220)', async () => {
+    installFetch();
+    renderDetail();
+    expect(await screen.findByRole('heading', { name: 'Total Statistics' })).toBeInTheDocument();
+    const tileValue = (label: string) => {
+      const card = screen.getByText(label).closest('div');
+      return card?.querySelector('.text-xxxl');
+    };
+    // Spec 220: gold (text-primary) was unreadable on the white card.
+    expect(tileValue('Total Posted')).toHaveClass('text-signal-operational');
+    expect(tileValue('Total Posted')).not.toHaveClass('text-primary');
+    expect(tileValue('Posted Today')).toHaveClass('text-signal-operational');
+    expect(tileValue('Posted Today')).not.toHaveClass('text-primary');
+    // Every other tile is exactly as before.
+    expect(tileValue('Total Pending')).toHaveClass('text-ink');
+    expect(tileValue('Pending Today')).toHaveClass('text-ink');
+    expect(tileValue('Followers Gained')).toHaveClass('text-ink');
+    expect(tileValue('Failed Posts')).toHaveClass('text-destructive');
+    expect(tileValue('Failed Today')).toHaveClass('text-destructive');
+  });
 });
 
 describe('tabs', () => {

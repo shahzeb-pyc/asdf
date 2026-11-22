@@ -750,13 +750,13 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
 
   const totalTiles = [
     { label: 'Total Pending', sub: 'Reels ready for posting', value: config.pendingCount, valueClass: 'text-ink' },
-    { label: 'Total Posted', sub: 'Successful automations', value: config.postedCount, valueClass: 'text-primary' },
+    { label: 'Total Posted', sub: 'Successful automations', value: config.postedCount, valueClass: 'text-signal-operational' },
     { label: 'Failed Posts', sub: 'Require attention', value: config.failedCount, valueClass: 'text-destructive' },
     { label: 'Followers Gained', sub: 'Net growth since page onboarding', value: netGained, valueClass: 'text-ink' },
   ];
   const todayTiles = [
     { label: 'Pending Today', sub: 'Remaining scheduled posts today', value: config.pendingToday, valueClass: 'text-ink' },
-    { label: 'Posted Today', sub: 'Published since page local midnight', value: config.postedToday, valueClass: 'text-primary' },
+    { label: 'Posted Today', sub: 'Published since page local midnight', value: config.postedToday, valueClass: 'text-signal-operational' },
     { label: 'Failed Today', sub: 'Errors since page local midnight', value: config.failedToday, valueClass: 'text-destructive' },
   ];
   const statCardClass = 'rounded-md border border-line bg-panel p-6 shadow-card';
