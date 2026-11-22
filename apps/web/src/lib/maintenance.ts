@@ -21,6 +21,10 @@
  *
  * Enabled 2026-11-22 during the Supabase Disk IO outage (redeploy
  * trigger so the MAINTENANCE_MODE=true secret takes effect).
+ *
+ * Disabled 2026-11-23 after the Supabase account move to newdb
+ * (chbtrophjeavksryvglv) completed and verified — redeploy trigger
+ * so the MAINTENANCE_MODE=false secret takes effect.
  */
 export function isMaintenanceMode(): boolean {
   return process.env.MAINTENANCE_MODE === 'true';
