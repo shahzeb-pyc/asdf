@@ -187,7 +187,7 @@ function errorText(error: unknown, fallback: string): string {
 
 /**
  * Spec 226 — retry policy for the Publish Now discover call.
- * Mirrors ADU spec 222 (PR #313): a big select-all fires one live
+ * Mirrors ADU spec 222 (PR 313): a big select-all fires one live
  * Graph discover per account in parallel, and the tail of the burst
  * 429s on the route's 60/min per-workspace cap (or trips a Graph
  * timeout, which surfaces as a 5xx). Those failures are transient:
