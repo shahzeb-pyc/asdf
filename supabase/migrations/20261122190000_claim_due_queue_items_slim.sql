@@ -33,6 +33,18 @@
 -- ranked selection are the 20261121135516 (spec 216) body verbatim.
 -- SECURITY DEFINER posture and service-role-only ACLs are unchanged.
 -- claim_publish_now_items and claim_posting_slot_item are NOT touched.
+--
+-- Indexes checked, none added: the RPC's join keys are already served
+-- (queue_items (platform, status, scheduled_time) and
+-- (destination_id, status); publish_logs (destination_id) and
+-- (destination_id, result, created_at); destinations / social_accounts /
+-- media_items PKs; destination_claim_limits PK). Candidate covering
+-- indexes — publish_logs (destination_id, created_at) INCLUDE (result)
+-- and queue_items (platform, status, scheduled_time, kind) INCLUDE
+-- (destination_id, media_item_id, media_url, publish_now_requested_at)
+-- — were built on the rig's scale seed and the plans did not use
+-- either (identical plan shape and cost with and without them), so
+-- neither is added: the cost is the gate calls, not the joins.
 -- Do NOT merge before the Supabase move completes: this migration must
 -- land on the new database (newdb), not the source being frozen.
 
@@ -158,8 +170,11 @@ BEGIN
   CREATE TEMP TABLE pg_temp.claim138_rule_usage ON COMMIT DROP AS
   WITH due_destinations AS (
     -- One row per due destination, from the spec 224 gate table above.
-    SELECT destination_id
-    FROM pg_temp.claim224_gate
+    -- (Qualified: the function's RETURNS TABLE declares an OUT
+    -- parameter named destination_id, so a bare reference here is
+    -- ambiguous in PL/pgSQL.)
+    SELECT gate.destination_id
+    FROM pg_temp.claim224_gate gate
   ),
   overrides AS (
     -- Spec 224: per-destination claim-limit overrides, computed ONCE
