@@ -77,7 +77,10 @@ setup_cluster() { # $1=workdir $2=port $3=db
   chown -R postgres:postgres "$workdir"
   chmod 700 "$workdir"
   su postgres -c "$PG_BIN/initdb -D '$workdir/data' -U postgres --auth=trust" >/dev/null
-  su postgres -c "$PG_BIN/pg_ctl -D '$workdir/data' -o \"-k '$workdir/sock' -p $port -c listen_addresses=''\" -l '$workdir/log' start" >/dev/null
+  # jit=off: the PGDG build's llvmjit.so needs libLLVM.so.19.1,
+  # which is not installed in this sandbox; JIT is irrelevant to
+  # the index plans this test asserts.
+  su postgres -c "$PG_BIN/pg_ctl -D '$workdir/data' -o \"-k '$workdir/sock' -p $port -c listen_addresses='' -c jit=off\" -l '$workdir/log' start" >/dev/null
   su postgres -c "$PG_BIN/createdb -h '$workdir/sock' -p $port $db" >/dev/null
 }
 
