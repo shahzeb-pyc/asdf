@@ -58,7 +58,7 @@ type AddStep = 'select-account' | 'select-page' | 'username';
 
 /**
  * Spec 227 — retry policy for the mirror Add dialog's discover call,
- * mapped from ADU spec 222 / PR #313 onto this dialog's `useQuery`.
+ * mapped from ADU spec 222 (PR 313) onto this dialog's `useQuery`.
  *
  * A single transient failure (a 429 from the route's 60/min
  * per-workspace cap — other traffic in the same minute — or a
