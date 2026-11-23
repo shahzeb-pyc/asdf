@@ -83,6 +83,38 @@ function renderDialog(onOpenChange = vi.fn()) {
   return { onOpenChange };
 }
 
+/** How many times the dialog called discover. */
+function discoverCallCount() {
+  return apiGetMock.mock.calls.filter(
+    ([path]) => typeof path === 'string' && path.includes('/pages/discover'),
+  ).length;
+}
+
+/**
+ * Spec 227: script the discover call to fail the first `times` calls
+ * with `status` (and, for a 429, `retryAfterSeconds`), then succeed.
+ * Lets a test prove a transient failure recovers by retry instead
+ * of erroring, and that a failure that never clears is tried exactly
+ * DISCOVER_MAX_ATTEMPTS (3) times.
+ */
+function mockDiscoverTransient(status: number, times: number, retryAfterSeconds = 1) {
+  let discoverCalls = 0;
+  apiGetMock.mockImplementation((path: string) => {
+    if (path.includes('/pages/discover')) {
+      discoverCalls += 1;
+      if (discoverCalls <= times) {
+        return Promise.reject(
+          httpError(status, 'Too many requests. Please wait 1 seconds before trying again.', {
+            cause: { error: 'Too many requests.', retryAfterSeconds },
+          })
+        );
+      }
+      return Promise.resolve({ pages: [alphaPage, betaPage] });
+    }
+    return Promise.resolve({ accounts: [activeAccount, expiredAccount] });
+  });
+}
+
 describe('AddMirrorDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -181,5 +213,87 @@ describe('AddMirrorDialog', () => {
     const banner = await screen.findByTestId('add-mirror-error');
     expect(banner.getAttribute('role')).toBe('alert');
     expect(banner.textContent).toMatch(/already reposted/);
+  });
+
+  it('a 429 once then success resolves with pages instead of erroring (spec 227)', async () => {
+    const user = userEvent.setup();
+    mockDiscoverTransient(429, 1, 1);
+    renderDialog();
+    await user.click(
+      await screen.findByTestId(`select-account-${activeAccount.id}`)
+    );
+    // The 429'd discover recovers on retry: its pages join the list
+    // and no error renders — one transient failure never blocks the
+    // dialog, with no manual Retry clicked.
+    expect(await screen.findByTestId('add-mirror-pages-list', {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByText('Alpha Page')).toBeTruthy();
+    expect(screen.getByText('Beta Bakery')).toBeTruthy();
+    expect(screen.queryByTestId('add-mirror-error')).toBeNull();
+    // Exactly two discover calls: the failed first attempt + the retry.
+    expect(discoverCallCount()).toBe(2);
+  });
+
+  it('a transient 500 once then success resolves with pages (spec 227)', async () => {
+    const user = userEvent.setup();
+    mockDiscoverTransient(500, 1);
+    renderDialog();
+    await user.click(
+      await screen.findByTestId(`select-account-${activeAccount.id}`)
+    );
+    expect(await screen.findByTestId('add-mirror-pages-list', {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByText('Alpha Page')).toBeTruthy();
+    expect(screen.queryByTestId('add-mirror-error')).toBeNull();
+    expect(discoverCallCount()).toBe(2);
+  });
+
+  it('an auth-dead 403 is not retried and keeps the connection message (spec 227)', async () => {
+    const user = userEvent.setup();
+    apiGetMock.mockImplementation((path: string) => {
+      if (path.includes('/pages/discover')) {
+        return Promise.reject(httpError(403, 'Forbidden'));
+      }
+      return Promise.resolve({ accounts: [activeAccount, expiredAccount] });
+    });
+    renderDialog();
+    await user.click(
+      await screen.findByTestId(`select-account-${activeAccount.id}`)
+    );
+    const banner = await screen.findByTestId('add-mirror-error');
+    expect(banner.textContent).toMatch(/check the account connection/);
+    // A dead token is tried exactly once — retrying it cannot help.
+    expect(discoverCallCount()).toBe(1);
+  });
+
+  it('a 429 that never clears ends in the busy message, not the connection message (spec 227)', async () => {
+    const user = userEvent.setup();
+    mockDiscoverTransient(429, 5, 1);
+    renderDialog();
+    await user.click(
+      await screen.findByTestId(`select-account-${activeAccount.id}`)
+    );
+    const banner = await screen.findByTestId('add-mirror-error', {}, { timeout: 5000 });
+    expect(banner.textContent).toMatch(/Facebook was busy/);
+    expect(banner.textContent).not.toMatch(/check the account connection/);
+    expect(screen.queryByText(/check the account connection/)).toBeNull();
+    // Exactly three attempts: initial + two retries, then it stops.
+    expect(discoverCallCount()).toBe(3);
+  });
+
+  it('the dialog stays in "Finding Facebook Pages..." through a retry (spec 227)', async () => {
+    const user = userEvent.setup();
+    mockDiscoverTransient(429, 1, 2);
+    renderDialog();
+    await user.click(
+      await screen.findByTestId(`select-account-${activeAccount.id}`)
+    );
+    // The wait covers the retry: still discovering, no pages list
+    // yet, and no error — the step must not error or render while
+    // the retry is still in flight.
+    expect(screen.getByTestId('add-mirror-discovering-state')).toBeTruthy();
+    expect(screen.queryByTestId('add-mirror-pages-list')).toBeNull();
+    expect(screen.queryByTestId('add-mirror-error')).toBeNull();
+    // Once the retry lands, the pages render.
+    expect(await screen.findByTestId('add-mirror-pages-list', {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByText('Alpha Page')).toBeTruthy();
   });
 });

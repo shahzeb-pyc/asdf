@@ -56,6 +56,67 @@ import type { DiscoveredPageItem } from '@/components/pages/add-page-helpers';
 
 type AddStep = 'select-account' | 'select-page' | 'username';
 
+/**
+ * Spec 227 — retry policy for the mirror Add dialog's discover call,
+ * mapped from ADU spec 222 (PR 313) onto this dialog's `useQuery`.
+ *
+ * A single transient failure (a 429 from the route's 60/min
+ * per-workspace cap — other traffic in the same minute — or a
+ * Graph timeout surfacing as a 5xx) used to fail the dialog at once
+ * with the wrong "check the account connection" message, even
+ * though the account's connection is fine. Those failures are
+ * transient, so the query retries them inside itself: the dialog
+ * stays in its "Finding Facebook Pages..." state through the
+ * retries, and only the final failure surfaces. Auth-dead failures
+ * (400/403, and the 401 that arrives as a session-expired error)
+ * are never retried — retrying a dead token cannot help, and the
+ * account is marked server-side for those.
+ *
+ * Retryable: an HTTP 429 or 5xx, or a network failure (the request
+ * never produced a response — offline, DNS, or a dropped
+ * connection). Everything else fails at once, as before.
+ */
+const DISCOVER_MAX_ATTEMPTS = 3;
+const DISCOVER_RETRY_BASE_DELAY_MS = 500;
+const DISCOVER_MAX_RETRY_AFTER_SECONDS = 60;
+
+function isRetryableDiscoverError(error: unknown): boolean {
+  if (!isApiError(error)) return false;
+  if (error.kind === 'network') return true;
+  if (error.kind === 'http') {
+    const status = error.status;
+    return status === 429 || (typeof status === 'number' && status >= 500);
+  }
+  return false;
+}
+
+/**
+ * The seconds the server says to wait before retrying a 429, read
+ * off the error body's `retryAfterSeconds` (the typed client keeps
+ * the parsed error body as the error's cause). Capped at the
+ * limiter's 60s window; null when the value is absent or unusable,
+ * in which case the caller falls back to exponential backoff.
+ */
+function discoverRetryAfterMs(error: unknown): number | null {
+  if (!isApiError(error) || error.status !== 429) return null;
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause !== null && typeof cause === 'object' && 'retryAfterSeconds' in cause) {
+    const seconds = (cause as { retryAfterSeconds: unknown }).retryAfterSeconds;
+    if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0) {
+      return Math.min(seconds, DISCOVER_MAX_RETRY_AFTER_SECONDS) * 1000;
+    }
+  }
+  return null;
+}
+
+function discoverRetryDelayMs(error: unknown, attemptIndex: number): number {
+  const retryAfter = discoverRetryAfterMs(error);
+  if (retryAfter !== null) return retryAfter;
+  // 500ms, then 1s: transient Graph/DB failures clear fast, and a
+  // longer wait would only stall the step for nothing.
+  return DISCOVER_RETRY_BASE_DELAY_MS * 2 ** attemptIndex;
+}
+
 export interface AddMirrorDialogProps {
   subdomain: string;
   open: boolean;
@@ -104,6 +165,14 @@ export function AddMirrorDialog({
     enabled: open,
   });
 
+  // Spec 227: the retry lives in the query itself (its `retry` /
+  // `retryDelay` options), not a refetch from the error state — so
+  // the dialog stays in its "Finding Facebook Pages..." state
+  // through the retries. Up to 3 attempts total (initial + 2
+  // retries): `failureCount` counts failures so far, so retrying
+  // while it is below MAX_ATTEMPTS - 1 stops after the third
+  // attempt. A 429 honours the server's Retry-After; other
+  // transient failures back off 500ms, then 1s.
   const discoverQuery = useQuery({
     queryKey: [...tenant.accounts.list, 'discover', accountId] as const,
     queryFn: ({ signal }) =>
@@ -112,6 +181,9 @@ export function AddMirrorDialog({
         signal,
       }),
     enabled: open && step !== 'select-account' && accountId !== null,
+    retry: (failureCount, error) =>
+      failureCount < DISCOVER_MAX_ATTEMPTS - 1 && isRetryableDiscoverError(error),
+    retryDelay: (attemptIndex, error) => discoverRetryDelayMs(error, attemptIndex),
   });
 
   const createMutation = useMutation({
@@ -225,10 +297,15 @@ export function AddMirrorDialog({
         : 'Enter the TikTok username to repost. Every new reel from this account will be posted to the page as a Facebook Reel.';
 
   // A discover failure surfaces in the same banner as submit errors,
-  // never as a bare line inside the step body.
+  // never as a bare line inside the step body. Spec 227: a transient
+  // that never clears gets its own message (Facebook was busy),
+  // never the connection message — that one is kept for auth-dead
+  // failures (and anything else non-retryable) only.
   const displayError = inlineError ??
     (discoverQuery.isError
-      ? "Couldn't load pages from this Facebook account. Please check the account connection and try again."
+      ? isRetryableDiscoverError(discoverQuery.error)
+        ? "Facebook was busy and couldn't load this account's pages. Please try again."
+        : "Couldn't load pages from this Facebook account. Please check the account connection and try again."
       : null);
 
   return (
