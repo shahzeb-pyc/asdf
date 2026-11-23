@@ -901,25 +901,23 @@ describe('POST /tiktok-mirrors/[mirrorId]/posts/[postId]/retry', () => {
     expect(publishReel).not.toHaveBeenCalled();
   });
 
-  it('publishes an Instagram-target pending post with the account token', async () => {
+  it('rejects an Instagram-target pending post with 400 (spec 237: no IG retry)', async () => {
+    // Spec 237 deleted the Instagram retry branch: an Instagram
+    // target is now an unsupported target, like Threads. This test
+    // fails on the old code, which published it via the account token.
     const { db } = fakeDb({
       mirrorRowOverride: { target_platform: 'instagram', target_external_id: 'ig_123' },
     });
     const publishInstagramReel = vi.fn().mockResolvedValue('ig_post_1');
+    const publishReel = vi.fn();
     const res = await handleRetryMirrorPost(retryRequest(), 'acme', mirrorId, postId, db, {
       publishInstagramReel,
+      publishReel,
     } as never);
-    expect(res.status).toBe(200);
-    expect((await res.json()).post.status).toBe('posted');
-    expect(publishInstagramReel).toHaveBeenCalledWith({
-      igUserId: 'ig_123',
-      accessToken: 'acct-token-plain',
-      // Mock account row carries no metadata, so it resolves as
-      // legacy (never guessed as BISU) and stays on the legacy host.
-      isBisu: false,
-      videoUrl: 'https://example.com/v1.mp4',
-      caption: 'My exact caption',
-    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('RETRY_UNSUPPORTED');
+    expect(publishInstagramReel).not.toHaveBeenCalled();
+    expect(publishReel).not.toHaveBeenCalled();
   });
 
   it('rejects an unsupported target platform with 400', async () => {

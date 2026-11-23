@@ -519,9 +519,11 @@ describe('TikTok mirror history retry button', () => {
     failed.unmount();
   });
 
-  it('shows Retry for a pending Instagram post but not for an unsupported target', async () => {
+  it('shows Retry for a pending Facebook post but not for an Instagram target', async () => {
+    // Spec 237: retry is Facebook-only now. The Instagram case fails
+    // on the old code, which showed Retry for IG targets.
     apiGetMock.mockResolvedValue(
-      retryDetailResponse({}, { targetPlatform: 'instagram' })
+      retryDetailResponse({}, { targetPlatform: 'facebook' })
     );
     const first = renderDetail();
     await openHistory();
@@ -531,7 +533,7 @@ describe('TikTok mirror history retry button', () => {
     first.unmount();
 
     apiGetMock.mockResolvedValue(
-      retryDetailResponse({}, { targetPlatform: 'threads' })
+      retryDetailResponse({}, { targetPlatform: 'instagram' })
     );
     renderDetail();
     await openHistory();

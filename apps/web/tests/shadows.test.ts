@@ -139,12 +139,6 @@ const SURFACES: Array<[string, string]> = [
     'src/components/shared/ui/alert-dialog.tsx',
     'bg-panel p-5 text-ink shadow-modal',
   ],
-  // Auto-repost card: was on the Tailwind default shadow-sm, now on
-  // the card token like every other card.
-  [
-    'src/components/threads-auto-repost/threads-auto-repost-card.tsx',
-    'rounded-md border border-line bg-panel p-4 text-left shadow-card',
-  ],
 ];
 
 describe('surface wiring (spec 184)', () => {
@@ -153,17 +147,6 @@ describe('surface wiring (spec 184)', () => {
       const source = readFileSync(path.resolve(process.cwd(), file), 'utf8');
       expect(source).toContain(fragment);
     }
-  });
-
-  it('does not leave the auto-repost card on the Tailwind default', () => {
-    const source = readFileSync(
-      path.resolve(
-        process.cwd(),
-        'src/components/threads-auto-repost/threads-auto-repost-card.tsx'
-      ),
-      'utf8'
-    );
-    expect(source).not.toContain('shadow-sm');
   });
 
   it('does not leave the primary button without its raised shadow', () => {

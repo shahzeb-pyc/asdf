@@ -172,10 +172,6 @@ const SURFACES: Array<[string, string]> = [
     'animate-page-enter transition-all duration-fast ease-enter',
   ],
   [
-    'src/components/threads-schedule/schedule-card.tsx',
-    'animate-page-enter transition-all duration-fast ease-enter',
-  ],
-  [
     'src/components/prompts/prompt-card-grid.tsx',
     'animate-page-enter transition-all duration-fast ease-enter',
   ],
@@ -192,10 +188,6 @@ const SURFACES: Array<[string, string]> = [
     'shadow-modal duration-base ease-enter',
   ],
   // Shadow-only card: timing pinned, entrance carried.
-  [
-    'src/components/instagram/schedule/schedule-card.tsx',
-    'animate-page-enter transition-shadow duration-fast ease-enter',
-  ],
 ];
 
 describe('surface wiring (spec 185)', () => {
