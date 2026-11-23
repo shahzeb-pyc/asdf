@@ -17,6 +17,9 @@
  * - Completing the same chunk twice counts once; a DLQ-marked chunk
  *   finishes the run with failed > 0, logged loudly; marking an
  *   already-done chunk failed is a no-op.
+ * - A finish that throws once is retried — on redelivery of a done
+ *   chunk, and inside the DLQ mark-failed path — and the run finishes
+ *   exactly once.
  * - Malformed messages fail validation at enqueue and at consume.
  * - A zero-row scan finishes immediately, never sticks.
  */
@@ -47,6 +50,12 @@ interface FakeDb {
   insights_run_chunks: Row[];
   /** Every update the code applied (table + patch + matched rows). */
   updates: Array<{ table: string; patch: Row; count: number }>;
+  /**
+   * One-shot transient DB failure: the next operation on this table
+   * of this kind resolves with an error instead of succeeding, then
+   * clears itself. Used to prove the finish-retry paths recover.
+   */
+  failNext: { table: string; op: 'select' | 'update' | 'insert' } | null;
 }
 
 class FakeBuilder {
@@ -133,6 +142,25 @@ class FakeBuilder {
       count: number | null;
     }) => void
   ): void {
+    // One-shot injected failure (see FakeDb.failNext): fires on the
+    // next matching operation, then clears itself.
+    const fail = this.db.failNext;
+    if (fail && fail.table === this.table) {
+      const op = this.updatePatch
+        ? 'update'
+        : this.insertRows
+          ? 'insert'
+          : 'select';
+      if (fail.op === op) {
+        this.db.failNext = null;
+        resolve({
+          data: null,
+          error: { code: 'XX000', message: 'injected transient DB failure' },
+          count: null,
+        });
+        return;
+      }
+    }
     if (this.insertRows) {
       const rows = this.insertRows;
       // The partial unique index on insights_runs (status='running')
@@ -267,6 +295,7 @@ function fakeDb(): FakeDb {
     insights_runs: [],
     insights_run_chunks: [],
     updates: [],
+    failNext: null,
   };
 }
 
@@ -647,6 +676,61 @@ describe('runInsightsFollowersChunk', () => {
     );
     expect(again.updated).toBe(0);
   });
+
+  it('a finish that throws once is retried on redelivery and the run finishes exactly once', async () => {
+    const db = fakeDb();
+    await seedDestination(db);
+    const started = await startInsightsRun(fakeClient(db) as never, 'manual', NOW);
+    expect(started!.chunks).toHaveLength(1);
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      // The finish's conditional UPDATE on insights_runs is the only
+      // update to that table in the chunk path — fail it once, so the
+      // first attempt throws after the chunk is already marked done.
+      db.failNext = { table: 'insights_runs', op: 'update' };
+      await expect(
+        runInsightsFollowersChunk(
+          fakeClient(db) as never,
+          MASTER_KEY,
+          started!.runId,
+          0,
+          0,
+          INSIGHTS_CHUNK_SIZE,
+          NOW,
+          { fetchFollowers: async () => 5000 }
+        )
+      ).rejects.toThrow('finish update failed');
+      // The chunk is done, but the run is stuck live with no finished line.
+      expect(db.insights_run_chunks[0]!.status).toBe('done');
+      expect(db.insights_runs[0]!.status).toBe('running');
+      expect(finishedLines(infoSpy)).toHaveLength(0);
+
+      // Redelivery: the chunk is already done, so no page is
+      // re-processed — but the finish is re-attempted, and the run
+      // finishes with exactly one finished line.
+      const redelivered = await runInsightsFollowersChunk(
+        fakeClient(db) as never,
+        MASTER_KEY,
+        started!.runId,
+        0,
+        0,
+        INSIGHTS_CHUNK_SIZE,
+        NOW,
+        { fetchFollowers: async () => 5000 }
+      );
+      expect(redelivered.updated).toBe(0);
+      const header = db.insights_runs[0]!;
+      expect(header.status).toBe('finished');
+      expect(header.scanned).toBe(1);
+      expect(header.updated).toBe(1);
+      expect(header.chunks_done).toBe(1);
+      expect(header.chunks_failed).toBe(0);
+      expect(finishedLines(infoSpy)).toHaveLength(1);
+      expect(finishedLines(infoSpy)[0]).toContain(`runId=${started!.runId}`);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
 });
 
 describe('markInsightsChunkFailed', () => {
@@ -696,6 +780,44 @@ describe('markInsightsChunkFailed', () => {
     await markInsightsChunkFailed(fakeClient(db) as never, started!.runId, 0, NOW);
     expect(db.insights_runs[0]!.chunks_failed).toBe(1);
     expect(db.insights_runs[0]!.chunks_done).toBe(1);
+  });
+
+  it('a finish that throws once is retried and the run still finishes with failed > 0', async () => {
+    const db = fakeDb();
+    await seedDestination(db);
+    const started = await startInsightsRun(fakeClient(db) as never, 'manual', NOW);
+    expect(started!.chunks).toHaveLength(1);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // Fail the finish's conditional UPDATE once: the retry inside
+      // markInsightsChunkFailed must recover without a redelivery
+      // (the DLQ handler acks in a finally block, so there is none).
+      db.failNext = { table: 'insights_runs', op: 'update' };
+      await markInsightsChunkFailed(
+        fakeClient(db) as never,
+        started!.runId,
+        0,
+        NOW
+      );
+      const header = db.insights_runs[0]!;
+      expect(header.status).toBe('finished');
+      expect(header.chunks_done).toBe(0);
+      expect(header.chunks_failed).toBe(1);
+      expect(header.scanned).toBe(0);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('run finished')
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('chunks_failed=1')
+      );
+      // The failed finish attempt was logged loudly on its way to the retry.
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('finish attempt 1/3'),
+        expect.anything()
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
 

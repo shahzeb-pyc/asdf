@@ -459,6 +459,12 @@ export async function runInsightsFollowersChunk(
     );
   }
   if (chunk.status === 'done' || chunk.status === 'failed') {
+    // The finish attempt after this chunk completed may have thrown
+    // (a transient DB error) — the queue redelivers, and this is the
+    // only retry path: re-attempt it. It is idempotent — the
+    // conditional UPDATE returns no row once the run is finished,
+    // so a finished run logs no second finished line.
+    await tryFinishInsightsRun(db as unknown as InsightsRunDb, runId, now);
     return ZERO_COUNTERS;
   }
 
@@ -519,6 +525,37 @@ export async function runInsightsFollowersChunk(
 }
 
 /**
+ * Finish with a bounded retry. The DLQ handler acks in a finally
+ * block, so a throw here has no redelivery — without a retry, a
+ * transient DB error on the finish would strand the run until the
+ * 2h staleness supersede. The finish itself is idempotent (the
+ * conditional UPDATE returns no row once the run is finished), so
+ * retrying cannot double-log the finished line. If every attempt
+ * fails the last error is thrown (fail loud — the DLQ handler
+ * captures it); the run then self-clears at the staleness threshold.
+ */
+async function tryFinishInsightsRunWithRetry(
+  db: InsightsRunDb,
+  runId: string,
+  now: Date,
+  attempts = 3
+): Promise<boolean> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await tryFinishInsightsRun(db, runId, now);
+    } catch (err) {
+      lastError = err;
+      console.error(
+        `[insights-run] finish attempt ${attempt}/${attempts} for run ${runId} failed; retrying:`,
+        err
+      );
+    }
+  }
+  throw lastError;
+}
+
+/**
  * DLQ path: a chunk that exhausted queue retries is marked failed
  * (only from pending/processing — an already-done chunk is a
  * no-op), then the finisher election runs so the run can finish
@@ -544,5 +581,5 @@ export async function markInsightsChunkFailed(
     );
   }
   if ((updated ?? []).length === 0) return;
-  await tryFinishInsightsRun(db, runId, now);
+  await tryFinishInsightsRunWithRetry(db, runId, now);
 }
