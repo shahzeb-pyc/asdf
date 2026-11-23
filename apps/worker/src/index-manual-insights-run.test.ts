@@ -32,7 +32,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { encryptToken } from '@fbuploadpro/contracts';
+import { encryptToken, InternalError } from '@fbuploadpro/contracts';
 import worker, { type Env, handleScheduled } from './index.js';
 
 const MASTER_KEY =
@@ -362,7 +362,7 @@ class FakeQueue {
   throwOnSend = false;
 
   async sendBatch(messages: Array<{ body: ChunkMessage }>): Promise<void> {
-    if (this.throwOnSend) throw new Error('queue down');
+    if (this.throwOnSend) throw new InternalError('queue down');
     this.sent.push(messages);
   }
 }
