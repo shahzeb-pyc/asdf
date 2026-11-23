@@ -20,6 +20,15 @@ import {
 import { captureWorkerError, type PostHogEnv } from './analytics.js';
 import { recordHeartbeat } from './heartbeat.js';
 import type { PublishQueueMessage } from './claimer.js';
+import {
+  INSIGHTS_CYCLE_DLQ_NAME,
+  INSIGHTS_CYCLE_QUEUE_NAME,
+  InsightsChunkMessageSchema,
+  markInsightsChunkFailed,
+  runInsightsFollowersChunk,
+  type InsightsChunkMessage,
+  type InsightsRunDb,
+} from './insights-run-chunks.js';
 
 // ==========================================
 // Queue consumers (spec 121 Scope 5) + DLQ consumers (Scope 6)
@@ -1123,18 +1132,125 @@ export async function handleDlqBatch(
   }
 }
 
+/**
+ * Handles one insights-cycle batch (spec 240): one chunk message per
+ * invocation (max_batch_size = 1). A malformed message throws a
+ * ValidationError — the message stays un-acked for queue retry and
+ * lands in the DLQ after 3 attempts, exactly like a malformed
+ * publish message. A chunk whose processing throws is likewise
+ * left un-acked (the queue redelivers it); a chunk for a run that
+ * is no longer live, or already done/failed, is a no-op that acks.
+ */
+async function handleInsightsCycleBatch(
+  batch: MessageBatch<InsightsChunkMessage>,
+  deps: ConsumerDeps
+): Promise<void> {
+  const now = new Date();
+  let firstFailure: unknown = null;
+  for (const message of batch.messages) {
+    try {
+      const parsed = InsightsChunkMessageSchema.safeParse(message.body);
+      if (!parsed.success) {
+        throw new ValidationError('Malformed insights chunk message body', {
+          issues: parsed.error.issues,
+        });
+      }
+      if (!deps.masterKey) {
+        throw new InternalError('TOKEN_ENCRYPTION_KEY is not configured');
+      }
+      await runInsightsFollowersChunk(
+        // The runtime db IS the full Supabase client (index.ts passes
+        // initWorkerDb through untouched); ConsumerDbClient is only
+        // the publish path's narrow view of it.
+        deps.db as unknown as InsightsRunDb,
+        deps.masterKey,
+        parsed.data.runId,
+        parsed.data.chunkIndex,
+        parsed.data.offset,
+        parsed.data.limit,
+        now
+      );
+      message.ack();
+    } catch (err) {
+      if (!isCaptured(err)) {
+        captureWorkerError(deps.env ?? {}, err, {
+          site: 'handleInsightsCycleBatch',
+          kind: 'insights_chunk_failed',
+          queue: batch.queue,
+          messageId: message.id,
+        });
+      }
+      console.error(
+        `[consumer] insights chunk message ${message.id} failed; leaving un-acked for queue retry:`,
+        err
+      );
+      if (firstFailure === null) firstFailure = err;
+    }
+  }
+  if (firstFailure !== null) throw firstFailure;
+}
+
+/**
+ * Handles one insights-cycle DLQ batch (spec 240): marks each chunk
+ * failed in the run record so the run can still finish — with
+ * chunks_failed > 0, logged loudly. A malformed message cannot name
+ * a chunk, so it is captured loudly and acked (it must not loop).
+ * Every message is acked after its attempt, like the publish DLQs.
+ */
+async function handleInsightsCycleDlqBatch(
+  batch: MessageBatch<InsightsChunkMessage>,
+  deps: DlqConsumerDeps
+): Promise<void> {
+  const now = new Date();
+  for (const message of batch.messages) {
+    try {
+      const parsed = InsightsChunkMessageSchema.safeParse(message.body);
+      if (!parsed.success) {
+        captureWorkerError(deps.env ?? {}, new Error('DLQ message with malformed body'), {
+          site: 'handleInsightsCycleDlqBatch',
+          kind: 'malformed_dlq_message',
+          queue: batch.queue,
+        });
+        console.error(`[dlq] malformed message ${message.id} on ${batch.queue}; acking`);
+      } else {
+        await markInsightsChunkFailed(
+          deps.db as unknown as InsightsRunDb,
+          parsed.data.runId,
+          parsed.data.chunkIndex,
+          now
+        );
+      }
+    } catch (err) {
+      if (!isCaptured(err)) {
+        captureWorkerError(deps.env ?? {}, err, {
+          site: 'handleInsightsCycleDlqBatch',
+          kind: 'unexpected',
+          queue: batch.queue,
+        });
+      }
+      console.error(`[dlq] unexpected error processing message ${message.id}:`, err);
+    } finally {
+      message.ack();
+    }
+  }
+}
+
 /** Dispatches a queue batch by queue name (the worker's `queue()` handler). */
 export async function handleQueueBatch(
-  batch: MessageBatch<PublishQueueMessage>,
+  batch: MessageBatch<PublishQueueMessage | InsightsChunkMessage>,
   deps: ConsumerDeps & DlqConsumerDeps
 ): Promise<void> {
   switch (batch.queue) {
     case PUBLISH_FAST_QUEUE_NAME:
     case PUBLISH_HEAVY_QUEUE_NAME:
-      return handlePublishBatch(batch, deps);
+      return handlePublishBatch(batch as MessageBatch<PublishQueueMessage>, deps);
     case PUBLISH_FAST_DLQ_NAME:
     case PUBLISH_HEAVY_DLQ_NAME:
-      return handleDlqBatch(batch, deps);
+      return handleDlqBatch(batch as MessageBatch<PublishQueueMessage>, deps);
+    case INSIGHTS_CYCLE_QUEUE_NAME:
+      return handleInsightsCycleBatch(batch as MessageBatch<InsightsChunkMessage>, deps);
+    case INSIGHTS_CYCLE_DLQ_NAME:
+      return handleInsightsCycleDlqBatch(batch as MessageBatch<InsightsChunkMessage>, deps);
     default:
       console.error(`[consumer] unknown queue "${batch.queue}"; leaving batch un-acked`);
       throw new InternalError(`Unknown queue: ${batch.queue}`);

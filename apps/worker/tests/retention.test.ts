@@ -31,19 +31,75 @@ function counts(publishLogsDeleted: number, queueItemsDeleted: number): Retentio
   };
 }
 
-/** Mock DB whose rpc() replays a scripted sequence (last entry repeats). */
-function mockDb(script: RetentionRpcResult[]): { db: RetentionDbClient; calls: RpcCall[] } {
+interface DeleteCall {
+  table: string;
+  statuses: unknown[];
+  cutoff: string;
+}
+
+/**
+ * Mock DB whose rpc() replays a scripted sequence (last entry repeats)
+ * and whose from() supports the insights-run prune delete chain over
+ * a caller-supplied insights_runs array.
+ */
+function mockDb(
+  script: RetentionRpcResult[],
+  insightsRuns: Array<Record<string, unknown>> = []
+): {
+  db: RetentionDbClient;
+  calls: RpcCall[];
+  runs: Array<Record<string, unknown>>;
+  deleteCalls: DeleteCall[];
+} {
   const calls: RpcCall[] = [];
+  const deleteCalls: DeleteCall[] = [];
+  const runs = insightsRuns;
   let index = 0;
-  const db: RetentionDbClient = {
+  const db = {
     rpc: vi.fn(async (fn: string, args: Record<string, unknown>) => {
       calls.push({ fn, args });
       const result = script[Math.min(index, script.length - 1)] as RetentionRpcResult;
       index++;
       return result;
     }),
-  };
-  return { db, calls };
+    from: (table: string) => ({
+      delete: () => {
+        let statuses: unknown[] = [];
+        let cutoff = '';
+        const filters: Array<(r: Record<string, unknown>) => boolean> = [];
+        const chain = {
+          in: (col: string, vals: unknown[]) => {
+            if (col === 'status') statuses = vals;
+            filters.push((r) => vals.includes(r[col]));
+            return chain;
+          },
+          lt: (col: string, val: unknown) => {
+            if (col === 'finished_at') cutoff = String(val);
+            filters.push((r) => String(r[col] ?? '') < String(val));
+            return chain;
+          },
+          select: async (
+            _columns?: string,
+            options?: { count?: string; head?: boolean }
+          ) => {
+            const matched = runs.filter((r) => filters.every((f) => f(r)));
+            deleteCalls.push({ table, statuses, cutoff });
+            for (const row of matched) {
+              const at = runs.indexOf(row);
+              if (at >= 0) runs.splice(at, 1);
+            }
+            return {
+              data: null,
+              error: null,
+              count: options?.count === 'exact' ? matched.length : null,
+            };
+          },
+        };
+        return chain;
+      },
+    }),
+  } as unknown as RetentionDbClient;
+  return { db, calls, runs, deleteCalls };
 }
 
 describe('runRetentionCleanup', () => {
@@ -67,6 +123,7 @@ describe('runRetentionCleanup', () => {
       batches: 3,
       publishLogsDeleted: 7,
       queueItemsDeleted: 4,
+      insightsRunsDeleted: 0,
       capReached: false,
       cutoff: EXPECTED_CUTOFF,
     });
@@ -142,6 +199,31 @@ describe('runRetentionCleanup', () => {
     await expect(runRetentionCleanup(db, {}, NOW)).rejects.toThrow('connection reset');
   });
 
+  it('prunes terminal insights runs older than 30 days and keeps live and recent runs', async () => {
+    const old = new Date(NOW.getTime() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    const recent = new Date(NOW.getTime() - 1 * 24 * 60 * 60 * 1000).toISOString();
+    const { db, runs, deleteCalls } = mockDb([counts(0, 0)], [
+      { id: 'run-old-finished', status: 'finished', finished_at: old },
+      { id: 'run-old-failed', status: 'failed', finished_at: old },
+      { id: 'run-old-stale', status: 'stale', finished_at: old },
+      { id: 'run-recent', status: 'finished', finished_at: recent },
+      // Live run, old and never finished: the status list — not the
+      // cutoff — is what protects it.
+      { id: 'run-live', status: 'running', finished_at: null },
+    ]);
+
+    const result = await runRetentionCleanup(db, {}, NOW, { batchSize: 5 });
+
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0]).toEqual({
+      table: 'insights_runs',
+      statuses: ['finished', 'failed', 'stale'],
+      cutoff: EXPECTED_CUTOFF,
+    });
+    expect(result.insightsRunsDeleted).toBe(3);
+    expect(runs.map((r) => r.id)).toEqual(['run-recent', 'run-live']);
+  });
+
   it('a malformed RPC payload is a plumbing failure, not zero deletions', async () => {
     const { db } = mockDb([{ data: [{ publish_logs_deleted: 'many' }], error: null }]);
 
@@ -172,26 +254,18 @@ describe('retention cron routing (handleScheduled)', () => {
   }
 
   it('the retention cron runs the cleanup RPC and NOT the claimer', async () => {
-    const rpcCalls: string[] = [];
-    const rpc = vi.fn(async (fn: string, _args: Record<string, unknown>) => {
-      rpcCalls.push(fn);
-      return {
-        data: [{ publish_logs_deleted: 0, queue_items_deleted: 0 }],
-        error: null,
-      };
-    });
-    const from = vi.fn(() => {
-      throw new Error('retention run must not touch table queries');
-    });
-    const db = { rpc, from };
+    const { db, calls, deleteCalls } = mockDb([counts(0, 0)]);
 
     await handleScheduled(controller(RETENTION_CRON), routingEnv, ctx, {
       db: db as never,
       now: NOW,
     });
 
-    expect(rpcCalls).toEqual(['cleanup_expired_publish_history']);
-    expect(from).not.toHaveBeenCalled();
+    expect(calls.map((c) => c.fn)).toEqual(['cleanup_expired_publish_history']);
+    // The retention job also prunes old terminal insights runs —
+    // that delete is part of the job, not the claimer.
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0]?.table).toBe('insights_runs');
   });
 
   it('RETENTION_CRON is the daily 02:00 UTC trigger', () => {

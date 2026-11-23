@@ -3,28 +3,34 @@
  *
  * Drives the worker's `fetch` export directly (the first tests to do
  * so — the handler previously answered only /health). Fake Supabase
- * client (same shape as the tick test's fake) + stubbed global fetch
- * for Graph reads. The bearer token here is a dummy test string,
- * never a real secret.
+ * client (same shape as the tick test's fake) + a fake queue. The
+ * bearer token here is a dummy test string, never a real secret.
  *
- * Spec 240: the handler answers 202 immediately and runs the cycle
- * in the background via ctx.waitUntil — it never awaits the cycle
+ * Spec 240: the handler answers 202 immediately after enqueueing
+ * the cycle as chunked queue messages — one message per 200-row
+ * offset page — and returns the runId. It never runs the cycle
  * inside the request (the old code did, and died at ~271s once the
- * page count doubled). The cycle summary lives only in the worker
- * log now; the 202 body carries no counters.
+ * page count doubled; the waitUntil version died at 30s). The run
+ * record is the in-flight guard: a second call while one is live
+ * 409s, and the guard is shared across isolates because it lives
+ * in the database, not in a module boolean.
  *
- * - No/wrong/missing-secret token → 401 and the cycle never runs:
- *   zero DB calls, zero Graph calls.
- * - Correct token → 202 accepted; the cycle runs in the background
- *   (via the ctx's waitUntil) and completes after the response.
- * - A second call while one is in flight → 409; the first run
- *   completes and the cycle ran once.
- * - Cycle throw → 202 accepted; the failure is logged and the
- *   guard clears, so the next call can start a new run.
- * - DB/master-key missing → 503. No waitUntil on the context →
- *   503 (fail loud: without it the run could die with the
- *   response). GET on the path → 404 (POST only).
+ * - No/wrong/missing-secret token → 401 and nothing is enqueued:
+ *   zero DB writes, zero queue messages, zero Graph calls.
+ * - Correct token → 202 accepted with runId; exactly one
+ *   sendBatch carries the chunk messages; no Graph call, no
+ *   writes yet — the chunks run in the queue consumers.
+ * - A second call while one is live → 409; the first run stays
+ *   live and no second batch is sent.
+ * - Enqueue throw or a missing queue binding → 500 and the run
+ *   is marked failed.
+ * - Start throw → 503; no run row sticks, so the next call can
+ *   start a new run.
+ * - DB/master-key missing → 503. GET on the path → 404 (POST only).
+ * - The 03:00 cron enqueues the same chunks when no run is live
+ *   and skips (warn + no batch) while one is.
  */
+import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encryptToken } from '@fbuploadpro/contracts';
 import worker, { type Env, handleScheduled } from './index.js';
@@ -40,6 +46,8 @@ interface FakeDb {
   destinations: Row[];
   adu_configs: Row[];
   mirrors: Row[];
+  insights_runs: Row[];
+  insights_run_chunks: Row[];
   updates: Array<{ table: string; patch: Row; count: number }>;
   throwOnScan: boolean;
 }
@@ -52,13 +60,21 @@ class FakeBuilder {
   private orderAscending = true;
   private updatePatch: Row | null = null;
   private updateCountExact = false;
+  private selectCountExact = false;
+  private selectHead = false;
+  private insertRows: Row[] | null = null;
 
   constructor(
     private db: FakeDb,
     private table: string
   ) {}
 
-  select(): this {
+  select(
+    _columns?: string,
+    options?: { count?: string; head?: boolean }
+  ): this {
+    this.selectCountExact = options?.count === 'exact';
+    this.selectHead = options?.head === true;
     return this;
   }
 
@@ -69,6 +85,12 @@ class FakeBuilder {
 
   in(col: string, vals: unknown[]): this {
     this.filters.push((r) => vals.includes(r[col]));
+    return this;
+  }
+
+  lt(col: string, val: unknown): this {
+    // ISO timestamps compare lexicographically = chronologically.
+    this.filters.push((r) => String(r[col] ?? '') < String(val));
     return this;
   }
 
@@ -90,9 +112,16 @@ class FakeBuilder {
     return this;
   }
 
+  insert(rows: Row | Row[]): this {
+    this.insertRows = Array.isArray(rows) ? rows : [rows];
+    return this;
+  }
+
   private tableRows(): Row[] {
     if (this.table === 'destinations') return this.db.destinations;
     if (this.table === 'adu_configs') return this.db.adu_configs;
+    if (this.table === 'insights_runs') return this.db.insights_runs;
+    if (this.table === 'insights_run_chunks') return this.db.insights_run_chunks;
     return this.db.mirrors;
   }
 
@@ -107,6 +136,92 @@ class FakeBuilder {
       count: number | null;
     }) => void
   ): void {
+    if (this.insertRows) {
+      const rows = this.insertRows;
+      // The partial unique index on insights_runs (status='running')
+      // and the unique (run_id, chunk_index) on chunks: a violating
+      // insert fails with 23505, exactly like PostgREST surfaces it.
+      for (const row of rows) {
+        if (this.table === 'insights_runs' && row.status === 'running') {
+          if (this.tableRows().some((r) => r.status === 'running')) {
+            resolve({
+              data: null,
+              error: {
+                code: '23505',
+                message:
+                  'duplicate key value violates unique constraint "insights_runs_live_idx"',
+              },
+              count: null,
+            });
+            return;
+          }
+        }
+        if (this.table === 'insights_run_chunks') {
+          if (
+            this.tableRows().some(
+              (r) => r.run_id === row.run_id && r.chunk_index === row.chunk_index
+            )
+          ) {
+            resolve({
+              data: null,
+              error: {
+                code: '23505',
+                message:
+                  'duplicate key value violates unique constraint "insights_run_chunks_run_chunk_idx"',
+              },
+              count: null,
+            });
+            return;
+          }
+        }
+      }
+      const inserted: Row[] = [];
+      for (const row of rows) {
+        // The migration's column defaults (status 'pending', zero
+        // counters) — the real DB applies them; the fake must too,
+        // or a chunk row has status undefined and the lookup treats
+        // it as missing.
+        const copy: Row = {
+          ...(this.table === 'insights_runs'
+            ? {
+                chunks_done: 0,
+                chunks_failed: 0,
+                scanned: 0,
+                updated: 0,
+                skipped: 0,
+                failed: 0,
+                adu_updated: 0,
+                mirrors_updated: 0,
+              }
+            : this.table === 'insights_run_chunks'
+              ? {
+                  status: 'pending',
+                  attempts: 0,
+                  scanned: 0,
+                  updated: 0,
+                  skipped: 0,
+                  failed: 0,
+                  adu_updated: 0,
+                  mirrors_updated: 0,
+                }
+              : {}),
+          ...row,
+        };
+        if (typeof copy.id !== 'string') {
+          // The DB generates the header id (gen_random_uuid()) — the
+          // fake does the same, so the runId passes the chunk
+          // message's uuid validation downstream.
+          copy.id =
+            this.table === 'insights_runs'
+              ? randomUUID()
+              : `${this.table}-row-${this.tableRows().length + inserted.length + 1}`;
+        }
+        this.tableRows().push(copy);
+        inserted.push(copy);
+      }
+      resolve({ data: inserted, error: null, count: null });
+      return;
+    }
     if (this.updatePatch) {
       const matched = this.matched();
       for (const row of matched) Object.assign(row, this.updatePatch);
@@ -147,7 +262,11 @@ class FakeBuilder {
     if (this.rangeFrom !== null && this.rangeTo !== null) {
       matched = matched.slice(this.rangeFrom, this.rangeTo + 1);
     }
-    resolve({ data: matched, error: null, count: null });
+    resolve({
+      data: this.selectHead ? null : matched,
+      error: null,
+      count: this.selectCountExact ? matched.length : null,
+    });
   }
 }
 
@@ -156,6 +275,8 @@ function fakeDb(): FakeDb {
     destinations: [],
     adu_configs: [],
     mirrors: [],
+    insights_runs: [],
+    insights_run_chunks: [],
     updates: [],
     throwOnScan: false,
   };
@@ -229,33 +350,32 @@ function authHeaders(token = TEST_TOKEN): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
-interface CapturedCtx {
-  ctx: { waitUntil: (p: Promise<unknown>) => void };
-  promises: Array<Promise<unknown>>;
+interface ChunkMessage {
+  runId: string;
+  chunkIndex: number;
+  offset: number;
+  limit: number;
 }
 
-function captureCtx(): CapturedCtx {
-  const promises: Array<Promise<unknown>> = [];
-  return {
-    ctx: {
-      waitUntil: (p: Promise<unknown>) => {
-        promises.push(p);
-      },
-    },
-    promises,
-  };
+class FakeQueue {
+  sent: Array<Array<{ body: ChunkMessage }>> = [];
+  throwOnSend = false;
+
+  async sendBatch(messages: Array<{ body: ChunkMessage }>): Promise<void> {
+    if (this.throwOnSend) throw new Error('queue down');
+    this.sent.push(messages);
+  }
 }
 
 function postRun(
   env: Env,
   headers: Record<string, string> = {},
-  method = 'POST',
-  ctx?: { waitUntil: (p: Promise<unknown>) => void }
+  method = 'POST'
 ): Promise<Response> {
   return worker.fetch(
     new Request(URL, { method, headers }),
     env,
-    (ctx ?? undefined) as never
+    undefined as never
   );
 }
 
@@ -321,180 +441,227 @@ describe('POST /admin/insights-followers/run', () => {
     expect(fetchCalls).toBe(0);
   });
 
-  it('correct token → 202 accepted; cycle runs in the background and completes', async () => {
+  it('correct token → 202 accepted with runId; exactly one sendBatch carries the chunk messages; no Graph call', async () => {
     const db = fakeDb();
     const dest = await seedDestination(db);
-    const adu = seedAduConfig(db);
-    const mirror = seedMirror(db);
-    let release!: (res: Response) => void;
-    const gate = new Promise<Response>((resolve) => {
-      release = resolve;
-    });
+    seedAduConfig(db);
+    seedMirror(db);
+    // 450 destinations → 3 chunk messages (200 + 200 + 50).
+    for (let i = 0; i < 449; i += 1) {
+      await seedDestination(db, {
+        id: `dest-${i}`,
+        external_destination_id: `fb-page-${i}`,
+      });
+    }
     let fetchCalls = 0;
     vi.stubGlobal('fetch', async () => {
       fetchCalls += 1;
-      return gate;
+      return graphOk(5000);
     });
-    const captured = captureCtx();
+    const queue = new FakeQueue();
     const res = await postRun(
-      testEnv(fakeClient(db)),
-      authHeaders(),
-      'POST',
-      captured.ctx
+      testEnv(fakeClient(db), { INSIGHTS_CYCLE_QUEUE: queue }),
+      authHeaders()
     );
-    try {
-      // The response arrives while the cycle is still blocked on the
-      // Graph fetch: 202, no counters (the cycle hasn't run yet), and
-      // no writes yet — the old code would still be awaiting here.
-      expect(res.status).toBe(202);
-      expect(await res.json()).toEqual({
-        status: 'accepted',
-        message: 'Insights followers run started in the background.',
-      });
-      await new Promise((r) => setTimeout(r, 50));
-      expect(fetchCalls).toBe(1);
-      expect(db.updates).toEqual([]);
-      expect((dest.metadata as Row).current_followers).toBe(1200);
-    } finally {
-      // Always release the gate + settle the background cycle, or a
-      // failure here would leak the in-flight flag into later tests.
-      release(graphOk(5000));
-      await Promise.all(captured.promises);
-    }
-    expect(fetchCalls).toBe(1);
-    expect((dest.metadata as Row).starting_followers).toBe(1000);
-    expect((dest.metadata as Row).current_followers).toBe(5000);
-    expect(adu.starting_followers).toBe(1000);
-    expect(adu.current_followers).toBe(5000);
-    expect(mirror.starting_followers).toBe(5000);
-    expect(mirror.current_followers).toBe(5000);
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as {
+      status: string;
+      message: string;
+      runId: string;
+    };
+    expect(body.status).toBe('accepted');
+    expect(body.message).toBe('Insights followers run started in the background.');
+    expect(typeof body.runId).toBe('string');
+    // One live run row with three chunk rows.
+    expect(db.insights_runs).toHaveLength(1);
+    expect(db.insights_runs[0]!.id).toBe(body.runId);
+    expect(db.insights_runs[0]!.trigger).toBe('manual');
+    expect(db.insights_runs[0]!.status).toBe('running');
+    expect(db.insights_runs[0]!.chunks_total).toBe(3);
+    expect(db.insights_run_chunks).toHaveLength(3);
+    // Exactly one sendBatch with the three chunk messages, each
+    // wrapped as a queue message body (the Cloudflare sendBatch
+    // shape — claimer.ts does the same for the publish queues).
+    expect(queue.sent).toHaveLength(1);
+    expect(queue.sent[0]).toEqual([
+      { body: { runId: body.runId, chunkIndex: 0, offset: 0, limit: 200 } },
+      { body: { runId: body.runId, chunkIndex: 1, offset: 200, limit: 200 } },
+      { body: { runId: body.runId, chunkIndex: 2, offset: 400, limit: 200 } },
+    ]);
+    // The handler enqueues only — no Graph call, no writes yet.
+    // The chunks run in the queue consumers, after the response.
+    // (startInsightsRun's stale-supersede update still runs — it
+    // matched zero rows — so only the three stores are asserted.)
+    expect(fetchCalls).toBe(0);
+    expect(
+      db.updates.filter(
+        (u) =>
+          u.table === 'destinations' ||
+          u.table === 'adu_configs' ||
+          u.table === 'mirrors'
+      )
+    ).toEqual([]);
+    expect((dest.metadata as Row).current_followers).toBe(1200);
   });
 
-  it('second call while one is in flight → 409; first run completes, cycle ran once', async () => {
+  it('second call while one is in flight → 409; the first run stays live and no second batch is sent', async () => {
     const db = fakeDb();
     await seedDestination(db);
     seedAduConfig(db);
     seedMirror(db);
-    let release!: (res: Response) => void;
-    const gate = new Promise<Response>((resolve) => {
-      release = resolve;
-    });
-    let fetchCalls = 0;
-    vi.stubGlobal('fetch', async () => {
-      fetchCalls += 1;
-      return gate;
-    });
-    const env = testEnv(fakeClient(db));
-    const captured = captureCtx();
-    const first = await postRun(env, authHeaders(), 'POST', captured.ctx);
+    const queue = new FakeQueue();
+    const env = testEnv(fakeClient(db), { INSIGHTS_CYCLE_QUEUE: queue });
+    const first = await postRun(env, authHeaders());
     expect(first.status).toBe(202);
-    // Let the first call's background cycle pass auth + scan and
-    // block on the Graph fetch.
-    await new Promise((r) => setTimeout(r, 50));
-    try {
-      const second = await postRun(env, authHeaders(), 'POST', captureCtx().ctx);
-      expect(second.status).toBe(409);
-      expect(await second.json()).toEqual({
-        error: 'insights_followers_cycle_in_flight',
-      });
-    } finally {
-      release(graphOk(5000));
-      await Promise.all(captured.promises);
-    }
-    expect(fetchCalls).toBe(1);
+    const firstBody = (await first.json()) as { runId: string };
+    const second = await postRun(env, authHeaders());
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({
+      error: 'insights_followers_cycle_in_flight',
+    });
+    expect(queue.sent).toHaveLength(1);
+    expect(db.insights_runs).toHaveLength(1);
+    expect(db.insights_runs[0]!.id).toBe(firstBody.runId);
+    expect(db.insights_runs[0]!.status).toBe('running');
   });
 
-  it('scheduled cron skips while a manual run is in flight on the same isolate', async () => {
+  it('scheduled cron skips while a manual run is in flight (the run record is the guard, shared across isolates)', async () => {
     const db = fakeDb();
     await seedDestination(db);
     seedAduConfig(db);
     seedMirror(db);
-    let release!: (res: Response) => void;
-    const gate = new Promise<Response>((resolve) => {
-      release = resolve;
+    // A live run seeded directly: the cron sees it in the run
+    // table without any in-flight boolean on this isolate.
+    db.insights_runs.push({
+      id: 'run-live',
+      trigger: 'manual',
+      status: 'running',
+      started_at: new Date().toISOString(),
+      finished_at: null,
+      chunks_total: 1,
+      chunks_done: 0,
+      chunks_failed: 0,
+      scanned: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      adu_updated: 0,
+      mirrors_updated: 0,
     });
-    let fetchCalls = 0;
-    vi.stubGlobal('fetch', async () => {
-      fetchCalls += 1;
-      return gate;
-    });
-    const env = testEnv(fakeClient(db));
-    const captured = captureCtx();
-    const first = await postRun(env, authHeaders(), 'POST', captured.ctx);
-    expect(first.status).toBe(202);
-    // Let the manual run's background cycle pass auth + scan and
-    // block on the Graph fetch.
-    await new Promise((r) => setTimeout(r, 50));
+    const queue = new FakeQueue();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       await handleScheduled(
         { cron: '0 22 * * *', scheduledTime: Date.now() } as never,
-        { TOKEN_ENCRYPTION_KEY: MASTER_KEY } as never,
+        testEnv(fakeClient(db), { INSIGHTS_CYCLE_QUEUE: queue }) as never,
         undefined,
         { db: fakeClient(db) as never, now: new Date() }
       );
-      // The cron did not start a second cycle: no extra Graph call,
-      // no writes yet.
-      expect(fetchCalls).toBe(1);
-      expect(db.updates).toEqual([]);
+      expect(queue.sent).toHaveLength(0);
+      expect(db.insights_runs).toHaveLength(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('already in flight')
+      );
     } finally {
-      release(graphOk(5000));
-      await Promise.all(captured.promises);
+      warnSpy.mockRestore();
     }
-    expect(fetchCalls).toBe(1);
   });
 
-  it('cycle throw → 202 accepted; failure is logged and the guard clears', async () => {
+  it('scheduled cron enqueues the chunks when no run is live', async () => {
+    const db = fakeDb();
+    for (let i = 0; i < 201; i += 1) {
+      await seedDestination(db, {
+        id: `dest-${i}`,
+        external_destination_id: `fb-page-${i}`,
+      });
+    }
+    const queue = new FakeQueue();
+    await handleScheduled(
+      { cron: '0 22 * * *', scheduledTime: Date.now() } as never,
+      testEnv(fakeClient(db), { INSIGHTS_CYCLE_QUEUE: queue }) as never,
+      undefined,
+      { db: fakeClient(db) as never, now: new Date() }
+    );
+    expect(queue.sent).toHaveLength(1);
+    expect(queue.sent[0]).toHaveLength(2);
+    expect(queue.sent[0]![0]!.body.chunkIndex).toBe(0);
+    expect(queue.sent[0]![1]!.body.offset).toBe(200);
+    expect(db.insights_runs).toHaveLength(1);
+    expect(db.insights_runs[0]!.trigger).toBe('cron');
+    expect(db.insights_runs[0]!.status).toBe('running');
+    expect(db.insights_runs[0]!.chunks_total).toBe(2);
+  });
+
+  it('start throw → 503; no run row sticks, so the next call can start a new run', async () => {
     const db = fakeDb();
     db.throwOnScan = true;
     await seedDestination(db);
     vi.stubGlobal('fetch', async () => graphOk(5000));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      const captured = captureCtx();
       const res = await postRun(
-        testEnv(fakeClient(db)),
-        authHeaders(),
-        'POST',
-        captured.ctx
+        testEnv(fakeClient(db), { INSIGHTS_CYCLE_QUEUE: new FakeQueue() }),
+        authHeaders()
       );
-      expect(res.status).toBe(202);
-      await Promise.all(captured.promises);
-      expect(errorSpy).toHaveBeenCalledWith(
-        '[Manual] insights followers cycle failed:',
-        expect.anything()
-      );
-      // The guard cleared: a new run can start instead of 409ing.
-      const again = captureCtx();
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
+        error: 'insights_followers_unavailable',
+      });
+      expect(db.insights_runs).toHaveLength(0);
+      // The failed start left no live run: the next call starts cleanly.
+      db.throwOnScan = false;
+      const queue = new FakeQueue();
       const second = await postRun(
-        testEnv(fakeClient(db)),
-        authHeaders(),
-        'POST',
-        again.ctx
+        testEnv(fakeClient(db), { INSIGHTS_CYCLE_QUEUE: queue }),
+        authHeaders()
       );
       expect(second.status).toBe(202);
-      await Promise.all(again.promises);
+      expect(queue.sent).toHaveLength(1);
     } finally {
       errorSpy.mockRestore();
     }
   });
 
-  it('no waitUntil on the context → 503 and the cycle never runs', async () => {
+  it('enqueue throw → 500 and the run is marked failed', async () => {
     const db = fakeDb();
     await seedDestination(db);
-    let fetchCalls = 0;
-    vi.stubGlobal('fetch', async () => {
-      fetchCalls += 1;
-      return graphOk(5000);
-    });
-    // No ctx at all: without waitUntil the run could die with the
-    // response, so the handler fails loud instead of pretending.
-    const res = await postRun(testEnv(fakeClient(db)), authHeaders());
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({
-      error: 'insights_followers_background_unavailable',
-    });
-    expect(db.updates).toEqual([]);
-    expect(fetchCalls).toBe(0);
+    const queue = new FakeQueue();
+    queue.throwOnSend = true;
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await postRun(
+        testEnv(fakeClient(db), { INSIGHTS_CYCLE_QUEUE: queue }),
+        authHeaders()
+      );
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({
+        error: 'insights_followers_enqueue_failed',
+      });
+      expect(queue.sent).toHaveLength(0);
+      expect(db.insights_runs).toHaveLength(1);
+      expect(db.insights_runs[0]!.status).toBe('failed');
+      expect(db.insights_runs[0]!.finished_at).not.toBeNull();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('missing queue binding → 500 and the run is marked failed', async () => {
+    const db = fakeDb();
+    await seedDestination(db);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await postRun(testEnv(fakeClient(db)), authHeaders());
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({
+        error: 'insights_followers_enqueue_failed',
+      });
+      expect(db.insights_runs).toHaveLength(1);
+      expect(db.insights_runs[0]!.status).toBe('failed');
+      expect(db.insights_runs[0]!.finished_at).not.toBeNull();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('db unconfigured → 503', async () => {

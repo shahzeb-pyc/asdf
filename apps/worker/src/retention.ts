@@ -88,9 +88,20 @@ export interface RetentionRpcResult {
   error: unknown;
 }
 
+/** Minimal delete-chain shape the insights-run prune uses. */
+export interface RetentionDeleteQuery {
+  in(column: string, values: unknown[]): RetentionDeleteQuery;
+  lt(column: string, value: unknown): RetentionDeleteQuery;
+  select(
+    columns?: string,
+    options?: { count?: string; head?: boolean }
+  ): PromiseLike<{ data: unknown; error: unknown; count: number | null }>;
+}
+
 /** The slice of the Supabase client the retention job uses. */
 export interface RetentionDbClient {
   rpc(fn: string, args: Record<string, unknown>): PromiseLike<RetentionRpcResult>;
+  from(table: string): { delete(): RetentionDeleteQuery };
 }
 
 /** Structured per-run counters (logged on every run). */
@@ -105,6 +116,8 @@ export interface RetentionRunResult {
   publishLogsDeleted: number;
   /** queue_items rows deleted (or counted, in dry-run). */
   queueItemsDeleted: number;
+  /** Finished/failed/stale insights runs older than the cutoff deleted. */
+  insightsRunsDeleted: number;
   /** True when the run stopped at the per-run batch cap with a full batch still coming back. */
   capReached: boolean;
   /** The retention cutoff applied by this run (ISO timestamp). */
@@ -162,6 +175,33 @@ async function callCleanupRpc(
 }
 
 /**
+ * Deletes terminal insights runs (finished / failed / stale) older
+ * than the cutoff — one DELETE, no batching: one row per run, and a
+ * day's runs are a handful. Live runs are never touched (not in the
+ * status list), and a terminal row always carries finished_at, so the
+ * cutoff predicate can only match rows the cycle has already closed.
+ * The count comes back from the delete itself (count: exact, head),
+ * never from a second read — a misread here would hide a broken
+ * prune. Idempotent: re-running deletes nothing already gone.
+ */
+async function pruneOldInsightsRuns(
+  db: RetentionDbClient,
+  cutoff: string
+): Promise<number> {
+  const { error, count } = await db
+    .from('insights_runs')
+    .delete()
+    .in('status', ['finished', 'failed', 'stale'])
+    .lt('finished_at', cutoff)
+    .select('id', { count: 'exact', head: true });
+  if (error) throw dbError(error);
+  if (typeof count !== 'number' || !Number.isFinite(count) || count < 0) {
+    throw new InternalError('insights runs prune returned no usable count');
+  }
+  return count;
+}
+
+/**
  * Runs one retention cleanup cycle: see the file header for the batch
  * loop, the terminal-only guarantee, and the env flags.
  */
@@ -181,6 +221,7 @@ export async function runRetentionCleanup(
       batches: 0,
       publishLogsDeleted: 0,
       queueItemsDeleted: 0,
+      insightsRunsDeleted: 0,
       capReached: false,
       cutoff,
     };
@@ -207,6 +248,7 @@ export async function runRetentionCleanup(
         batches: 1,
         publishLogsDeleted: counts.publishLogsDeleted,
         queueItemsDeleted: counts.queueItemsDeleted,
+        insightsRunsDeleted: 0,
         capReached: false,
         cutoff,
       };
@@ -237,9 +279,15 @@ export async function runRetentionCleanup(
       }
     }
 
+    // Spec 240: terminal insights runs older than the same cutoff
+    // are pruned in this same run (one DELETE). A failure here is
+    // loud like an RPC failure — the catch below captures and
+    // rethrows, and the next daily run retries the prune.
+    const insightsRunsDeleted = await pruneOldInsightsRuns(db, cutoff);
+
     console.info(
       `[retention] run cutoff=${cutoff} batches=${batches} publish_logs_deleted=${publishLogsDeleted} ` +
-        `queue_items_deleted=${queueItemsDeleted} cap_reached=${capReached}`
+        `queue_items_deleted=${queueItemsDeleted} insights_runs_deleted=${insightsRunsDeleted} cap_reached=${capReached}`
     );
     return {
       skipped: false,
@@ -247,6 +295,7 @@ export async function runRetentionCleanup(
       batches,
       publishLogsDeleted,
       queueItemsDeleted,
+      insightsRunsDeleted,
       capReached,
       cutoff,
     };

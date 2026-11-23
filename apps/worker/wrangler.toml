@@ -38,6 +38,15 @@ crons = ["* * * * *", "*/15 * * * *", "0 2 * * *", "0 22 * * *", "*/10 * * * *",
 #   wrangler queues create publish-fast-dlq
 #   wrangler queues create publish-heavy-dlq
 
+# Spec 240: insights-cycle queue. Same provisioning rule — the queues
+# must exist before the deploy that binds them:
+#   wrangler queues create insights-cycle
+#   wrangler queues create insights-cycle-dlq
+
+[[queues.producers]]
+queue = "insights-cycle"
+binding = "INSIGHTS_CYCLE_QUEUE"
+
 [[queues.producers]]
 queue = "publish-fast"
 binding = "PUBLISH_FAST_QUEUE"
@@ -45,6 +54,19 @@ binding = "PUBLISH_FAST_QUEUE"
 [[queues.producers]]
 queue = "publish-heavy"
 binding = "PUBLISH_HEAVY_QUEUE"
+
+[[queues.consumers]]
+queue = "insights-cycle"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+max_concurrency = 1
+dead_letter_queue = "insights-cycle-dlq"
+
+[[queues.consumers]]
+queue = "insights-cycle-dlq"
+max_batch_size = 10
+max_concurrency = 5
 
 [[queues.consumers]]
 queue = "publish-fast"
