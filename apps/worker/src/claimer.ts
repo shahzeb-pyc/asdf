@@ -60,11 +60,10 @@ export const RECOVERY_INTERVAL_MINUTES = 5;
 /** Stuck-`publishing` threshold for the recovery sweep, in minutes. */
 export const RECOVERY_TIMEOUT_MINUTES = 10;
 
-/** Every platform in the unified schema enum — recovery is table hygiene. */
+/** Every platform the worker still serves — recovery is table hygiene.
+ * Spec 237: instagram and threads were removed with those sections. */
 export const ALL_PLATFORMS: readonly Platform[] = [
   'facebook',
-  'instagram',
-  'threads',
   'youtube',
   'x',
   'tiktok',

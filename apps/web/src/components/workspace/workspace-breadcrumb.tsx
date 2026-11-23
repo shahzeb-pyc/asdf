@@ -76,29 +76,8 @@ export function computeBreadcrumbs(
     if (segments[1]?.toLowerCase() === 'accounts') {
       return [{ label: platformLabel }, { label: 'Accounts' }];
     }
-    if (first === 'instagram' && segments[1]?.toLowerCase() === 'schedule') {
-      if (segments.length > 2) {
-        return [
-          { label: platformLabel },
-          { label: 'Schedule', href: buildTenantHref(subdomain, '/instagram/schedule', useCleanPaths) },
-          { label: 'Details' },
-        ];
-      }
-      return [{ label: platformLabel }, { label: 'Schedule' }];
-    }
-    if (first === 'threads' && segments[1]?.toLowerCase() === 'schedule') {
-      if (segments.length > 2) {
-        return [
-          { label: platformLabel },
-          {
-            label: 'In-app Schedule',
-            href: buildTenantHref(subdomain, '/threads/schedule', useCleanPaths),
-          },
-          { label: 'Details' },
-        ];
-      }
-      return [{ label: platformLabel }, { label: 'In-app Schedule' }];
-    }
+    // Spec 237: Instagram and Threads keep Accounts only — the
+    // Schedule branches were deleted with the sections.
     return [{ label: platformLabel }];
   }
 

@@ -136,10 +136,10 @@ describe('TikTokShell plan cap (B2)', () => {
     expect(screen.getByTestId('header-add-mirror-btn')).not.toBeDisabled();
   });
 
-  it('shows the Instagram cap — not the Facebook cap — for Instagram-target mirrors', async () => {
-    // This is the B2 bug: the server gates a TikTok→Instagram
-    // mirror on Instagram's cap, but the shell used to display
-    // Facebook's numbers for it.
+  it('shows the Facebook cap — never the Instagram cap — even for a legacy Instagram-target mirror', async () => {
+    // Spec 237: mirrors are Facebook-only now, so the header shows
+    // the one Facebook cap line whatever the listed mirrors are.
+    // On the old code this showed the Instagram cap for IG mirrors.
     entitlementState.value = entitlement({
       counts: { ...ZERO_PLATFORM_COUNTS, facebook: 5, instagram: 3 },
       usage: { ...ZERO_PLATFORM_COUNTS, facebook: 2, instagram: 1 },
@@ -149,11 +149,11 @@ describe('TikTokShell plan cap (B2)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('tiktok-mirrors-grid')).toBeInTheDocument();
     });
-    expect(capTexts()).toEqual(['1 of 3 accounts used · 2 remaining']);
-    expect(capTexts().join(' ')).not.toContain('pages used');
+    expect(capTexts()).toEqual(['2 of 5 pages used · 3 remaining']);
+    expect(capTexts().join(' ')).not.toContain('accounts used');
   });
 
-  it('shows one cap line per target when the list mixes Facebook and Instagram mirrors', async () => {
+  it('shows only the Facebook cap line when the list mixes Facebook and legacy Instagram mirrors', async () => {
     entitlementState.value = entitlement({
       counts: { ...ZERO_PLATFORM_COUNTS, facebook: 5, instagram: 3 },
       usage: { ...ZERO_PLATFORM_COUNTS, facebook: 2, instagram: 1 },
@@ -168,10 +168,7 @@ describe('TikTokShell plan cap (B2)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('tiktok-mirrors-grid')).toBeInTheDocument();
     });
-    expect(capTexts()).toEqual([
-      '2 of 5 pages used · 3 remaining',
-      '1 of 3 accounts used · 2 remaining',
-    ]);
+    expect(capTexts()).toEqual(['2 of 5 pages used · 3 remaining']);
   });
 
   it('shows the Facebook cap when there are no mirrors yet — that is the target being added', async () => {
@@ -211,6 +208,8 @@ describe('TikTokShell plan cap (B2)', () => {
   it('keeps Add enabled at the Instagram cap when the Facebook cap still has room', async () => {
     // The Add dialog creates a Facebook-target mirror, so only the
     // Facebook cap gates it — an Instagram cap must not block it.
+    // Spec 237: the header shows the Facebook cap even when a
+    // legacy Instagram-target mirror is listed.
     entitlementState.value = entitlement({
       counts: { ...ZERO_PLATFORM_COUNTS, facebook: 5, instagram: 1 },
       usage: { ...ZERO_PLATFORM_COUNTS, facebook: 2, instagram: 1 },
@@ -220,7 +219,7 @@ describe('TikTokShell plan cap (B2)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('tiktok-mirrors-grid')).toBeInTheDocument();
     });
-    expect(capTexts()).toEqual(['1 of 1 accounts used · Limit reached']);
+    expect(capTexts()).toEqual(['2 of 5 pages used · 3 remaining']);
     expect(screen.getByTestId('header-add-mirror-btn')).not.toBeDisabled();
   });
 

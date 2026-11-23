@@ -32,26 +32,12 @@ import {
  * view only.
  */
 
-export function mirrorStatusMark(status: MirrorListView['status']): {
-  kind: 'operational' | 'queued' | 'critical';
-  label: string;
-} {
-  switch (status) {
-    case 'active':
-      return { kind: 'operational', label: 'Active' };
-    case 'paused':
-      return { kind: 'queued', label: 'Paused' };
-    case 'error':
-      return { kind: 'critical', label: 'Error' };
-  }
-}
-
 /**
- * Spec 155: the mark a mirror actually displays. Facebook-target
- * mirrors resolve through `resolveMirrorDisplayStatus` (own
- * fb_status, else the target destination's Facebook detail, else
- * generic Error); Instagram-target mirrors keep today's coarse
- * rendering exactly — they never carry a Facebook detail.
+ * Spec 155: the mark a mirror actually displays. Mirrors resolve
+ * through `resolveMirrorDisplayStatus` (own fb_status, else the
+ * target destination's Facebook detail, else generic Error).
+ * Spec 237: mirrors are Facebook-only; there is no separate
+ * Instagram rendering anymore.
  */
 export function mirrorDisplayMark(mirror: {
   status: MirrorListView['status'];
@@ -64,10 +50,6 @@ export function mirrorDisplayMark(mirror: {
   label: string;
   displayStatus: MirrorDisplayStatus;
 } {
-  if (mirror.targetPlatform !== 'facebook') {
-    const coarse = mirrorStatusMark(mirror.status);
-    return { ...coarse, displayStatus: mirror.status };
-  }
   const displayStatus = resolveMirrorDisplayStatus({
     status: mirror.status,
     fbStatus: mirror.fbStatus ?? null,
@@ -148,17 +130,12 @@ export interface TikTokCardProps {
 }
 
 export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCardProps>) {
-  // Spec 155: the badge shows the resolved Facebook detail for
-  // Facebook mirrors (own fb_status, else the target's detail);
-  // Instagram mirrors keep the coarse status.
+  // Spec 155: the badge shows the resolved Facebook detail
+  // (own fb_status, else the target's detail).
   const mark = mirrorDisplayMark(mirror);
   const ringClass = MIRROR_STATUS_RING_CLASSES[mark.kind];
-  const isFacebook = mirror.targetPlatform === 'facebook';
   const addedDate = mirror.targetAddedAt ? formatAddedDate(mirror.targetAddedAt) : '';
-  const facebookUrl =
-    mirror.targetPlatform === 'facebook'
-      ? `https://facebook.com/${mirror.targetExternalId}`
-      : null;
+  const facebookUrl = `https://facebook.com/${mirror.targetExternalId}`;
   const rawPageName = mirror.targetDisplayName.trim();
   const initials = rawPageName ? getUserInitials(rawPageName) : 'PG';
   const showAvatarImg = Boolean(mirror.targetAvatarUrl);
@@ -250,21 +227,19 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
         </span>
       </div>
 
-      {facebookUrl ? (
-        <div data-testid="tiktok-mirror-facebook-link-row" className="mt-3 flex items-center justify-between gap-4">
-          <a
-            data-testid="tiktok-mirror-facebook-link"
-            href={facebookUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="min-w-0 shrink-0 truncate text-metadata text-brand-facebook hover:underline"
-          >
-            View on Facebook{' '}
-            <MoveUpRightIcon aria-hidden className="inline size-3 shrink-0" />
-          </a>
-        </div>
-      ) : null}
+      <div data-testid="tiktok-mirror-facebook-link-row" className="mt-3 flex items-center justify-between gap-4">
+        <a
+          data-testid="tiktok-mirror-facebook-link"
+          href={facebookUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="min-w-0 shrink-0 truncate text-metadata text-brand-facebook hover:underline"
+        >
+          View on Facebook{' '}
+          <MoveUpRightIcon aria-hidden className="inline size-3 shrink-0" />
+        </a>
+      </div>
 
       <div className="mt-1.5">
         <span data-testid="tiktok-mirror-source" className="truncate text-metadata text-ink-sub">
@@ -273,12 +248,11 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
       </div>
 
       {/* Spec 155: a mapped Facebook detail carries the reason in the
-          badge, so the raw stored error is hidden — but a Facebook
-          mirror in generic error (displayStatus 'error', no detail
+          badge, so the raw stored error is hidden — but a mirror
+          in generic error (displayStatus 'error', no detail
           anywhere) keeps the mapped raw-error line, exactly like the
-          detail page keeps the raw-error box there. Instagram mirrors
-          keep the raw-error line exactly as today. */}
-      {(!isFacebook || mark.displayStatus === 'error') && mirror.lastError ? (
+          detail page keeps the raw-error box there. */}
+      {mark.displayStatus === 'error' && mirror.lastError ? (
         <p
           data-testid="tiktok-mirror-error"
           className="mt-3 truncate text-metadata text-signal-critical"

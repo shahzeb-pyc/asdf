@@ -240,12 +240,12 @@ export const CreateMirrorRequestSchema = z
   .object({
     sourceUsername: TikTokUsernameSchema,
     /**
-     * Target platform. Defaults to facebook so every existing caller
-     * (Facebook mirrors) parses unchanged; Instagram Auto Repost passes
-     * 'instagram'. The mirror table itself is platform-agnostic, so no
-     * schema change is needed for a new target platform.
+     * Target platform. Spec 237: Facebook-only — the 'instagram'
+     * value was removed with the Instagram Auto Repost section, so
+     * a create request naming it is rejected at the boundary.
+     * Defaults to facebook so every existing caller parses unchanged.
      */
-    targetPlatform: z.enum(['facebook', 'instagram']).optional().default('facebook'),
+    targetPlatform: z.enum(['facebook']).optional().default('facebook'),
     targetDestinationId: z.string().uuid().optional(),
     accountId: z.string().uuid().optional(),
     targetExternalId: z.string().min(1).optional(),

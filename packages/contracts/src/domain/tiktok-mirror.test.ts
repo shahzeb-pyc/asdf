@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CreateMirrorRequestSchema,
   TikwmUserInfoResponseSchema,
   TikwmVideoItemSchema,
 } from './tiktok-mirror.js';
@@ -100,5 +101,39 @@ describe('TikwmUserInfoResponseSchema', () => {
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.data?.user?.secUid).toBeUndefined();
+  });
+});
+
+// Spec 237: mirrors are Facebook-only — the 'instagram' target
+// platform was removed with the Instagram Auto Repost section, so
+// a create request naming it is rejected at the boundary. This
+// test fails on the old schema (which accepted 'instagram').
+describe('CreateMirrorRequestSchema targetPlatform (spec 237)', () => {
+  const base = {
+    sourceUsername: 'courtroom62',
+    accountId: '00000000-0000-4000-8000-000000000001',
+    targetExternalId: 'fb-1',
+  };
+
+  it("rejects targetPlatform 'instagram'", () => {
+    const parsed = CreateMirrorRequestSchema.safeParse({
+      ...base,
+      targetPlatform: 'instagram',
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("accepts targetPlatform 'facebook' and defaults it when omitted", () => {
+    const explicit = CreateMirrorRequestSchema.safeParse({
+      ...base,
+      targetPlatform: 'facebook',
+    });
+    expect(explicit.success).toBe(true);
+    if (!explicit.success) return;
+    expect(explicit.data.targetPlatform).toBe('facebook');
+    const omitted = CreateMirrorRequestSchema.safeParse(base);
+    expect(omitted.success).toBe(true);
+    if (!omitted.success) return;
+    expect(omitted.data.targetPlatform).toBe('facebook');
   });
 });

@@ -224,8 +224,7 @@ export function TikTokHistoryTab({
                       <p className="mt-1 text-metadata text-signal-critical">{mapStoredMirrorErrorToDisplay(post.error)}</p>
                     ) : null}
                     {(post.status === 'failed' || post.status === 'pending') &&
-                    (mirror.targetPlatform === 'facebook' ||
-                      mirror.targetPlatform === 'instagram') ? (
+                    mirror.targetPlatform === 'facebook' ? (
                       <Button
                         type="button"
                         variant="outline"

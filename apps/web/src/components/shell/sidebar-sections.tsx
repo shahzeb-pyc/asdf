@@ -240,25 +240,12 @@ export function getUserSections(
         testingNote: TESTING_PLACEHOLDER_TEXT,
       };
     }
+    // Spec 237: Instagram and Threads keep Accounts only — the
+    // Schedule / Publish Now / Auto Repost / Auto Download-Upload
+    // sections were deleted, so no leaves are pushed here.
     const leaves: Omit<SidebarLeaf, 'kind'>[] = [
       { label: 'Accounts', href: platformAccountsHref, match: 'prefix' },
     ];
-    if (platform.key === 'threads') {
-      leaves.push(
-        { label: 'In-app Schedule', href: href('/threads/schedule'), match: 'prefix' },
-        { label: 'Publish Now', href: href('/threads/publish-now'), match: 'prefix' },
-        { label: 'Auto Repost', href: href('/threads/auto-repost'), match: 'prefix' },
-        { label: 'Auto Download/Upload', href: href('/threads/auto-download-upload'), match: 'prefix' }
-      );
-    }
-    if (platform.key === 'instagram') {
-      leaves.push(
-        { label: 'Schedule', href: href('/instagram/schedule'), match: 'prefix' },
-        { label: 'Publish Now', href: href('/instagram/publish-now'), match: 'prefix' },
-        { label: 'Auto Repost', href: href('/instagram/auto-repost'), match: 'prefix' },
-        { label: 'Auto Download/Upload', href: href('/instagram/auto-download-upload'), match: 'prefix' }
-      );
-    }
     return {
       kind: 'group',
       key: platform.key,

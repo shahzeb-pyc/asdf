@@ -94,7 +94,7 @@ const THREADS_CONNECT_TOAST_OPTIONS: NonNullable<ToasterProps['toastOptions']> =
 };
 
 const THREADS_DESCRIPTION =
-  'Connect your Threads account to schedule and publish posts from one place. Your workspace uses its own Threads app details, so your accounts stay yours.';
+  'Connect your Threads account. Your workspace uses its own Threads app details, so your accounts stay yours.';
 
 export interface ThreadsAccountsShellProps {
   subdomain: string;
