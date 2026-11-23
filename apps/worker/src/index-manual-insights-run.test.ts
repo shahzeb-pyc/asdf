@@ -1,5 +1,5 @@
 /**
- * Spec 163 — manual insights-followers run endpoint.
+ * Spec 163 + spec 240 — manual insights-followers run endpoint.
  *
  * Drives the worker's `fetch` export directly (the first tests to do
  * so — the handler previously answered only /health). Fake Supabase
@@ -7,13 +7,23 @@
  * for Graph reads. The bearer token here is a dummy test string,
  * never a real secret.
  *
+ * Spec 240: the handler answers 202 immediately and runs the cycle
+ * in the background via ctx.waitUntil — it never awaits the cycle
+ * inside the request (the old code did, and died at ~271s once the
+ * page count doubled). The cycle summary lives only in the worker
+ * log now; the 202 body carries no counters.
+ *
  * - No/wrong/missing-secret token → 401 and the cycle never runs:
  *   zero DB calls, zero Graph calls.
- * - Correct token → 200 with the run counters; the cycle runs once.
+ * - Correct token → 202 accepted; the cycle runs in the background
+ *   (via the ctx's waitUntil) and completes after the response.
  * - A second call while one is in flight → 409; the first run
  *   completes and the cycle ran once.
- * - Cycle throw → 500 with the error code. DB/master-key missing
- *   → 503. GET on the path → 404 (POST only).
+ * - Cycle throw → 202 accepted; the failure is logged and the
+ *   guard clears, so the next call can start a new run.
+ * - DB/master-key missing → 503. No waitUntil on the context →
+ *   503 (fail loud: without it the run could die with the
+ *   response). GET on the path → 404 (POST only).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encryptToken } from '@fbuploadpro/contracts';
@@ -219,15 +229,33 @@ function authHeaders(token = TEST_TOKEN): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
+interface CapturedCtx {
+  ctx: { waitUntil: (p: Promise<unknown>) => void };
+  promises: Array<Promise<unknown>>;
+}
+
+function captureCtx(): CapturedCtx {
+  const promises: Array<Promise<unknown>> = [];
+  return {
+    ctx: {
+      waitUntil: (p: Promise<unknown>) => {
+        promises.push(p);
+      },
+    },
+    promises,
+  };
+}
+
 function postRun(
   env: Env,
   headers: Record<string, string> = {},
-  method = 'POST'
+  method = 'POST',
+  ctx?: { waitUntil: (p: Promise<unknown>) => void }
 ): Promise<Response> {
   return worker.fetch(
     new Request(URL, { method, headers }),
     env,
-    undefined as never
+    (ctx ?? undefined) as never
   );
 }
 
@@ -293,27 +321,46 @@ describe('POST /admin/insights-followers/run', () => {
     expect(fetchCalls).toBe(0);
   });
 
-  it('correct token → 200 with the run counters; cycle runs once', async () => {
+  it('correct token → 202 accepted; cycle runs in the background and completes', async () => {
     const db = fakeDb();
     const dest = await seedDestination(db);
     const adu = seedAduConfig(db);
     const mirror = seedMirror(db);
+    let release!: (res: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
     let fetchCalls = 0;
     vi.stubGlobal('fetch', async () => {
       fetchCalls += 1;
-      return graphOk(5000);
+      return gate;
     });
-    const res = await postRun(testEnv(fakeClient(db)), authHeaders());
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body.scanned).toBe(1);
-    expect(body.updated).toBe(1);
-    expect(body.skipped).toBe(0);
-    expect(body.failed).toBe(0);
-    expect(body.aduUpdated).toBe(1);
-    expect(body.mirrorsUpdated).toBe(1);
-    expect(typeof body.durationMs).toBe('number');
-    expect(body.durationMs as number).toBeGreaterThanOrEqual(0);
+    const captured = captureCtx();
+    const res = await postRun(
+      testEnv(fakeClient(db)),
+      authHeaders(),
+      'POST',
+      captured.ctx
+    );
+    try {
+      // The response arrives while the cycle is still blocked on the
+      // Graph fetch: 202, no counters (the cycle hasn't run yet), and
+      // no writes yet — the old code would still be awaiting here.
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({
+        status: 'accepted',
+        message: 'Insights followers run started in the background.',
+      });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(fetchCalls).toBe(1);
+      expect(db.updates).toEqual([]);
+      expect((dest.metadata as Row).current_followers).toBe(1200);
+    } finally {
+      // Always release the gate + settle the background cycle, or a
+      // failure here would leak the in-flight flag into later tests.
+      release(graphOk(5000));
+      await Promise.all(captured.promises);
+    }
     expect(fetchCalls).toBe(1);
     expect((dest.metadata as Row).starting_followers).toBe(1000);
     expect((dest.metadata as Row).current_followers).toBe(5000);
@@ -338,17 +385,22 @@ describe('POST /admin/insights-followers/run', () => {
       return gate;
     });
     const env = testEnv(fakeClient(db));
-    const first = postRun(env, authHeaders());
-    // Let the first call pass auth + scan and block on the Graph fetch.
+    const captured = captureCtx();
+    const first = await postRun(env, authHeaders(), 'POST', captured.ctx);
+    expect(first.status).toBe(202);
+    // Let the first call's background cycle pass auth + scan and
+    // block on the Graph fetch.
     await new Promise((r) => setTimeout(r, 50));
-    const second = await postRun(env, authHeaders());
-    expect(second.status).toBe(409);
-    expect(await second.json()).toEqual({
-      error: 'insights_followers_cycle_in_flight',
-    });
-    release(graphOk(5000));
-    const firstRes = await first;
-    expect(firstRes.status).toBe(200);
+    try {
+      const second = await postRun(env, authHeaders(), 'POST', captureCtx().ctx);
+      expect(second.status).toBe(409);
+      expect(await second.json()).toEqual({
+        error: 'insights_followers_cycle_in_flight',
+      });
+    } finally {
+      release(graphOk(5000));
+      await Promise.all(captured.promises);
+    }
     expect(fetchCalls).toBe(1);
   });
 
@@ -367,35 +419,82 @@ describe('POST /admin/insights-followers/run', () => {
       return gate;
     });
     const env = testEnv(fakeClient(db));
-    const first = postRun(env, authHeaders());
-    // Let the manual run pass auth + scan and block on the Graph fetch.
+    const captured = captureCtx();
+    const first = await postRun(env, authHeaders(), 'POST', captured.ctx);
+    expect(first.status).toBe(202);
+    // Let the manual run's background cycle pass auth + scan and
+    // block on the Graph fetch.
     await new Promise((r) => setTimeout(r, 50));
-    await handleScheduled(
-      { cron: '0 22 * * *', scheduledTime: Date.now() } as never,
-      { TOKEN_ENCRYPTION_KEY: MASTER_KEY } as never,
-      undefined,
-      { db: fakeClient(db) as never, now: new Date() }
-    );
-    // The cron did not start a second cycle: no extra Graph call,
-    // no writes yet.
-    expect(fetchCalls).toBe(1);
-    expect(db.updates).toEqual([]);
-    release(graphOk(5000));
-    const firstRes = await first;
-    expect(firstRes.status).toBe(200);
+    try {
+      await handleScheduled(
+        { cron: '0 22 * * *', scheduledTime: Date.now() } as never,
+        { TOKEN_ENCRYPTION_KEY: MASTER_KEY } as never,
+        undefined,
+        { db: fakeClient(db) as never, now: new Date() }
+      );
+      // The cron did not start a second cycle: no extra Graph call,
+      // no writes yet.
+      expect(fetchCalls).toBe(1);
+      expect(db.updates).toEqual([]);
+    } finally {
+      release(graphOk(5000));
+      await Promise.all(captured.promises);
+    }
     expect(fetchCalls).toBe(1);
   });
 
-  it('cycle throw → 500 with the error code', async () => {
+  it('cycle throw → 202 accepted; failure is logged and the guard clears', async () => {
     const db = fakeDb();
     db.throwOnScan = true;
     await seedDestination(db);
     vi.stubGlobal('fetch', async () => graphOk(5000));
-    const res = await postRun(testEnv(fakeClient(db)), authHeaders());
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({
-      error: 'insights_followers_cycle_failed',
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const captured = captureCtx();
+      const res = await postRun(
+        testEnv(fakeClient(db)),
+        authHeaders(),
+        'POST',
+        captured.ctx
+      );
+      expect(res.status).toBe(202);
+      await Promise.all(captured.promises);
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[Manual] insights followers cycle failed:',
+        expect.anything()
+      );
+      // The guard cleared: a new run can start instead of 409ing.
+      const again = captureCtx();
+      const second = await postRun(
+        testEnv(fakeClient(db)),
+        authHeaders(),
+        'POST',
+        again.ctx
+      );
+      expect(second.status).toBe(202);
+      await Promise.all(again.promises);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('no waitUntil on the context → 503 and the cycle never runs', async () => {
+    const db = fakeDb();
+    await seedDestination(db);
+    let fetchCalls = 0;
+    vi.stubGlobal('fetch', async () => {
+      fetchCalls += 1;
+      return graphOk(5000);
     });
+    // No ctx at all: without waitUntil the run could die with the
+    // response, so the handler fails loud instead of pretending.
+    const res = await postRun(testEnv(fakeClient(db)), authHeaders());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: 'insights_followers_background_unavailable',
+    });
+    expect(db.updates).toEqual([]);
+    expect(fetchCalls).toBe(0);
   });
 
   it('db unconfigured → 503', async () => {

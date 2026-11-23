@@ -959,11 +959,19 @@ export default {
       });
     }
 
-    // 3. Manual insights-followers run (spec 163): runs the EXACT
-    // same daily cycle as the 03:00 PKT cron, on demand. Bearer
-    // token only — no token, wrong token, or unconfigured secret
-    // 401s before any work happens. The token value never appears
-    // in a response or a log line.
+    // 3. Manual insights-followers run (spec 163, spec 240): runs the
+    // EXACT same daily cycle as the 03:00 PKT cron, on demand — but
+    // in the background. The cycle takes ~4.5+ minutes at current
+    // page counts, far longer than one HTTP request can stay open
+    // (proven 2026-11-23: a synchronous run died at ~271s after
+    // 970 rows), so the handler answers 202 immediately and starts
+    // the cycle via ctx.waitUntil. Bearer token only — no token,
+    // wrong token, or unconfigured secret 401s before any work
+    // happens. The token value never appears in a response or a
+    // log line. The cycle summary stays in the worker log (the
+    // cycle logs scanned/updated/skipped/failed itself, and the
+    // manual run adds a finished line with durationMs); the
+    // response cannot carry it, since the cycle hasn't run yet.
     if (request.method === 'POST' && url.pathname === '/admin/insights-followers/run') {
       const authorized = await verifyBearerToken(
         request.headers.get('Authorization'),
@@ -992,38 +1000,59 @@ export default {
           { status: 503, headers: corsHeaders }
         );
       }
+      const waitUntil = waitUntilFromCtx(ctx);
+      if (!waitUntil) {
+        // Without waitUntil the isolate can die with the response,
+        // which is exactly the failure this endpoint exists to
+        // avoid — fail loud instead of pretending to run.
+        console.warn(
+          '[Manual] insights followers run unavailable: no waitUntil on this context'
+        );
+        return new Response(
+          JSON.stringify({
+            error: 'insights_followers_background_unavailable',
+          }),
+          { status: 503, headers: corsHeaders }
+        );
+      }
       insightsFollowersCycleInFlight = true;
       const started = Date.now();
-      try {
-        const result = await runInsightsFollowersCycle({
+      waitUntil(
+        runInsightsFollowersCycle({
           db: manualDb as unknown as Parameters<
             typeof runInsightsFollowersCycle
           >[0]['db'],
           masterKey: manualMasterKey,
           now: new Date(),
-        });
-        return new Response(
-          JSON.stringify({ ...result, durationMs: Date.now() - started }),
-          { status: 200, headers: corsHeaders }
-        );
-      } catch (err) {
-        console.error('[Manual] insights followers cycle failed:', err);
-        captureWorkerError(
-          env,
-          err,
-          {
-            site: 'manual-insights-followers-run',
-            kind: 'insights_followers_cycle_failed',
-          },
-          waitUntilFromCtx(ctx)
-        );
-        return new Response(
-          JSON.stringify({ error: 'insights_followers_cycle_failed' }),
-          { status: 500, headers: corsHeaders }
-        );
-      } finally {
-        insightsFollowersCycleInFlight = false;
-      }
+        })
+          .then((result) => {
+            console.info(
+              `[Manual] insights followers run finished: scanned=${result.scanned} updated=${result.updated} skipped=${result.skipped} failed=${result.failed} adu_updated=${result.aduUpdated} mirrors_updated=${result.mirrorsUpdated} durationMs=${Date.now() - started}`
+            );
+          })
+          .catch((err) => {
+            console.error('[Manual] insights followers cycle failed:', err);
+            captureWorkerError(
+              env,
+              err,
+              {
+                site: 'manual-insights-followers-run',
+                kind: 'insights_followers_cycle_failed',
+              },
+              waitUntil
+            );
+          })
+          .finally(() => {
+            insightsFollowersCycleInFlight = false;
+          })
+      );
+      return new Response(
+        JSON.stringify({
+          status: 'accepted',
+          message: 'Insights followers run started in the background.',
+        }),
+        { status: 202, headers: corsHeaders }
+      );
     }
 
     return new Response(
