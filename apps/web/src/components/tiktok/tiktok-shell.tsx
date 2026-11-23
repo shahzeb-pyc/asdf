@@ -26,7 +26,7 @@ import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { ListPagination } from '@/components/shared/ui/list-pagination';
 import { Skeleton } from '@/components/shared/ui/skeleton';
-import { FeatureCapText, useFeatureCap, type FeatureCap } from '@/components/billing/feature-cap';
+import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 import { AddMirrorDialog } from './add-mirror-dialog';
 import { TikTokCard } from './tiktok-card';
 

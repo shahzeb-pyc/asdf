@@ -261,7 +261,10 @@ describe('Claimer (spec 121)', () => {
     expect(result).toEqual({ claimed: 0, enqueuedFast: 0, enqueuedHeavy: 0, recovered: 0 });
   });
 
-  it('runs recovery only on every 5th tick, with the 2-arg RPC for all six platforms', async () => {
+  it('runs recovery only on every 5th tick, with the 2-arg RPC for the four live platforms', async () => {
+    // Spec 237: instagram and threads were removed with those
+    // sections, so the recovery sweep covers four platforms now.
+    // This test fails on the old code (which swept six).
     const registry = createPublisherRegistry();
     const rpc = vi.fn(async (_fn: string, _args?: Record<string, unknown>) => ({ data: 0, error: null }));
     const queues = { fast: makeQueueProducer(), heavy: makeQueueProducer() };
@@ -278,9 +281,9 @@ describe('Claimer (spec 121)', () => {
     const recoverCalls = rpc.mock.calls.filter(
       (c) => c[0] === 'recover_stuck_publishing_items'
     );
-    expect(recoverCalls).toHaveLength(6);
+    expect(recoverCalls).toHaveLength(4);
     expect(recoverCalls.map((c) => (c[1] as { p_platform: string }).p_platform).sort()).toEqual(
-      ['facebook', 'instagram', 'threads', 'tiktok', 'x', 'youtube']
+      ['facebook', 'tiktok', 'x', 'youtube']
     );
     for (const call of recoverCalls) {
       expect(Object.keys(call[1] as object).sort()).toEqual(['p_platform', 'p_timeout_minutes']);
