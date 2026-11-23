@@ -135,42 +135,119 @@ export interface AddPageModalProps {
   initialPostingTimes?: AddPagePostingTime[] | undefined;
 }
 
-async function executeDiscoverPages(subdomain: string, accountId: string) {
-  try {
-    const data = await api.get(
-      buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover?section=schedule`),
-      { schema: DiscoverPagesResponseSchema }
-    );
-    return {
-      success: true as const,
-      pages: data.pages as DiscoveredPageItem[],
-      // R14/K9: a capped or mid-list-failed fetch is still a
-      // successful response — but the list it carries is not the
-      // account's complete list, and the step must say so. The
-      // capped/partial/dropped warnings render inside
-      // SelectPagesStep (listTruncated/listPartial/droppedCount);
-      // the old generic BG6 banner above the step was removed as
-      // superseded by those specific warnings (same coverage:
-      // a warning shows whenever the list is incomplete).
-      truncated: data.truncated,
-      partial: data.partial,
-      droppedCount: data.droppedCount,
-      error: null,
-    };
-  } catch (error) {
-    reportError(error, { source: 'add-page-discover' });
-    return {
-      success: false as const,
-      pages: [] as DiscoveredPageItem[],
-      truncated: false,
-      partial: false,
-      droppedCount: 0,
-      error:
-        isApiError(error) && error.kind === 'http'
-          ? "Couldn't load pages from this Facebook account. Please check the account connection and try again."
-          : 'An error occurred while loading pages from Facebook. Please try again.',
-    };
+/**
+ * Spec 226 — retry policy for the Pages Add Page discover call.
+ *
+ * A live Graph discover can 429 on the route's 60/min
+ * per-workspace cap (or trip a Graph timeout, which surfaces as
+ * a 5xx). Those failures are transient: the account and its
+ * connection are fine, so the discover tries again instead of
+ * failing the account at once. Auth-dead failures (400/403, and
+ * the 401 that arrives as a session-expired error) are never
+ * retried — retrying a dead token cannot help, and the account
+ * keeps the connection message for those.
+ *
+ * Retryable: an HTTP 429 or 5xx, or a network failure (the request
+ * never produced a response — offline, DNS, or a dropped
+ * connection). Everything else fails at once, as before.
+ */
+const DISCOVER_MAX_ATTEMPTS = 3;
+const DISCOVER_RETRY_BASE_DELAY_MS = 500;
+const DISCOVER_MAX_RETRY_AFTER_SECONDS = 60;
+
+function isRetryableDiscoverError(error: unknown): boolean {
+  if (!isApiError(error)) return false;
+  if (error.kind === 'network') return true;
+  if (error.kind === 'http') {
+    const status = error.status;
+    return status === 429 || (typeof status === 'number' && status >= 500);
   }
+  return false;
+}
+
+/**
+ * The seconds the server says to wait before retrying a 429, read
+ * off the error body's `retryAfterSeconds` (the typed client keeps
+ * the parsed error body as the error's cause). Capped at the
+ * limiter's 60s window; null when the value is absent or unusable,
+ * in which case the caller falls back to exponential backoff.
+ */
+function discoverRetryAfterMs(error: unknown): number | null {
+  if (!isApiError(error) || error.status !== 429) return null;
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause !== null && typeof cause === 'object' && 'retryAfterSeconds' in cause) {
+    const seconds = (cause as { retryAfterSeconds: unknown }).retryAfterSeconds;
+    if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0) {
+      return Math.min(seconds, DISCOVER_MAX_RETRY_AFTER_SECONDS) * 1000;
+    }
+  }
+  return null;
+}
+
+function discoverRetryDelayMs(error: unknown, attempt: number): number {
+  const retryAfter = discoverRetryAfterMs(error);
+  if (retryAfter !== null) return retryAfter;
+  // 500ms, then 1s: transient Graph/DB failures clear fast, and a
+  // longer wait would only stall the step for nothing.
+  return DISCOVER_RETRY_BASE_DELAY_MS * 2 ** attempt;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function executeDiscoverPages(subdomain: string, accountId: string) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < DISCOVER_MAX_ATTEMPTS; attempt++) {
+    try {
+      const data = await api.get(
+        buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover?section=schedule`),
+        { schema: DiscoverPagesResponseSchema }
+      );
+      return {
+        success: true as const,
+        pages: data.pages as DiscoveredPageItem[],
+        // R14/K9: a capped or mid-list-failed fetch is still a
+        // successful response — but the list it carries is not the
+        // account's complete list, and the step must say so. The
+        // capped/partial/dropped warnings render inside
+        // SelectPagesStep (listTruncated/listPartial/droppedCount);
+        // the old generic BG6 banner above the step was removed as
+        // superseded by those specific warnings (same coverage:
+        // a warning shows whenever the list is incomplete).
+        truncated: data.truncated,
+        partial: data.partial,
+        droppedCount: data.droppedCount,
+        error: null,
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 < DISCOVER_MAX_ATTEMPTS && isRetryableDiscoverError(error)) {
+        await sleep(discoverRetryDelayMs(error, attempt));
+        continue;
+      }
+      break;
+    }
+  }
+  // Spec 226: a transient failure is retried (with backoff) inside
+  // this call, so the callers — which await it while `isDiscovering`
+  // is true — wait out the retries too. Only the final failure is
+  // reported: a transient that recovers is not an error, and one
+  // report per discover keeps the log meaningful. A transient that
+  // never clears gets its own message (Facebook was busy), never
+  // the connection message — that one is kept for auth-dead
+  // failures only.
+  reportError(lastError, { source: 'add-page-discover' });
+  return {
+    success: false as const,
+    pages: [] as DiscoveredPageItem[],
+    truncated: false,
+    partial: false,
+    droppedCount: 0,
+    error: isRetryableDiscoverError(lastError)
+      ? "Facebook was busy and couldn't load this account's pages. Please try again."
+      : isApiError(lastError) && lastError.kind === 'http'
+        ? "Couldn't load pages from this Facebook account. Please check the account connection and try again."
+        : 'An error occurred while loading pages from Facebook. Please try again.',
+  };
 }
 
 async function executeImportPages(

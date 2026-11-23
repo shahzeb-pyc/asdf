@@ -563,6 +563,13 @@ describe('Add Page confirmation redesign (toast + gold highlight, no banner)', (
 describe('AddPageModal flow behaviour', () => {
   const fetchMock = vi.fn();
 
+  /** How many times the modal called the live discover route. */
+  function discoverCallCount() {
+    return fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('/pages/discover')
+    ).length;
+  }
+
   beforeEach(() => {
     fetchMock.mockReset();
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -749,11 +756,200 @@ describe('AddPageModal flow behaviour', () => {
     // the modal banner, and never the "no discovered pages" empty
     // state alongside the error (which would read as "this
     // account has no pages").
-    const error = await screen.findByTestId('discover-error-state');
+    // Spec 226: a 500 is transient, so the discover is tried 3
+    // times before the error renders — and the error is the busy
+    // message, never the connection message.
+    const error = await screen.findByTestId('discover-error-state', {}, { timeout: 5000 });
     expect(error.textContent).toContain(
-      "Couldn't load pages from this Facebook account."
+      "Facebook was busy and couldn't load this account's pages. Please try again."
     );
+    expect(error.textContent).not.toContain('check the account connection');
     expect(screen.queryByTestId('no-discovered-pages-state')).toBeNull();
     expect(screen.getByTestId('discover-retry-btn')).toBeTruthy();
+    expect(discoverCallCount()).toBe(3);
+  });
+
+  it('a 429 that fails once recovers on retry and loads the pages (spec 226)', async () => {
+    let discoverCalls = 0;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/pages/discover')) {
+        discoverCalls += 1;
+        if (discoverCalls === 1) {
+          return jsonResponse(
+            {
+              error: 'Too many requests. Please wait 1 seconds before trying again.',
+              retryAfterSeconds: 1,
+            },
+            429
+          );
+        }
+        return jsonResponse({
+          accountId: activeAccount.id,
+          accountDisplayName: activeAccount.displayName,
+          pages: [
+            {
+              fbPageId: 'fb_page_201',
+              pageName: 'Skynet AI Daily',
+              profilePictureUrl: null,
+              category: 'Automation',
+              currentFollowers: 4300,
+              followersCount: 4300,
+              tasks: [],
+              isImported: false,
+            },
+          ],
+          total: 2,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    render(
+      <AddPageModal
+        subdomain="acme"
+        open={true}
+        onOpenChange={vi.fn()}
+        accounts={[activeAccount]}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId(`select-account-${activeAccount.id}`));
+    await screen.findByTestId('discovered-pages-list', {}, { timeout: 5000 });
+    expect(screen.getByText('Skynet AI Daily')).toBeTruthy();
+    expect(screen.queryByTestId('discover-error-state')).toBeNull();
+    // Exactly two discover calls: the failed first attempt + the retry.
+    expect(discoverCallCount()).toBe(2);
+  });
+
+  it('a transient 500 that fails once recovers on retry and loads the pages (spec 226)', async () => {
+    let discoverCalls = 0;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/pages/discover')) {
+        discoverCalls += 1;
+        if (discoverCalls === 1) {
+          return jsonResponse({ error: 'boom' }, 500);
+        }
+        return jsonResponse({
+          accountId: activeAccount.id,
+          accountDisplayName: activeAccount.displayName,
+          pages: [
+            {
+              fbPageId: 'fb_page_201',
+              pageName: 'Skynet AI Daily',
+              profilePictureUrl: null,
+              category: 'Automation',
+              currentFollowers: 4300,
+              followersCount: 4300,
+              tasks: [],
+              isImported: false,
+            },
+          ],
+          total: 2,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    render(
+      <AddPageModal
+        subdomain="acme"
+        open={true}
+        onOpenChange={vi.fn()}
+        accounts={[activeAccount]}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId(`select-account-${activeAccount.id}`));
+    await screen.findByTestId('discovered-pages-list', {}, { timeout: 5000 });
+    expect(screen.getByText('Skynet AI Daily')).toBeTruthy();
+    expect(screen.queryByTestId('discover-error-state')).toBeNull();
+    expect(discoverCallCount()).toBe(2);
+  });
+
+  it('a 429 that never clears ends in the busy message, not the connection message (spec 226)', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          error: 'Too many requests. Please wait 1 seconds before trying again.',
+          retryAfterSeconds: 1,
+        },
+        429
+      )
+    );
+    render(
+      <AddPageModal
+        subdomain="acme"
+        open={true}
+        onOpenChange={vi.fn()}
+        accounts={[activeAccount]}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId(`select-account-${activeAccount.id}`));
+    const error = await screen.findByTestId('discover-error-state', {}, { timeout: 5000 });
+    expect(error.textContent).toContain(
+      "Facebook was busy and couldn't load this account's pages. Please try again."
+    );
+    expect(error.textContent).not.toContain('check the account connection');
+    // The busy message never gains a Reconnect tail: the account is
+    // healthy, so the reconnect hint stays empty.
+    expect(error.textContent).not.toContain('Reconnect');
+    // The manual Retry is still there.
+    expect(screen.getByTestId('discover-retry-btn')).toBeTruthy();
+    // Exactly three attempts: initial + two retries, then it stops.
+    expect(discoverCallCount()).toBe(3);
+  });
+
+  it('the pages step does not render while a retry is still in flight (spec 226)', async () => {
+    let discoverCalls = 0;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/pages/discover')) {
+        discoverCalls += 1;
+        if (discoverCalls === 1) {
+          return jsonResponse(
+            {
+              error: 'Too many requests. Please wait 2 seconds before trying again.',
+              retryAfterSeconds: 2,
+            },
+            429
+          );
+        }
+        return jsonResponse({
+          accountId: activeAccount.id,
+          accountDisplayName: activeAccount.displayName,
+          pages: [
+            {
+              fbPageId: 'fb_page_201',
+              pageName: 'Skynet AI Daily',
+              profilePictureUrl: null,
+              category: 'Automation',
+              currentFollowers: 4300,
+              followersCount: 4300,
+              tasks: [],
+              isImported: false,
+            },
+          ],
+          total: 2,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    render(
+      <AddPageModal
+        subdomain="acme"
+        open={true}
+        onOpenChange={vi.fn()}
+        accounts={[activeAccount]}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId(`select-account-${activeAccount.id}`));
+    // The wait covers the retry: still discovering, no pages list
+    // yet, no error yet — the 2s Retry-After holds the retry in flight.
+    expect(screen.getByTestId('discovering-pages-state')).toBeTruthy();
+    expect(screen.queryByTestId('discovered-pages-list')).toBeNull();
+    expect(screen.queryByTestId('discover-error-state')).toBeNull();
+    // Once the retry lands, the pages render.
+    await screen.findByTestId('discovered-pages-list', {}, { timeout: 5000 });
+    expect(screen.getByText('Skynet AI Daily')).toBeTruthy();
+    expect(discoverCallCount()).toBe(2);
   });
 });
