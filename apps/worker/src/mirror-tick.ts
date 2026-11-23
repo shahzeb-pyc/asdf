@@ -642,7 +642,7 @@ export async function processMirrorCheck(
             break;
           }
         }
-        let caption = resolved.title || reel.title || '';
+        const caption = resolved.title || reel.title || '';
         const claimedId = await deps.claimPost(mirror.id, {
           sourcePostId: reel.video_id,
           caption,
