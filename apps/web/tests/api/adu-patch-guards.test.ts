@@ -131,6 +131,14 @@ interface StoreSeed {
   sourcePlatform?: string;
   sourceUsername?: string;
   destinationPlatform?: string;
+  /** Stored destination state (spec 236): the toggle flips the
+   * destination together with the config. Defaults: active, no markers. */
+  destinationStatus?: string;
+  destinationMetadata?: Record<string, unknown>;
+  /** Linked account state: 'expired' is stamped by a failed publish
+   * and flipped back to 'active' by an ON (the worker gates require
+   * an active account); 'revoked'/'error' still block the toggle. */
+  accountStatus?: string;
 }
 
 async function buildStore(seed: StoreSeed): Promise<Record<string, Row[]>> {
@@ -179,6 +187,8 @@ async function buildStore(seed: StoreSeed): Promise<Record<string, Row[]>> {
         platform: seed.destinationPlatform ?? 'facebook',
         external_destination_id: 'fb-page-1',
         account_id: 'acc-1',
+        status: seed.destinationStatus ?? 'active',
+        metadata: seed.destinationMetadata ?? {},
         encrypted_destination_token: 'old-enc-token',
       },
     ],
@@ -186,6 +196,7 @@ async function buildStore(seed: StoreSeed): Promise<Record<string, Row[]>> {
       {
         id: 'acc-1',
         workspace_id: WORKSPACE_ID,
+        status: seed.accountStatus ?? 'active',
         encrypted_access_token: encryptedAccountToken,
       },
     ],
@@ -194,6 +205,18 @@ async function buildStore(seed: StoreSeed): Promise<Record<string, Row[]>> {
 
 function configStatus(store: Record<string, Row[]>): string {
   return String(store.adu_configs[0]?.status ?? '');
+}
+
+function destinationStatus(store: Record<string, Row[]>): string {
+  return String(store.destinations[0]?.status ?? '');
+}
+
+function destinationMetadata(store: Record<string, Row[]>): Record<string, unknown> {
+  return (store.destinations[0]?.metadata ?? {}) as Record<string, unknown>;
+}
+
+function accountStatus(store: Record<string, Row[]>): string {
+  return String(store.social_accounts[0]?.status ?? '');
 }
 
 function patchRequest(body: Record<string, unknown>): NextRequest {
@@ -230,56 +253,213 @@ function mockContext(store: Record<string, Row[]>) {
   vi.mocked(threadsAduContext).mockResolvedValue(context as never);
 }
 
-describe('ADU PATCH guards — Facebook route', () => {
+describe('ADU PATCH toggle reactivates from any status — Facebook route (spec 236)', () => {
   beforeEach(() => {
     process.env.TOKEN_ENCRYPTION_KEY = TEST_ENCRYPTION_KEY;
     vi.restoreAllMocks();
   });
 
-  it.each([
-    'invalid_token',
-    'fb_rate_limited',
-    'completed',
-    'fb_verification_required',
-    'account_suspended',
-    'check_developer_app',
-    'missing_page_access',
-    'creator_suspended',
-  ])('pauses from %s', async (from) => {
-    const store = await buildStore({ status: from });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchAduConfig(
-      patchRequest({ status: 'paused' }),
-      'acme',
-      'cfg-1',
-      { fetchCreatorPosts: vi.fn() }
-    );
-    expect(res.status).toBe(200);
-    expect(configStatus(store)).toBe('paused');
-  });
+  /** Config status + the destination/account state a failed publish leaves behind. */
+  const ON_CASES: Array<{
+    from: string;
+    destinationStatus: string;
+    destinationMetadata: Record<string, unknown>;
+    accountStatus: string;
+    sourcePlatform?: string;
+  }> = [
+    {
+      from: 'invalid_token',
+      destinationStatus: 'error',
+      destinationMetadata: { fb_status: 'invalid_token' },
+      accountStatus: 'expired',
+    },
+    {
+      from: 'fb_rate_limited',
+      destinationStatus: 'rate_limited',
+      destinationMetadata: { rate_limited_at: '2026-11-20T00:00:00.000Z' },
+      accountStatus: 'active',
+    },
+    {
+      from: 'fb_verification_required',
+      destinationStatus: 'error',
+      destinationMetadata: { fb_status: 'checkpoint' },
+      accountStatus: 'active',
+    },
+    {
+      from: 'account_suspended',
+      destinationStatus: 'error',
+      destinationMetadata: { fb_status: 'account_suspended' },
+      accountStatus: 'active',
+    },
+    {
+      from: 'check_developer_app',
+      destinationStatus: 'error',
+      destinationMetadata: { fb_status: 'check_developer_app' },
+      accountStatus: 'active',
+    },
+    {
+      from: 'page_not_accessible',
+      destinationStatus: 'error',
+      destinationMetadata: { fb_status: 'page_not_accessible' },
+      accountStatus: 'active',
+    },
+    {
+      from: 'missing_page_access',
+      destinationStatus: 'error',
+      destinationMetadata: { fb_status: 'missing_page_access' },
+      accountStatus: 'active',
+    },
+    {
+      from: 'missing_permission',
+      destinationStatus: 'error',
+      destinationMetadata: { fb_status: 'missing_permission' },
+      accountStatus: 'active',
+    },
+    {
+      from: 'creator_suspended',
+      destinationStatus: 'active',
+      destinationMetadata: {},
+      accountStatus: 'active',
+    },
+    {
+      from: 'completed',
+      destinationStatus: 'active',
+      destinationMetadata: {},
+      accountStatus: 'active',
+    },
+    {
+      from: 'invalid_username',
+      destinationStatus: 'active',
+      destinationMetadata: {},
+      accountStatus: 'active',
+    },
+    {
+      from: '2fa_required_on_BM',
+      destinationStatus: 'error',
+      destinationMetadata: { fb_status: '2fa_required_on_BM' },
+      accountStatus: 'active',
+    },
+  ];
 
-  it.each([
-    'paused',
-    'fb_verification_required',
-    'account_suspended',
-    'check_developer_app',
-  ])('activates directly from %s', async (from) => {
-    const store = await buildStore({ status: from });
+  it.each(ON_CASES)(
+    'activates from $from and flips config AND destination together',
+    async ({ from, destinationStatus: destStatus, destinationMetadata: destMetadata, accountStatus: accStatus }) => {
+      const store = await buildStore({
+        status: from,
+        destinationStatus: destStatus,
+        destinationMetadata: { ...destMetadata },
+        accountStatus: accStatus,
+      });
+      mockContext(store);
+      mockViewFromStore(store);
+      const res = await handlePatchAduConfig(
+        patchRequest({ status: 'active' }),
+        'acme',
+        'cfg-1'
+      );
+      expect(res.status).toBe(200);
+      expect(configStatus(store)).toBe('active');
+      // Immo bay gap: the destination flips with the config, so the
+      // worker's destination gate admits the page again.
+      expect(destinationStatus(store)).toBe('active');
+      expect(destinationMetadata(store).fb_status).toBeUndefined();
+      expect(destinationMetadata(store).rate_limited_at).toBeUndefined();
+      expect(accountStatus(store)).toBe('active');
+    }
+  );
+
+  it('activates from invalid_token without refreshing the page token (no probe on toggle)', async () => {
+    const store = await buildStore({
+      status: 'invalid_token',
+      destinationStatus: 'error',
+      destinationMetadata: { fb_status: 'invalid_token' },
+      accountStatus: 'expired',
+    });
     mockContext(store);
     mockViewFromStore(store);
     const res = await handlePatchAduConfig(
       patchRequest({ status: 'active' }),
       'acme',
-      'cfg-1',
-      { fetchCreatorPosts: vi.fn() }
+      'cfg-1'
     );
     expect(res.status).toBe(200);
     expect(configStatus(store)).toBe('active');
+    // The stored page token is left exactly as it was: the toggle
+    // means "try again", and the next publish attempt proves the
+    // token — a failed attempt re-stamps invalid_token.
+    expect(store.destinations[0]?.encrypted_destination_token).toBe('old-enc-token');
+    expect(accountStatus(store)).toBe('active');
   });
 
-  it('rejects active from invalid_token with the reconnect message', async () => {
-    const store = await buildStore({ status: 'invalid_token' });
+  it('activates from creator_suspended and fully resets failed reels, with no creator check', async () => {
+    const store = await buildStore({ status: 'creator_suspended' });
+    mockContext(store);
+    mockViewFromStore(store);
+    const res = await handlePatchAduConfig(
+      patchRequest({ status: 'active' }),
+      'acme',
+      'cfg-1'
+    );
+    expect(res.status).toBe(200);
+    expect(configStatus(store)).toBe('active');
+    expect(
+      store.adu_reels.filter((r) => r.status === 'download_failed')
+    ).toHaveLength(0);
+    // Full reset: status pending AND download_retries 0 AND the claim /
+    // failure stamps cleared, so the reels are claimable again.
+    const reset = store.adu_reels.filter((r) => r.status === 'pending');
+    expect(reset).toHaveLength(3);
+    for (const id of ['reel-1', 'reel-2']) {
+      const row = reset.find((r) => r.id === id);
+      expect(row?.download_retries).toBe(0);
+      expect(row?.download_claimed_at).toBeNull();
+      expect(row?.download_failed_at).toBeNull();
+      expect(Number(row?.download_retries)).toBeLessThan(3);
+    }
+  });
+
+  it.each([
+    'invalid_token',
+    'fb_rate_limited',
+    'fb_verification_required',
+    'account_suspended',
+    'check_developer_app',
+    'missing_page_access',
+    'creator_suspended',
+    'completed',
+  ])('pauses from %s', async (from) => {
+    const c = ON_CASES.find((x) => x.from === from)!;
+    const store = await buildStore({
+      status: from,
+      destinationStatus: c.destinationStatus,
+      destinationMetadata: { ...c.destinationMetadata },
+      accountStatus: c.accountStatus,
+    });
+    mockContext(store);
+    mockViewFromStore(store);
+    const res = await handlePatchAduConfig(
+      patchRequest({ status: 'paused' }),
+      'acme',
+      'cfg-1'
+    );
+    expect(res.status).toBe(200);
+    expect(configStatus(store)).toBe('paused');
+    // OFF clears the destination error too: the card reads Paused
+    // (the destination would otherwise override the badge), and
+    // the worker skips the paused config. The account is untouched
+    // on OFF.
+    expect(destinationStatus(store)).toBe('active');
+    expect(destinationMetadata(store).fb_status).toBeUndefined();
+    expect(accountStatus(store)).toBe(c.accountStatus);
+  });
+
+  it('refuses ON when the linked account is revoked', async () => {
+    const store = await buildStore({
+      status: 'invalid_token',
+      destinationStatus: 'error',
+      destinationMetadata: { fb_status: 'invalid_token' },
+      accountStatus: 'revoked',
+    });
     mockContext(store);
     mockViewFromStore(store);
     const res = await handlePatchAduConfig(
@@ -291,10 +471,16 @@ describe('ADU PATCH guards — Facebook route', () => {
     const body = await res.json();
     expect(body.error).toBe('Reconnect your Facebook account to restore access.');
     expect(configStatus(store)).toBe('invalid_token');
+    expect(destinationStatus(store)).toBe('error');
   });
 
-  it('rejects active from fb_rate_limited with the cooldown message', async () => {
-    const store = await buildStore({ status: 'fb_rate_limited' });
+  it('refuses ON when the destination is disconnected', async () => {
+    const store = await buildStore({
+      status: 'paused',
+      destinationStatus: 'disconnected',
+      destinationMetadata: {},
+      accountStatus: 'active',
+    });
     mockContext(store);
     mockViewFromStore(store);
     const res = await handlePatchAduConfig(
@@ -304,25 +490,9 @@ describe('ADU PATCH guards — Facebook route', () => {
     );
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error).toBe(
-      'Posting resumes automatically in about 3 days. You don\'t need to do anything.'
-    );
-    expect(configStatus(store)).toBe('fb_rate_limited');
-  });
-
-  it('rejects active from completed with the source message', async () => {
-    const store = await buildStore({ status: 'completed' });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1'
-    );
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe('Update the source to continue posting.');
-    expect(configStatus(store)).toBe('completed');
+    expect(body.error).toBe('This page was disconnected. Add it again first.');
+    expect(configStatus(store)).toBe('paused');
+    expect(destinationStatus(store)).toBe('disconnected');
   });
 
   it('rejects a system-set target status', async () => {
@@ -340,195 +510,6 @@ describe('ADU PATCH guards — Facebook route', () => {
       'This status can\'t be changed here.'
     );
     expect(configStatus(store)).toBe('paused');
-  });
-
-  it('activates from missing_page_access when a fresh token arrives and writes it', async () => {
-    const store = await buildStore({ status: 'missing_page_access' });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1',
-      {
-        fetchPageTokenMap: async () =>
-          new Map([['fb-page-1', 'fresh-page-token']]),
-      }
-    );
-    expect(res.status).toBe(200);
-    expect(configStatus(store)).toBe('active');
-    const stored = String(
-      store.destinations[0]?.encrypted_destination_token ?? ''
-    );
-    expect(stored).not.toBe('old-enc-token');
-    expect(await decryptToken(stored, TEST_ENCRYPTION_KEY)).toBe(
-      'fresh-page-token'
-    );
-  });
-
-  it('stays paused from missing_page_access when no fresh token arrives', async () => {
-    const store = await buildStore({ status: 'missing_page_access' });
-    mockContext(store);
-    mockViewFromStore(store);
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const res = await handlePatchAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1',
-      { fetchPageTokenMap: async () => new Map() }
-    );
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toContain('Posting stays paused');
-    expect(configStatus(store)).toBe('missing_page_access');
-    expect(store.destinations[0]?.encrypted_destination_token).toBe(
-      'old-enc-token'
-    );
-    expect(errorSpy).toHaveBeenCalled();
-    errorSpy.mockRestore();
-  });
-
-  it('stays paused from page_not_accessible when the page list fetch fails', async () => {
-    const store = await buildStore({ status: 'page_not_accessible' });
-    mockContext(store);
-    mockViewFromStore(store);
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const res = await handlePatchAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1',
-      {
-        fetchPageTokenMap: async () => {
-          throw new Error('Graph API is down');
-        },
-      }
-    );
-    expect(res.status).toBe(400);
-    expect(configStatus(store)).toBe('page_not_accessible');
-    expect(errorSpy).toHaveBeenCalled();
-    errorSpy.mockRestore();
-  });
-
-  it('activates from creator_suspended (TikTok, available) and fully resets failed reels to pending', async () => {
-    const store = await buildStore({ status: 'creator_suspended' });
-    mockContext(store);
-    mockViewFromStore(store);
-    const fetchCreatorPosts = vi.fn().mockResolvedValue([]);
-    const res = await handlePatchAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1',
-      { fetchCreatorPosts }
-    );
-    expect(res.status).toBe(200);
-    expect(configStatus(store)).toBe('active');
-    expect(fetchCreatorPosts).toHaveBeenCalledWith('creator1');
-    const failed = store.adu_reels.filter(
-      (r) => r.status === 'download_failed'
-    );
-    expect(failed).toHaveLength(0);
-    // Full reset: status pending AND download_retries 0 AND the claim /
-    // failure stamps cleared. A status-only reset would strand these
-    // reels in Pending forever — the claim RPCs only claim pending
-    // reels with download_retries < 3, and every download_failed reel
-    // sits at 3 retries.
-    const reset = store.adu_reels.filter((r) => r.status === 'pending');
-    expect(reset).toHaveLength(3);
-    for (const id of ['reel-1', 'reel-2']) {
-      const row = reset.find((r) => r.id === id);
-      expect(row?.download_retries).toBe(0);
-      expect(row?.download_claimed_at).toBeNull();
-      expect(row?.download_failed_at).toBeNull();
-      // Claimable again.
-      expect(Number(row?.download_retries)).toBeLessThan(3);
-    }
-    // A reel that was already pending is untouched by the reset.
-    const untouched = reset.find((r) => r.id === 'reel-3');
-    expect(untouched?.download_retries).toBe(0);
-    expect(untouched?.download_claimed_at).toBeUndefined();
-    expect(untouched?.download_failed_at).toBeUndefined();
-  });
-
-  it('stays creator_suspended when TikWM says the feed is unavailable', async () => {
-    const store = await buildStore({ status: 'creator_suspended' });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1',
-      {
-        fetchCreatorPosts: async () => {
-          throw new TikwmApiError(
-            'FEED_UNAVAILABLE',
-            "Could not fetch that TikTok account's feed."
-          );
-        },
-      }
-    );
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe('The creator still looks unavailable.');
-    expect(configStatus(store)).toBe('creator_suspended');
-    expect(
-      store.adu_reels.filter((r) => r.status === 'download_failed')
-    ).toHaveLength(2);
-  });
-
-  it('stays creator_suspended on an inconclusive check (rate limit) and logs loudly', async () => {
-    const store = await buildStore({ status: 'creator_suspended' });
-    mockContext(store);
-    mockViewFromStore(store);
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const res = await handlePatchAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1',
-      {
-        fetchCreatorPosts: async () => {
-          throw new TikwmApiError('RATE_LIMITED', 'Rate limited.');
-        },
-      }
-    );
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe(
-      'Could not verify the creator right now. Try again shortly.'
-    );
-    expect(configStatus(store)).toBe('creator_suspended');
-    expect(errorSpy).toHaveBeenCalled();
-    errorSpy.mockRestore();
-  });
-
-  it('activates from creator_suspended directly for a non-TikTok source, no TikWM call', async () => {
-    const store = await buildStore({
-      status: 'creator_suspended',
-      sourcePlatform: 'instagram',
-      sourceUsername: 'creator_ig',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const fetchCreatorPosts = vi.fn();
-    const res = await handlePatchAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1',
-      { fetchCreatorPosts }
-    );
-    expect(res.status).toBe(200);
-    expect(configStatus(store)).toBe('active');
-    expect(fetchCreatorPosts).not.toHaveBeenCalled();
-    expect(
-      store.adu_reels.filter((r) => r.status === 'download_failed')
-    ).toHaveLength(0);
-    // The reset applies here too: retries 0, stamps cleared, claimable.
-    for (const id of ['reel-1', 'reel-2']) {
-      const row = store.adu_reels.find((r) => r.id === id);
-      expect(row?.status).toBe('pending');
-      expect(row?.download_retries).toBe(0);
-      expect(row?.download_claimed_at).toBeNull();
-      expect(row?.download_failed_at).toBeNull();
-    }
   });
 
   it('reactivates a completed config on source change', async () => {

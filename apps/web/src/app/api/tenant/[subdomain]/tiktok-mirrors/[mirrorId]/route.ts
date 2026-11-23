@@ -336,12 +336,13 @@ export async function handleUpdateMirror(
     }
     // Pausing stops new mirrors; resuming re-arms the next hourly
     // check. The last_error is kept until a post succeeds, so a
-    // resumed mirror still shows what went wrong before. The
-    // Facebook detail (fb_status) is kept under the same rule —
-    // the next tick clears it on a clean check or re-stamps it on
-    // a new failure. A resume (paused -> active only) also arms
-    // the tick's catch-up rule: the first tick after resume posts
-    // only the newest reel. Other transitions leave
+    // resumed mirror still shows what went wrong before. Spec 236:
+    // turning the toggle ON clears the mirror's own Facebook detail
+    // (fb_status / fb_rate_limited_at) and the target destination's
+    // error state, so the next tick retries from clean instead of
+    // skipping on the stored error. A resume (paused -> active only)
+    // also arms the tick's catch-up rule: the first tick after
+    // resume posts only the newest reel. Other transitions leave
     // catch_up_pending untouched — in particular, re-arming an
     // error mirror must not clear a catch-up the tick has not run
     // yet.
@@ -350,10 +351,62 @@ export async function handleUpdateMirror(
         ? new Date(Date.now() + 60 * 60 * 1000).toISOString()
         : null;
     const isResume = mirror.status === 'paused' && parsed.data.status === 'active';
+    const activating = parsed.data.status === 'active';
+    // Spec 236, target first: a Facebook target whose destination
+    // row still carries an error (or a rate-limit anchor) would
+    // block the retry — the tick skips error targets. A
+    // disconnected or missing target is left alone: the tick fails
+    // loudly on the missing token. Instagram targets never touch a
+    // destination.
+    if (activating && mirror.target_platform === 'facebook') {
+      const destinations = await loadDestinationsByExternalIds(
+        db,
+        workspaceId,
+        mirror.target_platform,
+        [mirror.target_external_id]
+      );
+      const target =
+        destinations.get(
+          `${mirror.target_platform}:${mirror.target_external_id}`
+        ) ?? null;
+      if (
+        target &&
+        (target.status === 'error' || target.status === 'rate_limited')
+      ) {
+        const nextMetadata = { ...(target.metadata ?? {}) };
+        delete nextMetadata.fb_status;
+        delete nextMetadata.rate_limited_at;
+        if (isLegacyClient(db)) {
+          await db.query(
+            `UPDATE destinations SET status = 'active', metadata = metadata - 'fb_status' - 'rate_limited_at', updated_at = now() WHERE id = $1 AND workspace_id = $2`,
+            [target.id, workspaceId]
+          );
+        } else {
+          const supabase = db as SupabaseClient;
+          const { error } = await supabase
+            .from('destinations')
+            .update({
+              status: 'active',
+              metadata: nextMetadata,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', target.id)
+            .eq('workspace_id', workspaceId);
+          if (error) {
+            throw new Error(`Failed to update mirror target: ${error.message}`);
+          }
+        }
+      }
+    }
     if (isLegacyClient(db)) {
       if (isResume) {
         await db.query(
-          `UPDATE mirrors SET status = $2, next_check_at = $3, catch_up_pending = true, updated_at = now() WHERE id = $1`,
+          `UPDATE mirrors SET status = $2, next_check_at = $3, catch_up_pending = true, fb_status = NULL, fb_rate_limited_at = NULL, updated_at = now() WHERE id = $1`,
+          [mirrorId, parsed.data.status, nextCheckAt]
+        );
+      } else if (activating) {
+        await db.query(
+          `UPDATE mirrors SET status = $2, next_check_at = $3, fb_status = NULL, fb_rate_limited_at = NULL, updated_at = now() WHERE id = $1`,
           [mirrorId, parsed.data.status, nextCheckAt]
         );
       } else {
@@ -364,13 +417,18 @@ export async function handleUpdateMirror(
       }
     } else {
       const supabase = db as SupabaseClient;
+      const mirrorUpdate: Record<string, unknown> = {
+        status: parsed.data.status,
+        next_check_at: nextCheckAt,
+      };
+      if (isResume) mirrorUpdate.catch_up_pending = true;
+      if (activating) {
+        mirrorUpdate.fb_status = null;
+        mirrorUpdate.fb_rate_limited_at = null;
+      }
       const { error } = await supabase
         .from('mirrors')
-        .update(
-          isResume
-            ? { status: parsed.data.status, next_check_at: nextCheckAt, catch_up_pending: true }
-            : { status: parsed.data.status, next_check_at: nextCheckAt }
-        )
+        .update(mirrorUpdate)
         .eq('id', mirrorId)
         .eq('workspace_id', workspaceId);
       if (error) throw new Error(`Failed to update mirror: ${error.message}`);

@@ -1,200 +1,28 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
   AduUpdateConfigSchema,
-  decryptToken,
-  encryptToken,
-  fetchAllFacebookPages,
   generateDailyRandomTimes,
-  getTokenEncryptionKey,
   sanitizeSourceIdentity,
 } from '@fbuploadpro/contracts';
 import { aduContext, loadAduConfigView,
   releaseAduConfigUsage,
 } from '@/lib/server/adu';
-import { fetchTikwmUserPosts, TikwmError } from '@/lib/server/tikwm';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
- * PATCH transition guards (spec §3.3): the UI mirrors these, never the
- * other way round. `paused` is allowed from anywhere; `active` only
- * from the listed statuses (with the checks noted); every other target
- * status is system-set and rejected.
+ * PATCH transition guards (spec §3.3, as rewritten by spec 236): the
+ * UI mirrors these, never the other way round. The automation
+ * toggle reactivates a page from ANY config status — `paused` from
+ * anywhere, `active` from anywhere — with no probes: no page-token
+ * refresh, no creator check. Turning it ON first revives the
+ * linked destination (and account) so the worker admits the page at
+ * the next posting time; a failed publish then falls back to the
+ * real error status. Every other target status is system-set and
+ * rejected.
  */
-const TOKEN_CHECK_STATUSES = new Set([
-  'page_not_accessible',
-  'missing_page_access',
-  'missing_permission',
-]);
-const DIRECT_ACTIVATE_STATUSES = new Set([
-  'paused',
-  'fb_verification_required',
-  'account_suspended',
-  'check_developer_app',
-]);
-
-export interface AduPatchDeps {
-  /** Default: the reconnect flow's page list, as an id → token map. */
-  fetchPageTokenMap?: (userAccessToken: string) => Promise<Map<string, string>>;
-  /** Default: fetchTikwmUserPosts (one paid call per toggle-ON). */
-  fetchCreatorPosts?: (username: string) => Promise<unknown[]>;
-}
-
 interface AduPatchCurrentRow {
   status: string;
   destination_id: string;
-  source_platform: string;
-  source_username: string;
-}
-
-async function defaultFetchPageTokenMap(
-  userAccessToken: string
-): Promise<Map<string, string>> {
-  const { pages, truncated, truncationReason } =
-    await fetchAllFacebookPages(userAccessToken, 'id,access_token');
-  if (truncated) {
-    console.warn(
-      `[ADU PATCH] Page token list truncated (${truncationReason}) — a page beyond the list keeps its stored token until the next reconnect.`
-    );
-  }
-  const tokenMap = new Map<string, string>();
-  for (const page of pages) {
-    if (
-      typeof page?.id === 'string' &&
-      page.id &&
-      typeof page?.access_token === 'string' &&
-      page.access_token
-    ) {
-      tokenMap.set(page.id, page.access_token);
-    }
-  }
-  return tokenMap;
-}
-
-/**
- * Fresh page-token check for toggle-ON from page_not_accessible /
- * missing_page_access / missing_permission: fetch the destination's
- * page token through the connected Facebook account. A token means
- * access is back — it is written (encrypted) to the destination and
- * the config may activate. No token means the config stays in its
- * status; the caller surfaces the plain message and the full reason
- * is logged here, never shown to the user.
- */
-async function refreshPageTokenForConfig(
-  supabase: SupabaseClient,
-  workspaceId: string,
-  configId: string,
-  current: AduPatchCurrentRow,
-  deps: AduPatchDeps
-): Promise<boolean> {
-  const log = (reason: string) =>
-    console.error(
-      `[ADU PATCH] Page token check failed for config ${configId}: ${reason}`
-    );
-  const { data: destination } = await supabase
-    .from('destinations')
-    .select('id, external_destination_id, account_id')
-    .eq('id', current.destination_id)
-    .eq('workspace_id', workspaceId)
-    .maybeSingle();
-  const dest = destination as {
-    external_destination_id?: unknown;
-    account_id?: unknown;
-  } | null;
-  if (!dest || typeof dest.external_destination_id !== 'string' || !dest.external_destination_id) {
-    log('destination row or Facebook page id missing');
-    return false;
-  }
-  if (typeof dest.account_id !== 'string' || !dest.account_id) {
-    log('destination has no linked Facebook account');
-    return false;
-  }
-  const { data: account } = await supabase
-    .from('social_accounts')
-    .select('encrypted_access_token')
-    .eq('id', dest.account_id)
-    .eq('workspace_id', workspaceId)
-    .maybeSingle();
-  const encrypted = (account as { encrypted_access_token?: unknown } | null)
-    ?.encrypted_access_token;
-  if (typeof encrypted !== 'string' || !encrypted) {
-    log('linked Facebook account has no stored access token');
-    return false;
-  }
-  let userToken: string;
-  try {
-    userToken = await decryptToken(encrypted, getTokenEncryptionKey());
-  } catch (err) {
-    log(`could not decrypt the account token: ${err instanceof Error ? err.message : String(err)}`);
-    return false;
-  }
-  let tokenMap: Map<string, string>;
-  try {
-    const fetchMap = deps.fetchPageTokenMap ?? defaultFetchPageTokenMap;
-    tokenMap = await fetchMap(userToken);
-  } catch (err) {
-    log(`page list fetch failed: ${err instanceof Error ? err.message : String(err)}`);
-    return false;
-  }
-  const freshToken = tokenMap.get(dest.external_destination_id);
-  if (!freshToken) {
-    log(`no fresh token for page ${dest.external_destination_id} — access is still missing`);
-    return false;
-  }
-  let encryptedPageToken: string;
-  try {
-    encryptedPageToken = await encryptToken(freshToken, getTokenEncryptionKey());
-  } catch (err) {
-    log(`could not encrypt the fresh page token: ${err instanceof Error ? err.message : String(err)}`);
-    return false;
-  }
-  const { error } = await supabase
-    .from('destinations')
-    .update({
-      encrypted_destination_token: encryptedPageToken,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', current.destination_id)
-    .eq('workspace_id', workspaceId);
-  if (error) {
-    log(`writing the fresh page token failed: ${error.message}`);
-    return false;
-  }
-  return true;
-}
-
-type CreatorAvailability = 'available' | 'unavailable' | 'unknown';
-
-/**
- * TikWM availability check for toggle-ON from creator_suspended with
- * a TikTok source. Success (an array, even empty) means the creator
- * is available. FEED_UNAVAILABLE means the creator itself is gone.
- * Any other failure is inconclusive — the check failed, not the
- * creator — so it never activates; the full detail is logged here.
- */
-async function checkCreatorAvailability(
-  username: string,
-  configId: string,
-  deps: AduPatchDeps
-): Promise<CreatorAvailability> {
-  try {
-    const posts = await (deps.fetchCreatorPosts ?? fetchTikwmUserPosts)(username);
-    if (!Array.isArray(posts)) {
-      console.error(
-        `[ADU PATCH] Creator check for config ${configId} returned a non-array response — treating as inconclusive.`
-      );
-      return 'unknown';
-    }
-    return 'available';
-  } catch (err) {
-    if (err instanceof TikwmError && err.code === 'FEED_UNAVAILABLE') {
-      return 'unavailable';
-    }
-    console.error(
-      `[ADU PATCH] Creator check failed for config ${configId} (inconclusive — not activating):`,
-      err instanceof Error ? err.message : String(err)
-    );
-    return 'unknown';
-  }
 }
 
 /**
@@ -233,7 +61,193 @@ async function resetFailedReelsForReactivation(
 }
 
 /**
- * Enforces the §3.3 transition guards for a status change. Returns a
+ * Spec 236, toggle ON: revives the linked destination row so the
+ * worker admits the page at the next posting time — the config flip
+ * alone is not enough (the worker skips error destinations, and the
+ * card badge reads the destination first). Every refusal happens
+ * before any write, so a refused toggle leaves config, destination
+ * and account untouched. An error or rate-limited destination
+ * becomes active with its markers cleared. A disconnected
+ * destination (or a missing one) is a 400: the page must be added
+ * again first. An expired linked account is flipped back to active
+ * — the claim RPCs and the worker require an active account; a
+ * revoked or errored account is a 400 asking for a reconnect.
+ * Returns a response when the change is rejected or a check fails;
+ * returns null when the destination is already fine.
+ */
+async function reactivateDestinationForToggle(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  configId: string,
+  current: AduPatchCurrentRow
+): Promise<NextResponse | null> {
+  const { data: destination, error: destinationError } = await supabase
+    .from('destinations')
+    .select('id, account_id, status, metadata')
+    .eq('id', current.destination_id)
+    .eq('workspace_id', workspaceId)
+    .maybeSingle();
+  if (destinationError) {
+    console.error(
+      `[ADU PATCH] Failed to read the destination for config ${configId}: ${destinationError.message}`
+    );
+    return NextResponse.json(
+      { error: 'Could not turn automation back on. Try again.' },
+      { status: 500 }
+    );
+  }
+  const dest = destination as {
+    id: string;
+    account_id?: unknown;
+    status?: unknown;
+    metadata?: unknown;
+  } | null;
+  if (!dest) {
+    return NextResponse.json(
+      { error: 'This page was removed. Add it again first.' },
+      { status: 400 }
+    );
+  }
+  if (dest.status === 'disconnected') {
+    return NextResponse.json(
+      { error: 'This page was disconnected. Add it again first.' },
+      { status: 400 }
+    );
+  }
+  // The account is checked before any write: a revoked account
+  // refuses the toggle with everything untouched.
+  if (typeof dest.account_id === 'string' && dest.account_id) {
+    const { data: account, error: accountError } = await supabase
+      .from('social_accounts')
+      .select('status')
+      .eq('id', dest.account_id)
+      .eq('workspace_id', workspaceId)
+      .maybeSingle();
+    if (accountError) {
+      console.error(
+        `[ADU PATCH] Failed to read the linked account for config ${configId}: ${accountError.message}`
+      );
+      return NextResponse.json(
+        { error: 'Could not turn automation back on. Try again.' },
+        { status: 500 }
+      );
+    }
+    const accountStatus = (account as { status?: unknown } | null)?.status;
+    if (accountStatus === 'expired') {
+      const { error: flipError } = await supabase
+        .from('social_accounts')
+        .update({ status: 'active', updated_at: new Date().toISOString() })
+        .eq('id', dest.account_id)
+        .eq('workspace_id', workspaceId);
+      if (flipError) {
+        console.error(
+          `[ADU PATCH] Failed to revive the linked account for config ${configId}: ${flipError.message}`
+        );
+        return NextResponse.json(
+          { error: 'Could not turn automation back on. Try again.' },
+          { status: 500 }
+        );
+      }
+    } else if (accountStatus === 'revoked' || accountStatus === 'error') {
+      return NextResponse.json(
+        { error: 'Reconnect your Facebook account to restore access.' },
+        { status: 400 }
+      );
+    }
+  }
+  if (dest.status === 'error' || dest.status === 'rate_limited') {
+    const nextMetadata = {
+      ...((dest.metadata as Record<string, unknown> | null) ?? {}),
+    };
+    delete nextMetadata.fb_status;
+    delete nextMetadata.rate_limited_at;
+    const { error: updateError } = await supabase
+      .from('destinations')
+      .update({
+        status: 'active',
+        metadata: nextMetadata,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', dest.id)
+      .eq('workspace_id', workspaceId);
+    if (updateError) {
+      console.error(
+        `[ADU PATCH] Failed to revive the destination for config ${configId}: ${updateError.message}`
+      );
+      return NextResponse.json(
+        { error: 'Could not turn automation back on. Try again.' },
+        { status: 500 }
+      );
+    }
+  }
+  return null;
+}
+
+/**
+ * Spec 236, toggle OFF: clears a destination error so the card
+ * reads Paused instead of the error (the ADU badge reads the
+ * destination first). The account is never touched, and nothing
+ * here can refuse the pause.
+ */
+async function clearDestinationErrorForToggle(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  configId: string,
+  current: AduPatchCurrentRow
+): Promise<NextResponse | null> {
+  const { data: destination, error: destinationError } = await supabase
+    .from('destinations')
+    .select('id, status, metadata')
+    .eq('id', current.destination_id)
+    .eq('workspace_id', workspaceId)
+    .maybeSingle();
+  if (destinationError) {
+    console.error(
+      `[ADU PATCH] Failed to read the destination for config ${configId}: ${destinationError.message}`
+    );
+    return NextResponse.json(
+      { error: 'Could not pause automation. Try again.' },
+      { status: 500 }
+    );
+  }
+  const dest = destination as {
+    id: string;
+    status?: unknown;
+    metadata?: unknown;
+  } | null;
+  if (!dest || (dest.status !== 'error' && dest.status !== 'rate_limited')) {
+    return null;
+  }
+  const nextMetadata = {
+    ...((dest.metadata as Record<string, unknown> | null) ?? {}),
+  };
+  delete nextMetadata.fb_status;
+  delete nextMetadata.rate_limited_at;
+  const { error: updateError } = await supabase
+    .from('destinations')
+    .update({
+      status: 'active',
+      metadata: nextMetadata,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', dest.id)
+    .eq('workspace_id', workspaceId);
+  if (updateError) {
+    console.error(
+      `[ADU PATCH] Failed to clear the destination error for config ${configId}: ${updateError.message}`
+    );
+    return NextResponse.json(
+      { error: 'Could not pause automation. Try again.' },
+      { status: 500 }
+    );
+  }
+  return null;
+}
+
+/**
+ * Enforces the §3.3 transition guards for a status change. Spec 236:
+ * the toggle reactivates from ANY config status — `paused` from
+ * anywhere, `active` from anywhere — with no probes. Returns a
  * response when the change is rejected or a check fails; returns null
  * when the change may proceed (side effects already applied).
  */
@@ -242,88 +256,39 @@ async function guardAduStatusChange(
   workspaceId: string,
   configId: string,
   current: AduPatchCurrentRow,
-  target: string,
-  deps: AduPatchDeps
+  target: string
 ): Promise<NextResponse | null> {
-  if (target === 'paused') return null;
+  if (target === 'paused') {
+    return clearDestinationErrorForToggle(
+      supabase,
+      workspaceId,
+      configId,
+      current
+    );
+  }
   if (target !== 'active') {
     return NextResponse.json(
-      { error: 'This status can\'t be changed here.' },
+      { error: "This status can't be changed here." },
       { status: 400 }
     );
   }
-  const from = current.status;
-  if (from === 'active' || DIRECT_ACTIVATE_STATUSES.has(from)) return null;
-  if (TOKEN_CHECK_STATUSES.has(from)) {
-    const ok = await refreshPageTokenForConfig(supabase, workspaceId, configId, current, deps);
-    if (!ok) {
-      return NextResponse.json(
-        {
-          error:
-            'Could not confirm access to this page. Posting stays paused — check the page access and try again.',
-        },
-        { status: 400 }
-      );
-    }
-    return null;
-  }
-  if (from === 'creator_suspended') {
-    if (current.source_platform === 'tiktok') {
-      const availability = await checkCreatorAvailability(
-        current.source_username,
-        configId,
-        deps
-      );
-      if (availability === 'unavailable') {
-        return NextResponse.json(
-          { error: 'The creator still looks unavailable.' },
-          { status: 400 }
-        );
-      }
-      if (availability === 'unknown') {
-        return NextResponse.json(
-          { error: 'Could not verify the creator right now. Try again shortly.' },
-          { status: 400 }
-        );
-      }
-    }
+  const reactivated = await reactivateDestinationForToggle(
+    supabase,
+    workspaceId,
+    configId,
+    current
+  );
+  if (reactivated) return reactivated;
+  if (current.status === 'creator_suspended') {
     return resetFailedReelsForReactivation(supabase, configId);
   }
-  if (from === 'invalid_token') {
-    return NextResponse.json(
-      { error: 'Reconnect your Facebook account to restore access.' },
-      { status: 400 }
-    );
-  }
-  if (from === 'fb_rate_limited') {
-    return NextResponse.json(
-      { error: 'Posting resumes automatically in about 3 days. You don\'t need to do anything.' },
-      { status: 400 }
-    );
-  }
-  if (from === 'completed' || from === 'invalid_username') {
-    return NextResponse.json(
-      { error: 'Update the source to continue posting.' },
-      { status: 400 }
-    );
-  }
-  if (from === '2fa_required_on_BM') {
-    return NextResponse.json(
-      { error: 'Complete two-factor authentication, then turn automation back on.' },
-      { status: 400 }
-    );
-  }
-  return NextResponse.json(
-    { error: 'Automation cannot be turned on from this status.' },
-    { status: 400 }
-  );
+  return null;
 }
 
 export async function handlePatchAduConfig(
   request: NextRequest,
   subdomain: string,
-  id: string,
-  deps: AduPatchDeps = {}
+  id: string
 ): Promise<NextResponse> {
   const resolved = await aduContext(request, subdomain);
   if ('errorResponse' in resolved) return resolved.errorResponse;
@@ -340,7 +305,7 @@ export async function handlePatchAduConfig(
   if (parsed.data.status) {
     const { data: currentRow } = await supabase
       .from('adu_configs')
-      .select('status, destination_id, source_platform, source_username')
+      .select('status, destination_id')
       .eq('workspace_id', workspaceId)
       .eq('id', id)
       .maybeSingle();
@@ -351,8 +316,7 @@ export async function handlePatchAduConfig(
       workspaceId,
       id,
       current,
-      parsed.data.status,
-      deps
+      parsed.data.status
     );
     if (guard) return guard;
     update.status = parsed.data.status;
