@@ -186,6 +186,93 @@ function errorText(error: unknown, fallback: string): string {
 }
 
 /**
+ * Spec 226 — retry policy for the Publish Now discover call.
+ * Mirrors ADU spec 222 (PR 313): a big select-all fires one live
+ * Graph discover per account in parallel, and the tail of the burst
+ * 429s on the route's 60/min per-workspace cap (or trips a Graph
+ * timeout, which surfaces as a 5xx). Those failures are transient:
+ * the account and its connection are fine, so the discover tries
+ * again instead of failing the account at once. Auth-dead failures
+ * (400/403, and the 401 that arrives as a session-expired error)
+ * are never retried — retrying a dead token cannot help.
+ *
+ * Retryable: an HTTP 429 or 5xx, or a network failure (the request
+ * never produced a response — offline, DNS, or a dropped
+ * connection). Everything else fails at once, as before.
+ */
+const DISCOVER_MAX_ATTEMPTS = 3;
+const DISCOVER_RETRY_BASE_DELAY_MS = 500;
+const DISCOVER_MAX_RETRY_AFTER_SECONDS = 60;
+
+function isRetryableDiscoverError(error: unknown): boolean {
+  if (!isApiError(error)) return false;
+  if (error.kind === 'network') return true;
+  if (error.kind === 'http') {
+    const status = error.status;
+    return status === 429 || (typeof status === 'number' && status >= 500);
+  }
+  return false;
+}
+
+/**
+ * The seconds the server says to wait before retrying a 429, read
+ * off the error body's `retryAfterSeconds` (the typed client keeps
+ * the parsed error body as the error's cause). Capped at the
+ * limiter's 60s window; null when the value is absent or unusable,
+ * in which case the caller falls back to exponential backoff.
+ */
+function discoverRetryAfterMs(error: unknown): number | null {
+  if (!isApiError(error) || error.status !== 429) return null;
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause !== null && typeof cause === 'object' && 'retryAfterSeconds' in cause) {
+    const seconds = (cause as { retryAfterSeconds: unknown }).retryAfterSeconds;
+    if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0) {
+      return Math.min(seconds, DISCOVER_MAX_RETRY_AFTER_SECONDS) * 1000;
+    }
+  }
+  return null;
+}
+
+function discoverRetryDelayMs(error: unknown, attempt: number): number {
+  const retryAfter = discoverRetryAfterMs(error);
+  if (retryAfter !== null) return retryAfter;
+  // 500ms, then 1s: transient Graph/DB failures clear fast, and a
+  // longer wait would only stall the step for nothing.
+  return DISCOVER_RETRY_BASE_DELAY_MS * 2 ** attempt;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Loads one account's pages live from Facebook (spec 180). Spec
+ * 226: a transient failure is retried (with backoff) inside this
+ * call, so the caller — `handleContinueFromAccounts`, which awaits
+ * every account before the pages view renders — waits out the
+ * retries too. Only the final failure is thrown: a transient that
+ * recovers is not an error. The caller classifies the final error
+ * (retryable → busy message, anything else → connection message).
+ */
+async function discoverAccountPages(subdomain: string, accountId: string) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < DISCOVER_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await api.get(
+        buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover`),
+        { schema: DiscoverPagesResponseSchema }
+      );
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 < DISCOVER_MAX_ATTEMPTS && isRetryableDiscoverError(error)) {
+        await sleep(discoverRetryDelayMs(error, attempt));
+        continue;
+      }
+      break;
+    }
+  }
+  throw lastError;
+}
+
+/**
  * A failed result is a Meta active account restriction. The restriction is
  * account-level and non-retryable while it stands, so such rows are
  * never re-attempted by "Retry failed only". Detection lives in contracts
@@ -428,23 +515,34 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
       // `isImported` is ignored: a page already in Schedule is
       // still selectable here, because Publish Now holds no copies
       // of its own. One account failing never blocks the others.
+      // Spec 226: the retries live inside
+      // `discoverAccountPages`, so the wait covers them too — the
+      // pages view renders only after every account has settled,
+      // retries included.
       const settled = await Promise.allSettled(
         selectedAccounts.map((account) =>
-          api.get(
-            buildTenantApiPath(subdomain, `/accounts/${account.id}/pages/discover`),
-            { schema: DiscoverPagesResponseSchema }
-          )
+          discoverAccountPages(subdomain, account.id)
         )
       );
 
       const seenPageIds = new Set<string>();
       const nextGroups: PublishNowDiscoveredGroup[] = [];
-      const failures: string[] = [];
+      // The banner is shared, so final failures are classified:
+      // auth-dead wins (the connection message is the actionable
+      // one); a never-clearing transient gets the busy message
+      // instead, never the connection message; a transient that
+      // recovered reports nothing.
+      let hasAuthDeadFailure = false;
+      let hasTransientFailure = false;
       settled.forEach((result, index) => {
         const account = selectedAccounts[index];
         if (!account) return;
         if (result.status === 'rejected') {
-          failures.push(account.displayName);
+          if (isRetryableDiscoverError(result.reason)) {
+            hasTransientFailure = true;
+          } else {
+            hasAuthDeadFailure = true;
+          }
           nextGroups.push({
             accountId: account.id,
             accountName: account.displayName,
@@ -481,9 +579,13 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
       setGroups(nextGroups);
       setSelectedPageKeys([]);
       setPageSearchQuery('');
-      if (failures.length > 0) {
+      if (hasAuthDeadFailure) {
         setErrorMessage(
           "Couldn't load pages from this Facebook account. Please check the account connection and try again."
+        );
+      } else if (hasTransientFailure) {
+        setErrorMessage(
+          "Facebook was busy and couldn't load this account's pages. Please try again."
         );
       }
       setView('pages');
