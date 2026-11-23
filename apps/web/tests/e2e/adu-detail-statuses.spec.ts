@@ -16,10 +16,13 @@
  * Banner copy comes from the Facebook detail page's own local alert
  * switch (`getAduDetailStatusAlert` in adu-detail-page.tsx), not the
  * contracts alert functions the IG/Threads pages use. Toggle lock
- * follows the PATCH guards (spec §3.3): fb_rate_limited,
- * invalid_token, completed and invalid_username lock the toggle
- * (invalid_username added by owner decision 2026-11-09, for symmetry
- * with completed).
+ * follows the spec 236 PATCH guard: only the terminal statuses
+ * completed and invalid_username lock the toggle (invalid_username
+ * added by owner decision 2026-11-09, for symmetry with completed).
+ * The Facebook error statuses (fb_rate_limited, invalid_token, and
+ * the others) leave the toggle enabled — spec 238: the toggle
+ * reactivates the page, and the next publish falls back to the real
+ * error. A disconnected destination locks it too.
  */
 import { test, expect } from '@playwright/test';
 import { createFixtureState, installApiFixtures } from './fixtures/api';
@@ -101,13 +104,13 @@ const CASES: StatusCase[] = [
     status: 'invalid_token',
     bannerTitle: 'Access Token Expired',
     bannerText: /Reconnect your Facebook account/,
-    toggleDisabled: true,
+    toggleDisabled: false,
   },
   {
     status: 'fb_rate_limited',
     bannerTitle: 'Facebook Rate Limited',
     bannerText: /resume automatically/,
-    toggleDisabled: true,
+    toggleDisabled: false,
   },
   {
     status: 'completed',
@@ -302,6 +305,26 @@ for (const viewport of [
       await expect(
         page.getByText(/Complete identity or phone verification in the Meta app/)
       ).toBeVisible();
+
+      if (viewport.name === 'phone') {
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+        );
+        expect(overflow).toBe(0);
+      }
+    });
+
+    test('spec 238: a disconnected destination locks the toggle even when the config is active', async ({
+      page,
+    }) => {
+      currentStatus = 'active';
+      currentDestination = { status: 'disconnected', fbStatus: null };
+      await page.goto(`/tenant/${TENANT.subdomain}/auto-download-upload/${CONFIG_ID}`);
+      await expect(
+        page.getByRole('heading', { name: 'Total Statistics' })
+      ).toBeVisible();
+
+      await expect(page.getByRole('switch')).toBeDisabled();
 
       if (viewport.name === 'phone') {
         const overflow = await page.evaluate(

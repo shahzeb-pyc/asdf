@@ -333,7 +333,7 @@ describe('automation toggle (ADU statuses)', () => {
     expect(await patchBody()).toEqual({ status: 'active' });
   });
 
-  it.each(['invalid_token', 'completed', 'fb_rate_limited'])(
+  it.each(['completed', 'invalid_username'])(
     'locks the toggle for %s',
     async (status) => {
       installFetch({ status, displayStatus: status });
@@ -342,6 +342,29 @@ describe('automation toggle (ADU statuses)', () => {
       expect(screen.getByRole('switch')).toBeDisabled();
     }
   );
+
+  it.each(['invalid_token', 'fb_rate_limited'])(
+    'enables the toggle for %s and turns automation on',
+    async (status) => {
+      installFetch({ status, displayStatus: status });
+      renderDetail();
+      await screen.findByRole('heading', { name: 'Total Statistics' });
+      expect(screen.getByRole('switch')).toBeEnabled();
+      fireEvent.click(screen.getByRole('switch'));
+      expect(await patchBody()).toEqual({ status: 'active' });
+    }
+  );
+
+  it('locks the toggle when the destination is disconnected', async () => {
+    installFetch({
+      status: 'error',
+      displayStatus: 'Error',
+      destinationStatus: 'disconnected',
+    });
+    renderDetail();
+    await screen.findByRole('heading', { name: 'Total Statistics' });
+    expect(screen.getByRole('switch')).toBeDisabled();
+  });
 
   it('shows the paused banner', async () => {
     installFetch({ status: 'paused', displayStatus: 'Paused' });
