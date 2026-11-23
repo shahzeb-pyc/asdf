@@ -140,10 +140,6 @@ export function TikTokHistoryTab({
         queryKey: tenant.tiktokMirrors.detail(mirrorId),
       });
       void queryClient.invalidateQueries({ queryKey: tenant.tiktokMirrors.list });
-      void queryClient.invalidateQueries({
-        queryKey: tenant.instagramAutoRepost.detail(mirrorId),
-      });
-      void queryClient.invalidateQueries({ queryKey: tenant.instagramAutoRepost.list });
       // Refresh this tab from page 1 so the retried row's new
       // status shows without a manual reload.
       void fetchPage(1, false);

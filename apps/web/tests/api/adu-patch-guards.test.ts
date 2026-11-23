@@ -19,29 +19,14 @@ import {
 } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { handlePatchAduConfig } from '../../src/app/api/tenant/[subdomain]/auto-download-upload/[id]/route';
-import { handlePatchIgAduConfig } from '../../src/app/api/tenant/[subdomain]/instagram/auto-download-upload/[id]/route';
-import { handlePatchThreadsAduConfig } from '../../src/app/api/tenant/[subdomain]/threads/auto-download-upload/[id]/route';
 
 vi.mock('@/lib/server/adu', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('@/lib/server/adu')>();
   return { ...actual, aduContext: vi.fn(), loadAduConfigView: vi.fn() };
 });
-vi.mock('@/lib/server/threads-adu', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('@/lib/server/threads-adu')>();
-  return {
-    ...actual,
-    threadsAduContext: vi.fn(),
-    loadThreadsAduConfigView: vi.fn(),
-  };
-});
 
 import { aduContext, loadAduConfigView } from '@/lib/server/adu';
-import {
-  threadsAduContext,
-  loadThreadsAduConfigView,
-} from '@/lib/server/threads-adu';
 
 const TEST_ENCRYPTION_KEY =
   '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -237,7 +222,6 @@ function mockViewFromStore(store: Record<string, Row[]>) {
     status: configStatus(store),
   });
   vi.mocked(loadAduConfigView).mockImplementation(view as never);
-  vi.mocked(loadThreadsAduConfigView).mockImplementation(view as never);
 }
 
 function mockContext(store: Record<string, Row[]>) {
@@ -250,7 +234,6 @@ function mockContext(store: Record<string, Row[]>) {
     },
   };
   vi.mocked(aduContext).mockResolvedValue(context as never);
-  vi.mocked(threadsAduContext).mockResolvedValue(context as never);
 }
 
 describe('ADU PATCH toggle reactivates from any status — Facebook route (spec 236)', () => {
@@ -553,237 +536,3 @@ describe('ADU PATCH toggle reactivates from any status — Facebook route (spec 
   });
 });
 
-describe('ADU PATCH guards — Instagram route', () => {
-  beforeEach(() => {
-    process.env.TOKEN_ENCRYPTION_KEY = TEST_ENCRYPTION_KEY;
-    vi.restoreAllMocks();
-  });
-
-  it('rejects active from invalid_token with the Instagram reconnect message', async () => {
-    const store = await buildStore({
-      status: 'invalid_token',
-      destinationPlatform: 'instagram',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchIgAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1'
-    );
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe(
-      'Reconnect your Instagram account to restore access.'
-    );
-    expect(configStatus(store)).toBe('invalid_token');
-  });
-
-  it('activates directly from missing_permission (no Facebook page token exists for an Instagram destination)', async () => {
-    const store = await buildStore({
-      status: 'missing_permission',
-      destinationPlatform: 'instagram',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchIgAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1'
-    );
-    expect(res.status).toBe(200);
-    expect(configStatus(store)).toBe('active');
-  });
-
-  it('stays creator_suspended when the TikTok creator is unavailable', async () => {
-    const store = await buildStore({
-      status: 'creator_suspended',
-      destinationPlatform: 'instagram',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchIgAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1',
-      {
-        fetchCreatorPosts: async () => {
-          throw new TikwmApiError('FEED_UNAVAILABLE', 'Feed gone.');
-        },
-      }
-    );
-    expect(res.status).toBe(400);
-    expect(configStatus(store)).toBe('creator_suspended');
-  });
-
-  it('activates from creator_suspended for a non-TikTok source and fully resets failed reels', async () => {
-    const store = await buildStore({
-      status: 'creator_suspended',
-      sourcePlatform: 'youtube',
-      sourceUsername: 'creator_yt',
-      destinationPlatform: 'instagram',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const fetchCreatorPosts = vi.fn();
-    const res = await handlePatchIgAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1',
-      { fetchCreatorPosts }
-    );
-    expect(res.status).toBe(200);
-    expect(configStatus(store)).toBe('active');
-    expect(fetchCreatorPosts).not.toHaveBeenCalled();
-    expect(
-      store.adu_reels.filter((r) => r.status === 'download_failed')
-    ).toHaveLength(0);
-    // Full reset, same as the Facebook route: retries 0, stamps cleared,
-    // claimable again (claim RPCs only claim download_retries < 3).
-    for (const id of ['reel-1', 'reel-2']) {
-      const row = store.adu_reels.find((r) => r.id === id);
-      expect(row?.status).toBe('pending');
-      expect(row?.download_retries).toBe(0);
-      expect(row?.download_claimed_at).toBeNull();
-      expect(row?.download_failed_at).toBeNull();
-      expect(Number(row?.download_retries)).toBeLessThan(3);
-    }
-  });
-
-  it('reactivates a completed config on source change', async () => {
-    const store = await buildStore({
-      status: 'completed',
-      destinationPlatform: 'instagram',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchIgAduConfig(
-      patchRequest({ sourcePlatform: 'tiktok', sourceUsername: 'newcreator' }),
-      'acme',
-      'cfg-1'
-    );
-    expect(res.status).toBe(200);
-    expect(configStatus(store)).toBe('active');
-  });
-
-  it('404s for a non-Instagram config', async () => {
-    const store = await buildStore({
-      status: 'paused',
-      destinationPlatform: 'facebook',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchIgAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1'
-    );
-    expect(res.status).toBe(404);
-  });
-});
-
-describe('ADU PATCH guards — Threads route', () => {
-  beforeEach(() => {
-    process.env.TOKEN_ENCRYPTION_KEY = TEST_ENCRYPTION_KEY;
-    vi.restoreAllMocks();
-  });
-
-  it('rejects active from invalid_token with the Threads reconnect message', async () => {
-    const store = await buildStore({
-      status: 'invalid_token',
-      destinationPlatform: 'threads',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchThreadsAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1'
-    );
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe(
-      'Reconnect your Threads account to restore access.'
-    );
-    expect(configStatus(store)).toBe('invalid_token');
-  });
-
-  it('rejects active from fb_rate_limited', async () => {
-    const store = await buildStore({
-      status: 'fb_rate_limited',
-      destinationPlatform: 'threads',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchThreadsAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1'
-    );
-    expect(res.status).toBe(400);
-    expect(configStatus(store)).toBe('fb_rate_limited');
-  });
-
-  it('activates from creator_suspended for a non-TikTok source and resets failed reels', async () => {
-    const store = await buildStore({
-      status: 'creator_suspended',
-      sourcePlatform: 'youtube',
-      sourceUsername: 'creator_yt',
-      destinationPlatform: 'threads',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchThreadsAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1',
-      { fetchCreatorPosts: vi.fn() }
-    );
-    expect(res.status).toBe(200);
-    expect(configStatus(store)).toBe('active');
-    expect(
-      store.adu_reels.filter((r) => r.status === 'download_failed')
-    ).toHaveLength(0);
-    // Full reset, same as the Facebook route: retries 0, stamps cleared,
-    // claimable again (claim RPCs only claim download_retries < 3).
-    for (const id of ['reel-1', 'reel-2']) {
-      const row = store.adu_reels.find((r) => r.id === id);
-      expect(row?.status).toBe('pending');
-      expect(row?.download_retries).toBe(0);
-      expect(row?.download_claimed_at).toBeNull();
-      expect(row?.download_failed_at).toBeNull();
-      expect(Number(row?.download_retries)).toBeLessThan(3);
-    }
-  });
-
-  it('reactivates a completed config on source change', async () => {
-    const store = await buildStore({
-      status: 'completed',
-      destinationPlatform: 'threads',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchThreadsAduConfig(
-      patchRequest({ sourcePlatform: 'tiktok', sourceUsername: 'newcreator' }),
-      'acme',
-      'cfg-1'
-    );
-    expect(res.status).toBe(200);
-    expect(configStatus(store)).toBe('active');
-  });
-
-  it('404s for a non-Threads config', async () => {
-    const store = await buildStore({
-      status: 'paused',
-      destinationPlatform: 'facebook',
-    });
-    mockContext(store);
-    mockViewFromStore(store);
-    const res = await handlePatchThreadsAduConfig(
-      patchRequest({ status: 'active' }),
-      'acme',
-      'cfg-1'
-    );
-    expect(res.status).toBe(404);
-  });
-});
