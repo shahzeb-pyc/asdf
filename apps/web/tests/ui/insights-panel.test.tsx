@@ -155,6 +155,12 @@ describe('rebuilt insights panel (local 1-hour cache + Sync)', () => {
     vi.stubGlobal('fetch', vi.fn());
     renderPanel();
     expect(await screen.findByText('No insights yet')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Facebook only shares insights once a page is big enough — around 6,000–9,000 followers.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/after your first posts publish/)).not.toBeInTheDocument();
     expect(screen.getByText(/No insight data returned/)).toBeInTheDocument();
     expect(screen.queryByText('just now')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Insights' })).not.toBeInTheDocument();

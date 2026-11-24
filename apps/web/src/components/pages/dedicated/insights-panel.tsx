@@ -422,7 +422,7 @@ export function PageTabInsights({ page, subdomain, pageTimezone = 'UTC' }: Reado
         <EmptyState
           type="first-use"
           title="No insights yet"
-          description="Insights will appear here after your first posts publish."
+          description="Facebook only shares insights once a page is big enough — around 6,000–9,000 followers."
           className="min-h-[55svh] justify-center"
           icon={<ChartColumnIcon className="h-10 w-10 text-link" aria-hidden />}
           action={renderSyncButton('insights-empty-sync-btn')}
