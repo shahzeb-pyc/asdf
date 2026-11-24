@@ -315,7 +315,8 @@ describe('AnalyticsPage', () => {
     mockState.aggregate = 'empty';
     renderPage();
 
-    await screen.findByText('No analytics data yet — pages with 100+ followers are picked up on the next daily run.');
+    await screen.findByText('No analytics data yet — Facebook only shares insights once a page is big enough, around 6,000–9,000 followers.');
+    expect(screen.queryByText('pages with 100+ followers are picked up')).not.toBeInTheDocument();
     expect(screen.getAllByText('No location data yet.')).toHaveLength(2);
     expect(screen.getByText('No daily data for this period yet.')).toBeInTheDocument();
     expect(screen.getByText('No data yet')).toBeInTheDocument();
