@@ -23,13 +23,33 @@
  * - fetchLiveFollowersFromGraph itself is unit-tested with a mock
  *   fetch: URL/fields/token, non-2xx (429 included), malformed
  *   bodies, and the abort timeout.
+ *
+ * Spec 241 — stored analytics (same fake, same real encryption):
+ * - One analytics fetch per page fills all four columns on the
+ *   destination row, its ADU configs and its mirrors; a second run
+ *   wholesale-replaces them (no preserved days).
+ * - A failed analytics fetch leaves the stored columns byte-identical
+ *   (followers still update); a no-insights token skips the page.
+ * - Pages under 100 stored followers are skipped with no Graph call.
+ * - Empty location data keeps the old locations column and still
+ *   writes the other three. A followers failure never blocks
+ *   analytics, and an analytics failure never blocks followers.
+ * - fetchPageAnalyticsFromGraph is unit-tested with a mock fetch:
+ *   the 10 verified day metrics (dead metrics never requested),
+ *   deduplicated week/days_28 unique viewers (never the daily sum),
+ *   missing days as zero, no-insights, empty locations, non-2xx,
+ *   and the 429 retry.
  */
 import { describe, expect, it } from 'vitest';
 import { encryptToken, InternalError } from '@fbuploadpro/contracts';
 import {
+  ANALYTICS_DAY_METRICS,
   fetchLiveFollowersFromGraph,
+  fetchPageAnalyticsFromGraph,
   INSIGHTS_FOLLOWERS_PAGE_SIZE,
   InsightsGraphError,
+  InsightsNoDataError,
+  type AnalyticsColumnValues,
   type InsightsFollowersResult,
 } from './insights-followers-tick.js';
 import {
@@ -42,6 +62,15 @@ const MASTER_KEY =
   'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
 const NOW = new Date('2026-11-10T22:00:00.000Z'); // 03:00 PKT
 const NOW_ISO = NOW.toISOString();
+
+/**
+ * The followers tests run the followers concern only: the
+ * analytics fetch is stubbed to skip (no-insights), so no test ever
+ * hits the real Graph endpoint through the chunk's default.
+ */
+const noAnalytics = async (): Promise<AnalyticsColumnValues> => {
+  throw new InsightsNoDataError('test stub: analytics out of scope');
+};
 
 type Row = Record<string, unknown>;
 
@@ -291,7 +320,7 @@ async function runCycle(
     offset,
     limit,
     NOW,
-    overrides
+    { fetchAnalytics: noAnalytics, ...overrides }
   );
 }
 
@@ -720,5 +749,333 @@ describe('fetchLiveFollowersFromGraph', () => {
     ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(InsightsGraphError);
     expect((err as InsightsGraphError).status).toBeUndefined();
+  });
+});
+describe('fetchPageAnalyticsFromGraph', () => {
+  const NOW_241 = new Date('2026-11-10T22:00:00.000Z'); // window ends 2026-11-09
+  const DATES_28 = Array.from({ length: 28 }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 9, 13 + i));
+    return d.toISOString().slice(0, 10);
+  });
+
+  function dayEntry(name: string, base: number, step = 1) {
+    return {
+      name,
+      period: 'day',
+      values: DATES_28.map((date, i) => ({
+        value: base + i * step,
+        end_time: `${date}T08:00:00+0000`,
+      })),
+    };
+  }
+
+  function mockGraph(
+    handler: (url: string) => { status: number; body: unknown }
+  ): { fetchImpl: never; urls: string[] } {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      const { status, body } = handler(url);
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as never;
+    return { fetchImpl, urls };
+  }
+
+  function fullDayPayload() {
+    return {
+      data: [
+        dayEntry('page_media_view', 1000),
+        dayEntry('page_total_media_view_unique', 500),
+        dayEntry('page_views_total', 100),
+        dayEntry('page_post_engagements', 50),
+        dayEntry('page_video_views', 800),
+        dayEntry('page_video_view_time', 60_000, 1000),
+        dayEntry('page_total_actions', 10),
+        dayEntry('page_daily_follows_unique', 5),
+        dayEntry('page_daily_unfollows_unique', 2, 0),
+        dayEntry('page_video_complete_views_30s', 200),
+      ],
+    };
+  }
+
+  function standardHandler(url: string): { status: number; body: unknown } {
+    const u = new URL(url);
+    const period = u.searchParams.get('period');
+    if (period === 'day') return { status: 200, body: fullDayPayload() };
+    if (period === 'week') {
+      return {
+        status: 200,
+        body: {
+          data: [
+            {
+              name: 'page_total_media_view_unique',
+              period: 'week',
+              values: [
+                { value: 1_000_000, end_time: '2026-11-03T08:00:00+0000' },
+                { value: 1_026_117, end_time: '2026-11-09T08:00:00+0000' },
+                // After the window end — must be ignored.
+                { value: 9_999_999, end_time: '2026-11-10T08:00:00+0000' },
+              ],
+            },
+          ],
+        },
+      };
+    }
+    if (period === 'days_28') {
+      return {
+        status: 200,
+        body: {
+          data: [
+            {
+              name: 'page_total_media_view_unique',
+              period: 'days_28',
+              values: [{ value: 1_173_333, end_time: '2026-11-09T08:00:00+0000' }],
+            },
+          ],
+        },
+      };
+    }
+    // lifetime — Call D
+    return {
+      status: 200,
+      body: {
+        data: [
+          {
+            name: 'page_follows_country',
+            period: 'lifetime',
+            values: [{ value: { PK: 9860, US: 1940 }, end_time: '2026-11-09T08:00:00+0000' }],
+          },
+          {
+            name: 'page_follows_city',
+            period: 'lifetime',
+            values: [{ value: { Karachi: 3420 }, end_time: '2026-11-09T08:00:00+0000' }],
+          },
+        ],
+      },
+    };
+  }
+
+  it('fills 1d/7d/28d from Call A and takes the deduplicated week/days_28 values, never the daily sums', async () => {
+    const { fetchImpl, urls } = mockGraph(standardHandler);
+    const out = await fetchPageAnalyticsFromGraph(
+      'fb-page-a',
+      'token',
+      fetchImpl,
+      15_000,
+      async () => {},
+      NOW_241
+    );
+    expect(urls).toHaveLength(4);
+    // 1d = the last day (2026-11-09, index 27).
+    expect(out.analytics1d.date).toBe('2026-11-09');
+    expect(out.analytics1d.media_views).toBe(1027);
+    expect(out.analytics1d.unique_viewers).toBe(527);
+    expect(out.analytics1d.video_view_time_ms).toBe(87_000);
+    // 7d / 28d day counts.
+    expect(out.analytics7d.days).toHaveLength(7);
+    expect(out.analytics7d.days[0]!.date).toBe('2026-11-03');
+    expect(out.analytics7d.days[6]!.media_views).toBe(1027);
+    expect(out.analytics28d.days).toHaveLength(28);
+    expect(out.analytics28d.days[0]!.date).toBe('2026-10-13');
+    // Deduplicated values from Calls B/C — the daily sums are larger.
+    const dailyViewerSum = out.analytics28d.days.reduce((s, d) => s + d.unique_viewers, 0);
+    expect(out.analytics7d.unique_viewers_7d).toBe(1_026_117);
+    expect(out.analytics28d.unique_viewers_28d).toBe(1_173_333);
+    expect(out.analytics7d.unique_viewers_7d).not.toBe(
+      out.analytics7d.days.reduce((s, d) => s + d.unique_viewers, 0)
+    );
+    expect(out.analytics28d.unique_viewers_28d).not.toBe(dailyViewerSum);
+    // Locations — every country/city Facebook returned.
+    expect(out.locations).toEqual({
+      countries: [
+        { country: 'PK', followers: 9860 },
+        { country: 'US', followers: 1940 },
+      ],
+      cities: [{ city: 'Karachi', followers: 3420 }],
+    });
+  });
+
+  it('requests only the 10 verified day metrics, with the 28-day window ending yesterday', async () => {
+    const { fetchImpl, urls } = mockGraph(standardHandler);
+    await fetchPageAnalyticsFromGraph('fb-page-a', 'token', fetchImpl, 15_000, async () => {}, NOW_241);
+    const dayUrl = new URL(urls[0]!);
+    expect(dayUrl.searchParams.get('metric')).toBe(ANALYTICS_DAY_METRICS.join(','));
+    expect(dayUrl.searchParams.get('period')).toBe('day');
+    expect(dayUrl.searchParams.get('since')).toBe('2026-10-13');
+    expect(dayUrl.searchParams.get('until')).toBe('2026-11-09');
+    for (const dead of ['page_fan_adds', 'page_video_views_unique', 'page_video_views_10s']) {
+      expect(urls.join('|')).not.toContain(dead);
+    }
+    const weekUrl = new URL(urls[1]!);
+    expect(weekUrl.searchParams.get('metric')).toBe('page_total_media_view_unique');
+    expect(weekUrl.searchParams.get('period')).toBe('week');
+    const days28Url = new URL(urls[2]!);
+    expect(days28Url.searchParams.get('period')).toBe('days_28');
+    const lifetimeUrl = new URL(urls[3]!);
+    expect(lifetimeUrl.searchParams.get('metric')).toBe(
+      'page_follows_country,page_follows_city'
+    );
+    expect(lifetimeUrl.searchParams.get('period')).toBe('lifetime');
+  });
+
+  it('a day Facebook does not return is zero, not an error', async () => {
+    const { fetchImpl } = mockGraph((url) => {
+      const period = new URL(url).searchParams.get('period');
+      if (period === 'day') {
+        return {
+          status: 200,
+          body: {
+            data: [
+              {
+                name: 'page_media_view',
+                period: 'day',
+                values: [{ value: 42, end_time: '2026-11-09T08:00:00+0000' }],
+              },
+            ],
+          },
+        };
+      }
+      return standardHandler(url);
+    });
+    const out = await fetchPageAnalyticsFromGraph(
+      'fb-page-a',
+      'token',
+      fetchImpl,
+      15_000,
+      async () => {},
+      NOW_241
+    );
+    expect(out.analytics28d.days).toHaveLength(28);
+    expect(out.analytics28d.days.slice(0, 27).every((d) => d.media_views === 0)).toBe(true);
+    expect(out.analytics28d.days[27]!.media_views).toBe(42);
+    expect(out.analytics1d.media_views).toBe(42);
+    // The other 9 metrics are all zero (missing entries are zero-filled).
+    expect(out.analytics1d.unique_viewers).toBe(0);
+  });
+
+  it('empty day data throws InsightsNoDataError (token lacks read_insights)', async () => {
+    const { fetchImpl } = mockGraph(() => ({ status: 200, body: { data: [] } }));
+    const err = await fetchPageAnalyticsFromGraph(
+      'fb-page-a',
+      'token',
+      fetchImpl,
+      15_000,
+      async () => {},
+      NOW_241
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InsightsNoDataError);
+  });
+
+  it('empty location data returns locations null and still fills the other three columns', async () => {
+    const { fetchImpl } = mockGraph((url) => {
+      if (new URL(url).searchParams.get('period') === 'lifetime') {
+        return { status: 200, body: { data: [] } };
+      }
+      return standardHandler(url);
+    });
+    const out = await fetchPageAnalyticsFromGraph(
+      'fb-page-a',
+      'token',
+      fetchImpl,
+      15_000,
+      async () => {},
+      NOW_241
+    );
+    expect(out.locations).toBeNull();
+    expect(out.analytics1d.media_views).toBe(1027);
+  });
+
+  it('a one-sided location answer returns locations null (keep the old column, never store an empty side)', async () => {
+    // Countries present, cities empty — and the mirror case.
+    for (const lifetimeData of [
+      [
+        {
+          name: 'page_follows_country',
+          period: 'lifetime',
+          values: [{ value: { PK: 9860 }, end_time: '2026-11-09T08:00:00+0000' }],
+        },
+        {
+          name: 'page_follows_city',
+          period: 'lifetime',
+          values: [{ value: {}, end_time: '2026-11-09T08:00:00+0000' }],
+        },
+      ],
+      [
+        {
+          name: 'page_follows_country',
+          period: 'lifetime',
+          values: [{ value: {}, end_time: '2026-11-09T08:00:00+0000' }],
+        },
+        {
+          name: 'page_follows_city',
+          period: 'lifetime',
+          values: [{ value: { Karachi: 3420 }, end_time: '2026-11-09T08:00:00+0000' }],
+        },
+      ],
+    ]) {
+      const { fetchImpl } = mockGraph((url) => {
+        if (new URL(url).searchParams.get('period') === 'lifetime') {
+          return { status: 200, body: { data: lifetimeData } };
+        }
+        return standardHandler(url);
+      });
+      const out = await fetchPageAnalyticsFromGraph(
+        'fb-page-a',
+        'token',
+        fetchImpl,
+        15_000,
+        async () => {},
+        NOW_241
+      );
+      expect(out.locations).toBeNull();
+      expect(out.analytics1d.media_views).toBe(1027);
+    }
+  });
+
+  it('a non-2xx insights call throws InsightsGraphError with its status', async () => {
+    const { fetchImpl } = mockGraph((url) => {
+      if (new URL(url).searchParams.get('period') === 'day') {
+        return { status: 400, body: { error: { message: '(#100) bad metric', code: 100 } } };
+      }
+      return standardHandler(url);
+    });
+    const err = await fetchPageAnalyticsFromGraph(
+      'fb-page-a',
+      'token',
+      fetchImpl,
+      15_000,
+      async () => {},
+      NOW_241
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InsightsGraphError);
+    expect((err as InsightsGraphError).status).toBe(400);
+  });
+
+  it('a 429 on the day call retries with backoff and then succeeds', async () => {
+    const sleeps: number[] = [];
+    let dayAttempts = 0;
+    const { fetchImpl } = mockGraph((url) => {
+      if (new URL(url).searchParams.get('period') === 'day') {
+        dayAttempts += 1;
+        if (dayAttempts <= 2) return { status: 429, body: {} };
+      }
+      return standardHandler(url);
+    });
+    const out = await fetchPageAnalyticsFromGraph(
+      'fb-page-a',
+      'token',
+      fetchImpl,
+      15_000,
+      async (ms) => {
+        sleeps.push(ms);
+      },
+      NOW_241
+    );
+    expect(dayAttempts).toBe(3);
+    expect(sleeps).toEqual([1000, 2000]);
+    expect(out.analytics1d.media_views).toBe(1027);
   });
 });
