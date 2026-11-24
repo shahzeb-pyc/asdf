@@ -95,7 +95,6 @@ export interface DedicatedPageHeaderProps {
 }
 
 interface PageStatusDetails {
-  isPaused: boolean;
   statusLabel: string;
   ringClass: string;
 }
@@ -106,7 +105,6 @@ function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetail
   // the ring follows the same mark-kind rule.
   const kind = getPageStatusMarkKind(status);
   return {
-    isPaused: status === 'paused',
     statusLabel: getPageStatusLabel(status),
     ringClass:
       kind === 'operational'
@@ -198,7 +196,7 @@ export function DedicatedPageHeader({
   const handleStatusAction = async () => {
     setIsUpdatingStatus(true);
     try {
-      await onStatusToggle(statusInfo.isPaused ? 'active' : 'paused');
+      await onStatusToggle(resumeAction ? 'active' : 'paused');
     } finally {
       setIsUpdatingStatus(false);
       setIsMenuOpen(false);
@@ -249,14 +247,18 @@ export function DedicatedPageHeader({
     }
   };
 
-  // Status family 1A: Pause/Resume live ONLY in the three-dots menu
-  // for active (Pause) and paused (Resume) pages. Checkpoint,
-  // expired-token, rate-limited, disconnected, and unknown pages
-  // show no Pause/Resume item at all — their recovery paths are the
-  // banners (Mark Verified, Reconnect, wait/auto-resume), not a menu
-  // Resume that would silently clear those states. The server PATCH
-  // gate enforces the same rule; this is the UI half.
-  const showStatusAction = page.status === 'active' || page.status === 'paused';
+  // Spec 238 (spec 236 API): Pause/Resume live ONLY in the
+  // three-dots menu, and are available on every status except
+  // disconnected — the only status the server PATCH gate still
+  // refuses. Active pages pause; paused and error pages resume:
+  // the toggle clears the error marker server-side, and the next
+  // publish falls back to the real error if the problem is still
+  // there. Disconnected pages show no Pause/Resume item at all —
+  // the page must be added again first. The checkpoint banner
+  // keeps its Mark Verified action alongside this menu Resume.
+  const showStatusAction = page.status !== 'disconnected';
+  // Only an active page pauses; paused and error pages resume.
+  const resumeAction = page.status !== 'active';
 
   return (
     <div data-testid="dedicated-page-header" className="mb-6">
@@ -514,7 +516,7 @@ export function DedicatedPageHeader({
                       void handleStatusAction();
                     }}
                   >
-                    {statusInfo.isPaused ? (
+                    {resumeAction ? (
                       <PlayIcon aria-hidden />
                     ) : (
                       <PauseIcon aria-hidden />
@@ -522,7 +524,7 @@ export function DedicatedPageHeader({
                     <span>
                       {isUpdatingStatus
                         ? 'Updating...'
-                        : statusInfo.isPaused
+                        : resumeAction
                           ? 'Resume posting'
                           : 'Pause posting'}
                     </span>

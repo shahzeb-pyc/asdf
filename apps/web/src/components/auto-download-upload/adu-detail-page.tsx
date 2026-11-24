@@ -661,11 +661,21 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   if (loading) return <AduDetailSkeleton />;
   if (!config) return <div className="mx-auto w-full max-w-7xl px-6 py-6">{error ? <Banner variant="critical" title="Page not found" description={error} /> : null}</div>;
 
+  // Spec 238 (spec 236 API): the automation switch is enabled on
+  // the Facebook error statuses the toggle now reactivates from
+  // (rate-limited, invalid token, and the other error statuses) —
+  // the next publish falls back to the real error if the problem
+  // is still there. It stays locked only where reactivation is
+  // meaningless or the API still refuses: `completed` (the source
+  // is exhausted — the worker re-marks it completed on a verified
+  // empty result, and its decided recovery is a source change),
+  // `invalid_username` (the source identity itself is wrong —
+  // recovery is updating the source), and a disconnected
+  // destination (the page must be added again first).
   const automationLocked =
-    config.status === 'fb_rate_limited' ||
-    config.status === 'invalid_token' ||
     config.status === 'completed' ||
-    config.status === 'invalid_username';
+    config.status === 'invalid_username' ||
+    config.destinationStatus === 'disconnected';
   const statusKind = getAduDetailStatusMarkKind(config.displayStatus);
   const ringClass = ADU_DETAIL_RING_CLASSES[statusKind];
   const initials = getUserInitials(config.destinationName);

@@ -631,34 +631,61 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       );
     });
 
-    it('hides Pause/Resume from the menu on checkpoint, expired, rate-limited, and disconnected pages', async () => {
+    it('shows Resume posting in the menu on error pages and resumes through onStatusToggle via the menu', async () => {
       const user = userEvent.setup();
       for (const status of [
         'page_checkpoint',
         'invalid_token',
         'fb_rate_limited',
-        'disconnected',
+        'page_not_accessible',
+        'missing_page_access',
+        'missing_permission',
+        'check_developer_app',
+        'account_suspended',
+        '2fa_required_on_BM',
       ] as const) {
+        const onStatusToggle = vi.fn().mockResolvedValue(undefined);
         const { container, unmount } = rtlRender(
           <DedicatedPageHeader
             page={{ ...samplePage, status }}
             subdomain="cyberdyne"
-            onStatusToggle={vi.fn()}
+            onStatusToggle={onStatusToggle}
             onDisconnectRequest={vi.fn()}
           />
         );
         await user.click(
           container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
         );
-        // Disconnect stays in the menu; Pause/Resume must not.
-        expect(
-          document.querySelector('[data-testid="header-menu-disconnect-btn"]')
-        ).not.toBeNull();
-        expect(
-          document.querySelector('[data-testid="header-menu-pause-resume-btn"]')
-        ).toBeNull();
+        const resumeItem = document.querySelector(
+          '[data-testid="header-menu-pause-resume-btn"]'
+        );
+        expect(resumeItem?.textContent).toContain('Resume posting');
+        await user.click(resumeItem as Element);
+        expect(onStatusToggle).toHaveBeenCalledWith('active');
         unmount();
       }
+    });
+
+    it('hides Pause/Resume from the menu on disconnected pages', async () => {
+      const user = userEvent.setup();
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'disconnected' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      // Disconnect stays in the menu; Pause/Resume must not.
+      expect(
+        document.querySelector('[data-testid="header-menu-disconnect-btn"]')
+      ).not.toBeNull();
+      expect(
+        document.querySelector('[data-testid="header-menu-pause-resume-btn"]')
+      ).toBeNull();
     });
 
     it('renders Disconnected (not Active) for a disconnected page', () => {
