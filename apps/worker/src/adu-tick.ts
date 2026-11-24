@@ -6,9 +6,9 @@ import {
   ADU_STALE_PUBLISHING_SECONDS,
   evaluateAduPublishError,
   FB_RATE_LIMITED_COOLDOWN_MS,
+  findDueSlots,
   InternalError,
   isValidTimezone,
-  localTimeInTimezone,
   type AduPublishErrorDecision,
   type DatabaseDestinationRow,
   type DatabaseSocialAccountRow,
@@ -129,6 +129,18 @@ function aduFailureFields(
 // rows that change status mid-tick cannot shift the page window and
 // get skipped, the way offset paging would skip them.
 export const ADU_TICK_PAGE_SIZE = 500;
+
+// Spec 245 — intake catch-up window, minutes. A posting time whose
+// occurrence falls within this window is still due: the idle poll
+// backoff (spec 212) can skip whole minutes on quiet nights, and the
+// old exact-minute match lost those posts silently, with no error
+// and no retry. 5 minutes matches the slot-claim window
+// (SLOT_CLAIM_WINDOW_MINUTES) and covers the poll gate's 240s
+// maximum skip. The unique index on adu_posting_jobs
+// (config_id, schedule_slot_at) is the real guard against
+// double-mint inside the window: a second insert for the same slot
+// is rejected with 23505.
+export const ADU_INTAKE_WINDOW_MINUTES = 5;
 
 // Publish window: at most this many actionable jobs are processed per
 // tick — the old code's oldest-100 load, kept as the throttle.
@@ -823,8 +835,27 @@ export async function runAduTick(options: {
       );
       continue;
     }
-    const localTime = localTimeInTimezone(now, config.timezone);
-    if (!config.posting_times.includes(localTime)) continue;
+    // Spec 245 — catch-up window: a posting time whose occurrence
+    // falls within the last ADU_INTAKE_WINDOW_MINUTES minutes is
+    // still due. The old exact-minute match (`localTimeInTimezone`
+    // must equal a posting time) lost the post silently whenever the
+    // idle poll backoff skipped that minute. findDueSlots is the
+    // slot-claim path's shared helper (same 5-minute window); it
+    // returns each due slot's occurrence instant, which is also the
+    // job's schedule_slot_at — so the same slot always stamps the
+    // same instant, and the unique index dedupes it.
+    const dueSlots = findDueSlots({
+      slots: config.posting_times.map((time) => ({
+        id: time,
+        timeOfDay: time,
+        isActive: true,
+        allowedFormats: null,
+      })),
+      timezone: config.timezone,
+      now,
+      windowMinutes: ADU_INTAKE_WINDOW_MINUTES,
+    });
+    if (dueSlots.length === 0) continue;
     // Spec 174 3A (Gate 2A finding 3): intake mints jobs only for the
     // Auto Download copy of an ACTIVE destination. The publish loop
     // already refuses non-active destinations, but intake never
@@ -868,128 +899,153 @@ export async function runAduTick(options: {
     }
     if ((failed24h ?? 0) > ADU_SKIP_FAILED_24H) continue;
 
-    const slotAt = new Date(now);
-    slotAt.setSeconds(0, 0);
-    const { data: oldest, error: oldestError } = await supabase
-      .from('adu_reels')
-      .select('*')
-      .eq('config_id', config.id)
-      .eq('status', 'downloaded')
-      .not('media_url', 'is', null)
-      .order('downloaded_at', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    if (oldestError) {
-      throw new InternalError(`ADU intake oldest load failed: ${oldestError.code ?? 'unknown'} ${oldestError.message}`);
-    }
-    if (!oldest) {
-      // A reel whose job terminally failed is terminal like a posted
-      // reel — it must not block the config completing. Settlement
-      // writes the reel 'failed' (see markAduReelFailed), but a crash
-      // between the job update and the reel update leaves the reel
-      // 'processing' with a terminally-failed job; exclude those reels
-      // from the busy check by their job rows (one bounded page — the
-      // exclusion only matters for crash-window rows). PostgREST has
-      // no "rows WITHOUT a matching embedded row" filter, so the
-      // exclusion is a second query, not an embedded filter.
-      const { data: terminalFailed, error: terminalFailedError } = await supabase
-        .from('adu_posting_jobs')
-        .select('reel_id')
-        .eq('config_id', config.id)
-        .in('status', ADU_TERMINAL_FAILED_JOB_STATUSES)
-        .limit(ADU_TICK_PAGE_SIZE);
-      if (terminalFailedError) {
-        throw new InternalError(
-          `ADU intake terminal-failed load failed: ${terminalFailedError.code ?? 'unknown'} ${terminalFailedError.message}`,
-        );
-      }
-      const terminalReelIds = ((terminalFailed ?? []) as Array<{ reel_id: string }>).map(
-        (row) => row.reel_id,
-      );
-      let busyQuery = supabase
-        .from('adu_reels')
-        .select('id')
-        .eq('config_id', config.id)
-        .in('status', ['pending', 'processing']);
-      if (terminalReelIds.length > 0) {
-        busyQuery = busyQuery.not('id', 'in', `(${terminalReelIds.join(',')})`);
-      }
-      const { data: busy, error: busyError } = await busyQuery.limit(1);
-      if (busyError) {
-        throw new InternalError(`ADU intake busy load failed: ${busyError.code ?? 'unknown'} ${busyError.message}`);
-      }
-      const { data: busyJobs, error: busyJobsError } = await supabase
+    // One iteration per due slot (normally one; two when a tick
+    // covers two close posting times). The destination and
+    // failed-count checks above run once per config; everything
+    // below is per slot.
+    for (const { occurrence } of dueSlots) {
+      // Pre-check: a job already minted for this slot — by the
+      // on-time tick or an earlier catch-up tick. Skip before
+      // claiming a reel, so a catch-up tick does no claim/release
+      // churn. The unique index on (config_id, schedule_slot_at)
+      // is the race guard for two ticks covering the same slot
+      // concurrently; this check is the cheap path.
+      const slotAt = occurrence.toISOString();
+      const { data: existingJobs, error: existingError } = await supabase
         .from('adu_posting_jobs')
         .select('id')
         .eq('config_id', config.id)
-        .in('status', ['pending_publish', 'publishing'])
+        .eq('schedule_slot_at', slotAt)
         .limit(1);
-      if (busyJobsError) {
-        throw new InternalError(`ADU intake busy-job load failed: ${busyJobsError.code ?? 'unknown'} ${busyJobsError.message}`);
-      }
-      // Only mark completed on a VERIFIED empty result: all three
-      // queries succeeded and found nothing downloadable and nothing
-      // busy. An error above throws instead of completing.
-      if ((!busy || busy.length === 0) && (!busyJobs || busyJobs.length === 0)) {
-        await supabase
-          .from('adu_configs')
-          .update({ status: 'completed', updated_at: now.toISOString() })
-          .eq('id', config.id);
-        result.intakeCompleted += 1;
-      }
-      continue;
-    }
-    // Claim the reel BEFORE inserting the job: the old post-insert
-    // status update was unchecked, so when it failed the reel stayed
-    // 'downloaded' and the next slot intaken it again (same video
-    // posted twice). A lost claim (0 rows) means another tick took
-    // this reel — skip, never insert a second job for it.
-    // The claim also clears download_claimed_at: mark_adu_reel_downloaded
-    // leaves the downloader's claim timestamp set, and the VPS
-    // downloader's per-loop reset_stale_adu_reel_downloads(40) resets
-    // any 'processing' reel with a >40-min-old claim timestamp back to
-    // 'pending' — which undid this claim, re-downloaded the reel, and
-    // re-minted it at the next slot (duplicate jobs, Nov 9–13 2026).
-    // A tick-claimed reel carries no download claim, so NULL is the
-    // correct steady state; the reset then skips it (it requires a
-    // non-null timestamp).
-    const { data: claimedReel, error: claimReelError } = await supabase
-      .from('adu_reels')
-      .update({ status: 'processing', download_claimed_at: null })
-      .eq('id', (oldest as { id: string }).id)
-      .eq('status', 'downloaded')
-      .select('id');
-    if (claimReelError) {
-      throw new InternalError(`ADU intake reel claim failed: ${claimReelError.code ?? 'unknown'} ${claimReelError.message}`);
-    }
-    if (!claimedReel || claimedReel.length === 0) continue;
-    const { error: insertError } = await supabase.from('adu_posting_jobs').insert({
-      config_id: config.id,
-      reel_id: (oldest as { id: string }).id,
-      schedule_slot_at: slotAt.toISOString(),
-      status: 'pending_publish',
-    });
-    if (insertError) {
-      // Release the claim so the reel stays intakable; without this
-      // it would sit in 'processing' forever after a failed insert.
-      // A failed release is logged loudly: a reel stranded in
-      // 'processing' blocks the config (intake only selects
-      // 'downloaded', and 'processing' counts as busy), so a silent
-      // release failure would wedge the config with no trace.
-      const { error: releaseError } = await supabase
-        .from('adu_reels')
-        .update({ status: 'downloaded' })
-        .eq('id', (oldest as { id: string }).id);
-      if (releaseError) {
-        console.error(
-          `ADU intake reel claim release failed: reel=${(oldest as { id: string }).id} code=${releaseError.code ?? 'unknown'} ${releaseError.message}`,
+      if (existingError) {
+        throw new InternalError(
+          `ADU intake existing-job load failed: ${existingError.code ?? 'unknown'} ${existingError.message}`,
         );
       }
-      if (insertError.code === '23505') continue; // already intaken for this slot
-      throw new InternalError(`ADU intake insert failed: ${insertError.message}`);
+      if (existingJobs && existingJobs.length > 0) continue;
+      const { data: oldest, error: oldestError } = await supabase
+        .from('adu_reels')
+        .select('*')
+        .eq('config_id', config.id)
+        .eq('status', 'downloaded')
+        .not('media_url', 'is', null)
+        .order('downloaded_at', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (oldestError) {
+        throw new InternalError(`ADU intake oldest load failed: ${oldestError.code ?? 'unknown'} ${oldestError.message}`);
+      }
+      if (!oldest) {
+        // A reel whose job terminally failed is terminal like a posted
+        // reel — it must not block the config completing. Settlement
+        // writes the reel 'failed' (see markAduReelFailed), but a crash
+        // between the job update and the reel update leaves the reel
+        // 'processing' with a terminally-failed job; exclude those reels
+        // from the busy check by their job rows (one bounded page — the
+        // exclusion only matters for crash-window rows). PostgREST has
+        // no "rows WITHOUT a matching embedded row" filter, so the
+        // exclusion is a second query, not an embedded filter.
+        const { data: terminalFailed, error: terminalFailedError } = await supabase
+          .from('adu_posting_jobs')
+          .select('reel_id')
+          .eq('config_id', config.id)
+          .in('status', ADU_TERMINAL_FAILED_JOB_STATUSES)
+          .limit(ADU_TICK_PAGE_SIZE);
+        if (terminalFailedError) {
+          throw new InternalError(
+            `ADU intake terminal-failed load failed: ${terminalFailedError.code ?? 'unknown'} ${terminalFailedError.message}`,
+          );
+        }
+        const terminalReelIds = ((terminalFailed ?? []) as Array<{ reel_id: string }>).map(
+          (row) => row.reel_id,
+        );
+        let busyQuery = supabase
+          .from('adu_reels')
+          .select('id')
+          .eq('config_id', config.id)
+          .in('status', ['pending', 'processing']);
+        if (terminalReelIds.length > 0) {
+          busyQuery = busyQuery.not('id', 'in', `(${terminalReelIds.join(',')})`);
+        }
+        const { data: busy, error: busyError } = await busyQuery.limit(1);
+        if (busyError) {
+          throw new InternalError(`ADU intake busy load failed: ${busyError.code ?? 'unknown'} ${busyError.message}`);
+        }
+        const { data: busyJobs, error: busyJobsError } = await supabase
+          .from('adu_posting_jobs')
+          .select('id')
+          .eq('config_id', config.id)
+          .in('status', ['pending_publish', 'publishing'])
+          .limit(1);
+        if (busyJobsError) {
+          throw new InternalError(`ADU intake busy-job load failed: ${busyJobsError.code ?? 'unknown'} ${busyJobsError.message}`);
+        }
+        // Only mark completed on a VERIFIED empty result: all three
+        // queries succeeded and found nothing downloadable and nothing
+        // busy. An error above throws instead of completing.
+        if ((!busy || busy.length === 0) && (!busyJobs || busyJobs.length === 0)) {
+          await supabase
+            .from('adu_configs')
+            .update({ status: 'completed', updated_at: now.toISOString() })
+            .eq('id', config.id);
+          result.intakeCompleted += 1;
+        }
+        // No downloadable reel: the remaining due slots have none
+        // either (same config, same tick) — stop the slot loop.
+        break;
+      }
+      // Claim the reel BEFORE inserting the job: the old post-insert
+      // status update was unchecked, so when it failed the reel stayed
+      // 'downloaded' and the next slot intaken it again (same video
+      // posted twice). A lost claim (0 rows) means another tick took
+      // this reel — skip, never insert a second job for it.
+      // The claim also clears download_claimed_at: mark_adu_reel_downloaded
+      // leaves the downloader's claim timestamp set, and the VPS
+      // downloader's per-loop reset_stale_adu_reel_downloads(40) resets
+      // any 'processing' reel with a >40-min-old claim timestamp back to
+      // 'pending' — which undid this claim, re-downloaded the reel, and
+      // re-minted it at the next slot (duplicate jobs, Nov 9–13 2026).
+      // A tick-claimed reel carries no download claim, so NULL is the
+      // correct steady state; the reset then skips it (it requires a
+      // non-null timestamp).
+      const { data: claimedReel, error: claimReelError } = await supabase
+        .from('adu_reels')
+        .update({ status: 'processing', download_claimed_at: null })
+        .eq('id', (oldest as { id: string }).id)
+        .eq('status', 'downloaded')
+        .select('id');
+      if (claimReelError) {
+        throw new InternalError(`ADU intake reel claim failed: ${claimReelError.code ?? 'unknown'} ${claimReelError.message}`);
+      }
+      if (!claimedReel || claimedReel.length === 0) continue;
+      const { error: insertError } = await supabase.from('adu_posting_jobs').insert({
+        config_id: config.id,
+        reel_id: (oldest as { id: string }).id,
+        schedule_slot_at: slotAt,
+        status: 'pending_publish',
+      });
+      if (insertError) {
+        // Release the claim so the reel stays intakable; without this
+        // it would sit in 'processing' forever after a failed insert.
+        // A failed release is logged loudly: a reel stranded in
+        // 'processing' blocks the config (intake only selects
+        // 'downloaded', and 'processing' counts as busy), so a silent
+        // release failure would wedge the config with no trace.
+        const { error: releaseError } = await supabase
+          .from('adu_reels')
+          .update({ status: 'downloaded' })
+          .eq('id', (oldest as { id: string }).id);
+        if (releaseError) {
+          console.error(
+            `ADU intake reel claim release failed: reel=${(oldest as { id: string }).id} code=${releaseError.code ?? 'unknown'} ${releaseError.message}`,
+          );
+        }
+        if (insertError.code === '23505') continue; // already intaken for this slot
+        throw new InternalError(`ADU intake insert failed: ${insertError.message}`);
+      }
+      result.intakeJobsCreated += 1;
     }
-    result.intakeJobsCreated += 1;
   }
   }
 

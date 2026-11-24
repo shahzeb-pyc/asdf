@@ -1656,6 +1656,205 @@ describe('runAduTick', () => {
     );
     expect(release).toBeDefined();
   });
+
+  describe('spec 245: ADU intake catch-up window', () => {
+    // Shared intake fake: answers the config load, the destination
+    // gate, the failed-count, the oldest-reel + claim pair, the
+    // pre-check for an already-minted slot, and the job insert.
+    // `existing` are the rows the slot pre-check returns; `reels` are
+    // returned in order by successive oldest-reel queries (one per due
+    // slot); `inserts` records every job insert payload.
+    function makeIntakeDb(opts: {
+      config: Row;
+      reels: Row[];
+      existing?: Row[];
+      insertError?: { code: string; message: string } | null;
+      inserts: Row[];
+    }): FakeDb {
+      const reelQueue = [...opts.reels];
+      return makeDb((table, ops) => {
+        if (table === 'adu_configs') {
+          if (ops.some((o) => o.kind === 'eq' && o.args[0] === 'status' && o.args[1] === 'active')) {
+            return { data: [opts.config], error: null };
+          }
+          return { data: [], error: null };
+        }
+        if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+          return { data: { id: 'dest-1', section: 'adu', status: 'active' }, error: null };
+        }
+        if (table === 'adu_reels' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'download_failed')) {
+          return { count: 0, data: [], error: null };
+        }
+        if (table === 'adu_reels' && ops.some((o) => o.kind === 'maybeSingle')) {
+          return { data: reelQueue.shift() ?? null, error: null };
+        }
+        if (table === 'adu_reels' && ops.some((o) => o.kind === 'update')) {
+          return { data: [{ id: 'reel-1' }], error: null };
+        }
+        if (
+          table === 'adu_posting_jobs' &&
+          ops.some((o) => o.kind === 'eq' && o.args[0] === 'schedule_slot_at')
+        ) {
+          return { data: opts.existing ?? [], error: null };
+        }
+        if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'insert')) {
+          opts.inserts.push(ops.find((o) => o.kind === 'insert')!.args[0] as Row);
+          return { error: opts.insertError ?? null };
+        }
+        if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+          return { error: null };
+        }
+        return { data: [], error: null };
+      });
+    }
+
+    const reel = (id: string): Row => ({
+      id,
+      media_url: `https://example.invalid/${id}.mp4`,
+    });
+
+    it('mints the :01 slot on the :03 tick — the diagnosed Jkiuyo case', async () => {
+      // Jkiuyo, 2026-11-24: posting time 02:01 America/Chicago, the
+      // 08:01 UTC tick skipped by the idle poll backoff, the 08:03
+      // tick must still mint the 08:01 slot. Fails on the old
+      // exact-minute match (02:03 is not in the posting times).
+      const inserts: Row[] = [];
+      const config = { ...configRow('c1', ['02:01']), timezone: 'America/Chicago' };
+      const db = makeIntakeDb({ config, reels: [reel('reel-1')], inserts });
+      const result = await runAduTick({
+        db: db as never,
+        registry: registryWith(null),
+        masterKey: MASTER_KEY,
+        now: new Date('2026-11-24T08:03:00.000Z'),
+      });
+      expect(result.intakeJobsCreated).toBe(1);
+      expect(inserts).toHaveLength(1);
+      expect(inserts[0]!.schedule_slot_at).toBe('2026-11-24T08:01:00.000Z');
+    });
+
+    it('does not mint a slot older than the 5-minute window', async () => {
+      // 09:00 slot, tick at 09:06 — 6 minutes old, past the window:
+      // the time is lost by design, exactly like the slot claim.
+      const inserts: Row[] = [];
+      const db = makeIntakeDb({
+        config: configRow('c1', ['09:00']),
+        reels: [reel('reel-1')],
+        inserts,
+      });
+      const result = await runAduTick({
+        db: db as never,
+        registry: registryWith(null),
+        masterKey: MASTER_KEY,
+        now: new Date('2026-10-30T09:06:00.000Z'),
+      });
+      expect(result.intakeJobsCreated).toBe(0);
+      expect(inserts).toHaveLength(0);
+    });
+
+    it('on-time slots mint exactly as before, stamped at the posting time', async () => {
+      const inserts: Row[] = [];
+      const db = makeIntakeDb({
+        config: configRow('c1', ['09:00']),
+        reels: [reel('reel-1')],
+        inserts,
+      });
+      const result = await runAduTick({
+        db: db as never,
+        registry: registryWith(null),
+        masterKey: MASTER_KEY,
+        now: NOW,
+      });
+      expect(result.intakeJobsCreated).toBe(1);
+      expect(inserts).toHaveLength(1);
+      expect(inserts[0]!.schedule_slot_at).toBe('2026-10-30T09:00:00.000Z');
+    });
+
+    it('skips a slot that already has a job, without claiming a reel', async () => {
+      // The on-time tick already minted the 09:00 job; the 09:02
+      // catch-up tick must see the existing job and stop before the
+      // reel claim — no second job, no claim/release churn.
+      const inserts: Row[] = [];
+      const db = makeIntakeDb({
+        config: configRow('c1', ['09:00']),
+        reels: [reel('reel-1')],
+        existing: [{ id: 'job-old' }],
+        inserts,
+      });
+      const result = await runAduTick({
+        db: db as never,
+        registry: registryWith(null),
+        masterKey: MASTER_KEY,
+        now: new Date('2026-10-30T09:02:00.000Z'),
+      });
+      expect(result.intakeJobsCreated).toBe(0);
+      expect(inserts).toHaveLength(0);
+      expect(
+        db.calls.some(
+          (c) =>
+            c.table === 'adu_reels' &&
+            c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'processing'),
+        ),
+      ).toBe(false);
+    });
+
+    it('mints two due slots in one tick, each stamped at its own posting time', async () => {
+      // Two close posting times (09:00 and 09:02), tick at 09:03:
+      // both are inside the window, each mints its own job with its
+      // own slot stamp and its own reel.
+      const inserts: Row[] = [];
+      const db = makeIntakeDb({
+        config: configRow('c1', ['09:00', '09:02']),
+        reels: [reel('reel-1'), reel('reel-2')],
+        inserts,
+      });
+      const result = await runAduTick({
+        db: db as never,
+        registry: registryWith(null),
+        masterKey: MASTER_KEY,
+        now: new Date('2026-10-30T09:03:00.000Z'),
+      });
+      expect(result.intakeJobsCreated).toBe(2);
+      expect(inserts).toHaveLength(2);
+      expect(inserts.map((p) => p.schedule_slot_at)).toEqual([
+        '2026-10-30T09:00:00.000Z',
+        '2026-10-30T09:02:00.000Z',
+      ]);
+      expect(inserts.map((p) => p.reel_id)).toEqual(['reel-1', 'reel-2']);
+    });
+
+    it('a slot exactly 5 minutes old is still due; 5 minutes 1 second old is lost', async () => {
+      // Window boundary is inclusive: age <= 5 minutes mints.
+      const insertsAtFive: Row[] = [];
+      const dbAtFive = makeIntakeDb({
+        config: configRow('c1', ['09:00']),
+        reels: [reel('reel-1')],
+        inserts: insertsAtFive,
+      });
+      const atFive = await runAduTick({
+        db: dbAtFive as never,
+        registry: registryWith(null),
+        masterKey: MASTER_KEY,
+        now: new Date('2026-10-30T09:05:00.000Z'),
+      });
+      expect(atFive.intakeJobsCreated).toBe(1);
+      expect(insertsAtFive).toHaveLength(1);
+
+      const insertsPastFive: Row[] = [];
+      const dbPastFive = makeIntakeDb({
+        config: configRow('c1', ['09:00']),
+        reels: [reel('reel-1')],
+        inserts: insertsPastFive,
+      });
+      const pastFive = await runAduTick({
+        db: dbPastFive as never,
+        registry: registryWith(null),
+        masterKey: MASTER_KEY,
+        now: new Date('2026-10-30T09:05:01.000Z'),
+      });
+      expect(pastFive.intakeJobsCreated).toBe(0);
+      expect(insertsPastFive).toHaveLength(0);
+    });
+  });
   it('entitlement-paused job stays pending_publish and never reaches the publisher', async () => {
     const job = {
       id: 'job-1',
