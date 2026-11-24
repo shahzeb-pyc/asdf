@@ -175,7 +175,37 @@ export interface QueueOptions {
   registry?: PublisherRegistry;
 }
 
-function initWorkerDb(env: Env, optionsDb?: unknown): any {
+/**
+ * Spec 246 — per-call timeout for every worker DB request. On
+ * 2026-11-24 Supabase's Data API (PostgREST) hung on every table query
+ * for 2+ hours while direct Postgres stayed healthy, and this client
+ * had no timeout — so each per-minute tick hung on its first DB call
+ * and died silently (the fail-open poll gate never triggers on a hang,
+ * because a hang is not a failure). 15s is far above any healthy
+ * PostgREST call (sub-second, occasionally a few seconds under load)
+ * and far below the 60s tick cadence and the 15-minute cron window, so
+ * a wedged API fails fast inside one tick instead of freezing it. A
+ * timed-out call throws, which is exactly what the existing machinery
+ * needs: the poll gate fails open, per-pair/per-sub-tick catches
+ * capture loudly, and the heartbeat/state writes fail fast instead of
+ * hanging.
+ *
+ * The timeout uses the PostgREST client's own supported `db.timeout`
+ * option (supabase-js forwards it to PostgrestClient), NOT a
+ * hand-rolled `global.fetch` wrapper — that matters: postgrest-js
+ * 2.118 retries GETs on fetch rejection unless it can tell the failure
+ * was an abort, and it only recognises `AbortError` (or `TimeoutError`
+ * with `request.signal.aborted`). A hand-rolled `AbortSignal.timeout`
+ * wrapper rejects with `TimeoutError` while postgrest-js never sets a
+ * request signal, so the abort would be retried 3x with backoff
+ * (~67s for a hung GET) instead of failing fast — proven by the
+ * failing SELECT tests on the first implementation. The library's own
+ * timeout aborts via AbortController, which rejects with `AbortError`,
+ * so no retry happens.
+ */
+export const WORKER_DB_FETCH_TIMEOUT_MS = 15_000;
+
+export function initWorkerDb(env: Env, optionsDb?: unknown): any {
   if (optionsDb) return optionsDb;
   const supabaseUrl = env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY;
@@ -184,6 +214,7 @@ function initWorkerDb(env: Env, optionsDb?: unknown): any {
   }
   return createClient(supabaseUrl, supabaseKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    db: { timeout: WORKER_DB_FETCH_TIMEOUT_MS },
   }) as any;
 }
 
