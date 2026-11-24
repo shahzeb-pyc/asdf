@@ -15,16 +15,11 @@ import {
   type MirrorFbStatus,
   type TikwmApiKeyPauseStore,
   type TikwmVideoItem,
-  truncateThreadsCaption,
-  validateThreadsText,
 } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { FacebookGraphError, FacebookPublishClient } from './fb-client.js';
 import { workspaceCanPublishForDestination } from './entitlement.js';
 import { createProxyFetchFn } from './proxy-fetch.js';
-import { InstagramPublishClient } from './instagram-client.js';
-import { publishInstagramMirrorReel } from './instagram-mirror-reel.js';
-import { ThreadsPublishClient } from './threads-client.js';
 import { captureWorkerError, type PostHogEnv } from './analytics.js';
 
 // ==========================================
@@ -47,12 +42,9 @@ import { captureWorkerError, type PostHogEnv } from './analytics.js';
 // rotation with DB-persisted 30-day pauses, see contracts
 // tikwmapi), resolve each NEW reel via the FREE tikwm POST
 // endpoint (no-watermark URL + verbatim title), and post it to
-// the linked target — a Facebook page as a Facebook Reel, or an
-// Instagram account as an Instagram Reel (container flow) —
-// caption verbatim, EXCEPT Threads mirrors: an over-limit
-// Threads caption is truncated to fit and posted (owner
-// decision, replacing the old mirror rule that skipped such
-// captions instead of truncating them).
+// the linked target — a Facebook page as a Facebook Reel —
+// caption verbatim. Spec 237: Instagram and Threads targets were
+// removed with those sections; mirrors are Facebook-only.
 //
 // One mirror's failure never blocks other mirrors: each job is
 // independent, jobs in a tick run in parallel chunks, and a job
@@ -187,8 +179,7 @@ export interface MirrorTickMirror {
   /**
    * Spec 155: the mirror's own Facebook detail (`mirrors.fb_status`)
    * and its 3-day auto-resume anchor (`mirrors.fb_rate_limited_at`).
-   * Null when there is no Facebook error. Instagram/Threads mirrors
-   * never carry these.
+   * Null when there is no Facebook error.
    */
   fbStatus: string | null;
   fbRateLimitedAt: string | null;
@@ -196,7 +187,7 @@ export interface MirrorTickMirror {
    * Spec 155: the target destination's status + rate-limit anchor
    * (destinations.status / metadata.rate_limited_at), for the
    * error-skip rule in processMirrorCheck. Null when the target row
-   * is gone. Instagram/Threads mirrors ignore these.
+   * is gone.
    */
   targetStatus: string | null;
   targetRateLimitedAt: string | null;
@@ -272,10 +263,8 @@ export interface MirrorTickDeps {
   }) => Promise<{ playUrl: string; title: string }>;
   /**
    * Publish one reel to the mirror's target. `targetId`/`targetToken`
-   * are generic: a Facebook page id + page token, or an Instagram
-   * user id + account token. `targetPlatform` decides the dispatch
-   * (and, in processMirrorCheck, which plain-language error rewrite
-   * applies — the Facebook restriction message is Facebook-only).
+   * are a Facebook page id + page token. `targetPlatform` is kept
+   * for the call shape; mirrors are Facebook-only (spec 237).
    */
   publishReel: (params: {
     targetId: string;
@@ -490,13 +479,12 @@ export async function processMirrorCheck(
     }
   }
 
-  // Spec 155: a Facebook mirror in error whose target is not
+  // Spec 155: a mirror in error whose target is not
   // checkable skips the check entirely — no feed fetch, no publish
   // attempts, no failed rows. Only nextCheckAt advances, so the
   // mirror is re-evaluated next hour; when the target is active
   // again (or its rate-limit anchor goes stale) the next check
-  // proceeds and clears the error. Instagram/Threads mirrors are
-  // untouched by this rule. SEND BACK B3: the skip also fires
+  // proceeds and clears the error. SEND BACK B3: the skip also fires
   // while the mirror's OWN rate-limit anchor is fresh, whatever
   // the mirror's status — the target can read active while the
   // mirror's own cooldown is still running, and resuming a
@@ -505,9 +493,8 @@ export async function processMirrorCheck(
   // check clears the detail.
   const ownRateLimitCooldown = isOwnRateLimitCooldownActive(mirror, now);
   if (
-    mirror.targetPlatform === 'facebook' &&
-    (ownRateLimitCooldown ||
-      (mirror.status === 'error' && !isFacebookTargetCheckable(mirror, now)))
+    ownRateLimitCooldown ||
+    (mirror.status === 'error' && !isFacebookTargetCheckable(mirror, now))
   ) {
     try {
       await deps.updateMirror(mirror.id, { nextCheckAt });
@@ -655,39 +642,7 @@ export async function processMirrorCheck(
             break;
           }
         }
-        let caption = resolved.title || reel.title || '';
-        // Threads-only rule (owner decision): a caption over
-        // Threads' 500 weighted characters / 5 links is truncated
-        // to fit and posted, NOT skipped. The posted row carries
-        // the truncated text, so history shows what actually went
-        // out. If truncation still leaves an invalid text, the
-        // reel fails loudly with the reason — never silently
-        // dropped, never posted invalid — and the loop stops,
-        // as on any publish failure today. Later reels are
-        // still tried after a successful truncated post.
-        if (mirror.targetPlatform === 'threads') {
-          const captionError = validateThreadsText(caption);
-          if (captionError) {
-            caption = truncateThreadsCaption(caption);
-            const truncatedError = validateThreadsText(caption);
-            if (truncatedError) {
-              const failedId = await deps.claimPost(mirror.id, {
-                sourcePostId: reel.video_id,
-                caption,
-                videoUrl: resolved.playUrl,
-                coverUrl: reel.cover ?? null,
-                sourceCreatedAt: toIso(reel.create_time),
-                status: 'failed',
-                error: truncatedError,
-              });
-              if (failedId) {
-                result.failed += 1;
-                mirrorError = truncatedError;
-              }
-              break;
-            }
-          }
-        }
+        const caption = resolved.title || reel.title || '';
         const claimedId = await deps.claimPost(mirror.id, {
           sourcePostId: reel.video_id,
           caption,
@@ -735,13 +690,9 @@ export async function processMirrorCheck(
           // Same rule as the setup path: a Facebook account restriction
           // shows the approved plain-language message, never Facebook's
           // raw text. The raw detail stays in worker logs for debugging.
-          // This rewrite is Facebook-only: Instagram publish helpers
-          // already throw plain-language messages, and a Facebook
-          // restriction message on an Instagram mirror would be wrong.
-          const message =
-            mirror.targetPlatform === 'facebook' && isFacebookAccountRestricted(err)
-              ? MIRROR_FACEBOOK_RESTRICTED_MESSAGE
-              : rawMessage;
+          const message = isFacebookAccountRestricted(err)
+            ? MIRROR_FACEBOOK_RESTRICTED_MESSAGE
+            : rawMessage;
           if (message !== rawMessage) {
             console.error(
               `[mirror-tick] mirror=${mirror.id} publish restricted by Facebook; raw: ${rawMessage}`
@@ -750,19 +701,17 @@ export async function processMirrorCheck(
           await deps.updatePost(claimedId, { status: 'failed', error: message });
           mirrorError = message;
           result.failed += 1;
-          // Spec 155: a Facebook publish failure stamps the
+          // Spec 155: a publish failure stamps the
           // mirror's Facebook detail (or clears it when the
           // failure is transient/unmapped). The mapping reads
           // the RAW error, not the rewritten restriction message
-          // above. Other platforms leave the detail untouched.
-          if (mirror.targetPlatform === 'facebook') {
-            const mapped = mapMirrorPublishErrorToFbStatus(err);
-            fbStatusPatch = {
-              fbStatus: mapped,
-              fbRateLimitedAt:
-                mapped === 'fb_rate_limited' ? now.toISOString() : null,
-            };
-          }
+          // above.
+          const mapped = mapMirrorPublishErrorToFbStatus(err);
+          fbStatusPatch = {
+            fbStatus: mapped,
+            fbRateLimitedAt:
+              mapped === 'fb_rate_limited' ? now.toISOString() : null,
+          };
           // Stop this mirror's loop: later reels stay unclaimed for
           // the next tick instead of stacking failures.
           break;
@@ -979,8 +928,6 @@ export function buildMirrorTickDeps(
     env?: PostHogEnv;
     waitUntil?: MirrorTickDeps['waitUntil'];
     tikwmApiKeys?: string[];
-    /** Instagram container poll interval (tests pass 0; production default 60 s). */
-    instagramPollIntervalMs?: number;
     /**
      * DataImpulse rotating proxy URL (Worker secret DATAIMPULSE_PROXY,
      * spec 150). Mirror resolve (free tikwm + Countik fallback) goes
@@ -991,7 +938,6 @@ export function buildMirrorTickDeps(
   }
 ): MirrorWorkerDeps {
   const fbClient = new FacebookPublishClient();
-  const igClient = new InstagramPublishClient();
   const tikwmPauseStore = buildWorkerTikwmPauseStore(db);
   const updateMirrorRow = async (
     mirrorId: string,
@@ -1142,33 +1088,11 @@ export function buildMirrorTickDeps(
       const dest =
         destRows.find((d) => d.status === 'active') ??
         (destRows.length > 0 ? destRows[0] : undefined);
-      let token = dest?.encrypted_destination_token;
-      // Instagram-only fallback: Instagram destination rows carry no
-      // destination token (the publishing token lives on the account
-      // row — the account IS the destination). Without this fallback
-      // every Instagram mirror would fail "no posting token".
-      // Facebook is untouched: a missing Facebook page token stays
-      // missing, so its error path is identical to before.
-      let accountFound = false;
-      if (row.target_platform === 'instagram' && typeof token !== 'string') {
-        const { data: accountData, error: accountError } = await db
-          .from('social_accounts')
-          .select('encrypted_access_token')
-          .eq('workspace_id', row.workspace_id)
-          .eq('platform', 'instagram')
-          .eq('external_account_id', row.target_external_id)
-          .limit(1);
-        if (accountError) {
-          throw new InternalError(`Failed to list Instagram accounts: ${accountError.message}`);
-        }
-        const accountRow = ((accountData ?? []) as unknown[]).filter(isRecord)[0] as
-          | Record<string, unknown>
-          | undefined;
-        accountFound = accountRow !== undefined;
-        if (typeof accountRow?.encrypted_access_token === 'string') {
-          token = accountRow.encrypted_access_token;
-        }
-      }
+      const token = dest?.encrypted_destination_token;
+      // A missing Facebook page token stays missing, so its error
+      // path is identical to before. Spec 237: the Instagram
+      // account-token fallback was deleted with the Instagram
+      // Auto Repost section.
       return {
         id: row.id,
         workspaceId: row.workspace_id,
@@ -1176,7 +1100,7 @@ export function buildMirrorTickDeps(
         sourceUsername: row.source_username,
         targetPlatform: row.target_platform,
         targetExternalId: row.target_external_id,
-        targetFound: dest !== undefined || accountFound,
+        targetFound: dest !== undefined,
         targetToken:
           typeof token === 'string' ? await decryptToken(token, masterKey) : null,
         status: typeof row.status === 'string' ? row.status : 'active',
@@ -1457,65 +1381,8 @@ export function buildMirrorTickDeps(
       });
     },
     publishReel: async (params) => {
-      if (params.targetPlatform === 'instagram') {
-        return publishInstagramMirrorReel({
-          igUserId: params.targetId,
-          accessToken: params.targetToken,
-          videoUrl: params.videoUrl,
-          caption: params.caption,
-          client: igClient,
-          ...(options?.instagramPollIntervalMs !== undefined
-            ? { pollIntervalMs: options.instagramPollIntervalMs }
-            : {}),
-        });
-      }
-      if (params.targetPlatform === 'threads') {
-        // Threads async flow (same as the Threads publisher): create
-        // a VIDEO container with the public video URL, poll until
-        // FINISHED (at most once a minute, up to 5 minutes — the
-        // publisher's cadence), then publish. Meta fetches the URL
-        // itself; there is no byte-upload path for Threads.
-        const threadsClient = new ThreadsPublishClient();
-        const { containerId } = await threadsClient.createContainer({
-          threadsUserId: params.targetId,
-          accessToken: params.targetToken,
-          mediaType: 'VIDEO',
-          videoUrl: params.videoUrl,
-          ...(params.caption ? { text: params.caption } : {}),
-        });
-        let status = '';
-        for (let poll = 0; poll < 5; poll += 1) {
-          const statusData = await threadsClient.getContainerStatus({
-            containerId,
-            accessToken: params.targetToken,
-          });
-          status = statusData.status;
-          if (status === 'FINISHED') break;
-          if (status === 'PUBLISHED') return containerId;
-          if (status === 'ERROR') {
-            throw new InternalError(
-              statusData.errorMessage ?? 'Threads could not prepare this video.'
-            );
-          }
-          if (status === 'EXPIRED') {
-            throw new InternalError('Threads could not prepare this video.');
-          }
-          if (poll < 4) {
-            await new Promise((resolve) => setTimeout(resolve, 60_000));
-          }
-        }
-        if (status !== 'FINISHED') {
-          throw new InternalError(
-            'Threads is still preparing this video. It stays pending and will be retried on the next check.'
-          );
-        }
-        const { mediaId } = await threadsClient.publishContainer({
-          threadsUserId: params.targetId,
-          accessToken: params.targetToken,
-          containerId,
-        });
-        return mediaId;
-      }
+      // Spec 237: mirrors are Facebook-only — the Instagram and
+      // Threads publish branches were deleted with those sections.
       const result = await fbClient.publishReel({
         pageId: params.targetId,
         accessToken: params.targetToken,

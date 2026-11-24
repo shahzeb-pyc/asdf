@@ -66,28 +66,6 @@ export const queryKeys = {
         }) => [...tenantRoot, 'threads', 'accounts', 'list', params] as const,
       },
 
-      /** Threads In-app Schedule: separate namespace from Threads accounts. */
-      threadsSchedule: {
-        all: [...tenantRoot, 'threads', 'schedule'] as const,
-        list: [...tenantRoot, 'threads', 'schedule', 'list'] as const,
-        listPage: (params: {
-          page: number;
-          limit: number;
-          search: string;
-          status: string;
-          account: string;
-        }) => [...tenantRoot, 'threads', 'schedule', 'list', params] as const,
-        candidates: [...tenantRoot, 'threads', 'schedule', 'candidates'] as const,
-        detail: (scheduleId: string) =>
-          [...tenantRoot, 'threads', 'schedule', scheduleId] as const,
-        slots: (scheduleId: string) =>
-          [...tenantRoot, 'threads', 'schedule', scheduleId, 'slots'] as const,
-        queue: (scheduleId: string) =>
-          [...tenantRoot, 'threads', 'schedule', scheduleId, 'queue'] as const,
-        insights: (scheduleId: string) =>
-          [...tenantRoot, 'threads', 'schedule', scheduleId, 'insights'] as const,
-      },
-
       pages: {
         all: [...tenantRoot, 'pages'] as const,
         list: [...tenantRoot, 'pages', 'list'] as const,
@@ -109,27 +87,6 @@ export const queryKeys = {
           [...tenantRoot, 'pages', pageId, 'slots'] as const,
       },
 
-      /** Instagram Schedule: a separate namespace from Instagram
-       * Accounts, so schedule rows never collide with account rows
-       * in the cache. */
-      instagramSchedule: {
-        all: [...tenantRoot, 'instagram', 'schedule'] as const,
-        list: [...tenantRoot, 'instagram', 'schedule', 'list'] as const,
-        listPage: (params: {
-          page: number;
-          limit: number;
-          search: string;
-          status: string;
-          account: string;
-        }) => [...tenantRoot, 'instagram', 'schedule', 'list', params] as const,
-        detail: (destinationId: string) =>
-          [...tenantRoot, 'instagram', 'schedule', destinationId] as const,
-        slots: (destinationId: string) =>
-          [...tenantRoot, 'instagram', 'schedule', destinationId, 'slots'] as const,
-        queue: (destinationId: string, params: Record<string, string>) =>
-          [...tenantRoot, 'instagram', 'schedule', destinationId, 'queue', params] as const,
-      },
-
       tiktokMirrors: {
         all: [...tenantRoot, 'tiktok-mirrors'] as const,
         list: [...tenantRoot, 'tiktok-mirrors', 'list'] as const,
@@ -137,32 +94,6 @@ export const queryKeys = {
           [...tenantRoot, 'tiktok-mirrors', 'list', params] as const,
         detail: (mirrorId: string) =>
           [...tenantRoot, 'tiktok-mirrors', mirrorId] as const,
-      },
-
-      /**
-       * Instagram Auto Repost mirrors. A separate key family from
-       * tiktokMirrors (which carries no platform): reusing it would
-       * collide the Facebook and Instagram list caches.
-       */
-      instagramAutoRepost: {
-        all: [...tenantRoot, 'instagram-auto-repost'] as const,
-        list: [...tenantRoot, 'instagram-auto-repost', 'list'] as const,
-        listPage: (params: { page: number }) =>
-          [...tenantRoot, 'instagram-auto-repost', 'list', params] as const,
-        detail: (mirrorId: string) =>
-          [...tenantRoot, 'instagram-auto-repost', mirrorId] as const,
-      },
-      /** Threads Auto Repost (TikTok → Threads) mirrors. Separate
-       *  from `tiktokMirrors` on purpose: the two lists filter by
-       *  target platform, so sharing a key would serve Facebook
-       *  mirrors to the Threads page (and vice versa). */
-      threadsAutoRepost: {
-        all: [...tenantRoot, 'threads', 'auto-repost'] as const,
-        list: [...tenantRoot, 'threads', 'auto-repost', 'list'] as const,
-        listPage: (params: { page: number }) =>
-          [...tenantRoot, 'threads', 'auto-repost', 'list', params] as const,
-        detail: (mirrorId: string) =>
-          [...tenantRoot, 'threads', 'auto-repost', mirrorId] as const,
       },
 
       destinations: {

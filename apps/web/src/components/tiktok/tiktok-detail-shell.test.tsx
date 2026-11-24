@@ -5,7 +5,6 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { TikTokDetailShell } from './tiktok-detail-shell';
-import { IgAutoRepostDetailShell } from '@/components/instagram/auto-repost/ig-auto-repost-detail-shell';
 
 vi.mock('next/image', () => ({
   default: (props: { src?: string; alt?: string }) =>
@@ -113,16 +112,9 @@ describe('mirror detail shells ?tab= state', () => {
     expect(screen.queryByTestId('tiktok-dashboard-tab')).not.toBeInTheDocument();
   });
 
-  it('Instagram shell opens on History with the Failed filter from the URL and no Insights tab', async () => {
-    renderWithClient(
-      <IgAutoRepostDetailShell subdomain="creatorstack" mirrorId="00000000-0000-4000-8000-000000000000" />
-    );
-    await waitFor(() => {
-      expect(screen.getByTestId('tiktok-history-tab')).toBeInTheDocument();
-    });
-    expect(screen.queryByText('Insights')).not.toBeInTheDocument();
-  });
-
+  // Spec 237: the Instagram detail shell was deleted with the
+  // Instagram Auto Repost section; the Facebook shell is the only
+  // detail shell now.
   it('Facebook shell defaults to Dashboard when no ?tab= is given', async () => {
     searchString = '';
     renderWithClient(

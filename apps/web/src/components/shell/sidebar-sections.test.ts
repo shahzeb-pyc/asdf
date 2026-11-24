@@ -96,3 +96,30 @@ describe('getUserSections white-label brand (spec 191)', () => {
     expect(labels(sections)).toContain('Muse Assistant');
   });
 });
+
+describe('getUserSections Instagram / Threads (spec 237)', () => {
+  it('shows Accounts only for Instagram and Threads — the deleted sections are gone', () => {
+    // This test fails on the old code: Instagram and Threads used
+    // to list Schedule, Publish Now, Auto Repost and Auto
+    // Download/Upload leaves alongside Accounts.
+    const sections = getUserSections('acme', true, 'fbuploadpro');
+    const groups = sections
+      .flatMap((s) => s.items)
+      .filter((item) => item.kind === 'group');
+    for (const key of ['instagram', 'threads'] as const) {
+      const group = groups.find((item) => item.kind === 'group' && item.key === key);
+      expect(group?.kind).toBe('group');
+      if (group?.kind !== 'group') continue;
+      expect(group.leaves.map((leaf) => leaf.label)).toEqual(['Accounts']);
+      expect(group.leaves[0]?.href).toContain(`/${key}/accounts`);
+    }
+    expect(hrefs(sections).some((h) => h.includes('/instagram/schedule'))).toBe(false);
+    expect(hrefs(sections).some((h) => h.includes('/instagram/publish-now'))).toBe(false);
+    expect(hrefs(sections).some((h) => h.includes('/instagram/auto-repost'))).toBe(false);
+    expect(hrefs(sections).some((h) => h.includes('/instagram/auto-download-upload'))).toBe(false);
+    expect(hrefs(sections).some((h) => h.includes('/threads/schedule'))).toBe(false);
+    expect(hrefs(sections).some((h) => h.includes('/threads/publish-now'))).toBe(false);
+    expect(hrefs(sections).some((h) => h.includes('/threads/auto-repost'))).toBe(false);
+    expect(hrefs(sections).some((h) => h.includes('/threads/auto-download-upload'))).toBe(false);
+  });
+});

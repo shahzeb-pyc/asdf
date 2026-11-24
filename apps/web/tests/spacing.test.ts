@@ -103,15 +103,7 @@ const SURFACES: Array<[string, string]> = [
   ['src/components/pages/page-card.tsx', 'gap-grid'],
   ['src/components/pages/add-page-steps.tsx', 'px-row'],
   ['src/components/pages/add-page-steps.tsx', 'py-row'],
-  [
-    'src/components/instagram/publish-now/instagram-publish-now-page.tsx',
-    'px-row',
-  ],
   ['src/components/pages/publish-now/publish-now-page.tsx', 'px-row'],
-  [
-    'src/components/pages/threads-publish-now/threads-publish-now-page.tsx',
-    'px-row',
-  ],
   ['src/components/shell/app-sidebar.tsx', 'px-nav'],
   ['src/components/shell/app-sidebar.tsx', 'py-nav'],
   [

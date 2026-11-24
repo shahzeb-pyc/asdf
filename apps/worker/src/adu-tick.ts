@@ -1281,7 +1281,7 @@ export async function runAduTick(options: {
     if (!account) {
       await supabase
         .from('adu_posting_jobs')
-        .update({ status: 'publish_error', last_error_code: 'account_missing', last_error_message: dest.platform === 'threads' ? 'Threads account not found.' : dest.platform === 'instagram' ? 'Instagram account not found.' : 'Facebook account not found.' })
+        .update({ status: 'publish_error', last_error_code: 'account_missing', last_error_message: 'Facebook account not found.' })
         .eq('id', job.id);
       await markAduReelFailed(supabase, job.reel_id, job.id);
       result.failed += 1;
@@ -1312,11 +1312,9 @@ export async function runAduTick(options: {
       destination_id: destinationId,
       platform: dest.platform,
       kind: 'video',
-      // Facebook reels keep 'reel'; Threads has no reel format — a
-      // Threads video post is format 'video' (the Threads publisher
-      // keys off kind, not this field, but the stored item must not
-      // claim a Facebook format).
-      platform_format: dest.platform === 'threads' ? 'video' : 'reel',
+      // Spec 237: ADU destinations are Facebook-only, so the format
+      // is always 'reel' (the old Threads 'video' arm is gone).
+      platform_format: 'reel',
       caption: typeof reel.caption === 'string' ? reel.caption : '',
       title: null,
       first_comment: null,

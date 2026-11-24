@@ -406,41 +406,17 @@ describe('processMirrorCheck', () => {
     expect(stamp?.patch.lastCheckedAt).toBeUndefined();
   });
 
-  it('passes targetPlatform=instagram through to publishReel', async () => {
+  it('passes targetPlatform=facebook through to publishReel', async () => {
     const state = newState();
     const feed = [reel('v1', 100)];
     const result = await processMirrorCheck(
       fakeDeps(state, feed),
-      mirror({ targetPlatform: 'instagram', targetExternalId: 'ig_123', targetToken: 'ig-token' })
+      mirror({ targetExternalId: 'fb_123', targetToken: 'fb-token' })
     );
     expect(result.posted).toBe(1);
-    expect(state.published[0]?.targetPlatform).toBe('instagram');
-    expect(state.published[0]?.targetId).toBe('ig_123');
-    expect(state.published[0]?.targetToken).toBe('ig-token');
-  });
-
-  it('does NOT rewrite a Facebook-restriction-shaped error on an Instagram mirror', async () => {
-    const state = newState();
-    const restrictedError = Object.assign(
-      new Error(
-        'For security reasons, your account has limited access to the site for a few days.'
-      ),
-      { code: 1, errorSubcode: 2424009 }
-    );
-    const deps: MirrorTickDeps = {
-      ...fakeDeps(state, [reel('v1', 100)]),
-      publishReel: async () => {
-        throw restrictedError;
-      },
-    };
-    const result = await processMirrorCheck(
-      deps,
-      mirror({ targetPlatform: 'instagram', targetExternalId: 'ig_123' })
-    );
-    expect(result.failed).toBe(1);
-    const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
-    expect(stamp?.patch.lastError).not.toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
-    expect(stamp?.patch.lastError).toContain('limited access');
+    expect(state.published[0]?.targetPlatform).toBe('facebook');
+    expect(state.published[0]?.targetId).toBe('fb_123');
+    expect(state.published[0]?.targetToken).toBe('fb-token');
   });
 });
 
@@ -1220,33 +1196,6 @@ describe('processMirrorCheck Facebook error detail — spec 155', () => {
     );
     expect(state.fetchFeedCalls).toBe(1);
   });
-
-  it('the skip is Facebook-only: an Instagram mirror in error still checks', async () => {
-    const state = newState();
-    await processMirrorCheck(
-      fakeDeps(state, []),
-      mirror({
-        targetPlatform: 'instagram',
-        status: 'error',
-        targetStatus: 'error',
-      }),
-    );
-    expect(state.fetchFeedCalls).toBe(1);
-  });
-
-  it('an Instagram publish failure never stamps a Facebook detail', async () => {
-    const state = newState();
-    state.publishFailsFor.add('https://example.com/v1.mp4');
-    state.publishError = graphError('Missing role on the page.', 190, 492);
-    await processMirrorCheck(
-      fakeDeps(state, [reel('v1', 1761720000)]),
-      mirror({ targetPlatform: 'instagram' }),
-    );
-    const stamp = finalStamp(state);
-    expect(stamp.status).toBe('error');
-    expect('fbStatus' in stamp).toBe(false);
-    expect('fbRateLimitedAt' in stamp).toBe(false);
-  });
 });
 
 describe('buildMirrorTickDeps fetchMirror (spec 174 3A)', () => {
@@ -1262,8 +1211,10 @@ describe('buildMirrorTickDeps fetchMirror (spec 174 3A)', () => {
    */
   function fetchMirrorDb(mirrorRow: FetchRow | null, destinationRows: FetchRow[]) {
     const destQueries: Array<Array<[string, unknown]>> = [];
+    const tablesQueried: string[] = [];
     const client = {
       from: (table: string) => {
+        tablesQueried.push(table);
         const eqs: Array<[string, unknown]> = [];
         const builder = {
           select() {
@@ -1295,7 +1246,7 @@ describe('buildMirrorTickDeps fetchMirror (spec 174 3A)', () => {
         return builder;
       },
     };
-    return { client, destQueries };
+    return { client, destQueries, tablesQueried };
   }
 
   function mirrorRow(): FetchRow {
@@ -1365,5 +1316,25 @@ describe('buildMirrorTickDeps fetchMirror (spec 174 3A)', () => {
     // Fail closed: never borrow another section's row.
     expect(resolved?.targetFound).toBe(false);
     expect(resolved?.targetToken).toBeNull();
+  });
+
+  it('spec 237: an Instagram-target mirror never falls back to the account token', async () => {
+    // This test fails on the old code: the old fetchMirror fell back
+    // to the Instagram account row (social_accounts) when the
+    // destination carried no token, so an Instagram mirror resolved
+    // a token from the account. The fallback is deleted with the
+    // Instagram section: the tick reads the destination row only.
+    const row = mirrorRow();
+    row.target_platform = 'instagram';
+    row.target_external_id = 'ig_123';
+    const { client, tablesQueried } = fetchMirrorDb(row, []);
+    const deps = buildMirrorTickDeps(
+      client as unknown as Parameters<typeof buildMirrorTickDeps>[0],
+      MASTER_KEY,
+    );
+    const resolved = await deps.fetchMirror('mirror-1');
+    expect(resolved?.targetFound).toBe(false);
+    expect(resolved?.targetToken).toBeNull();
+    expect(tablesQueried).not.toContain('social_accounts');
   });
 });

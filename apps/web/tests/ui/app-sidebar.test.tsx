@@ -146,6 +146,9 @@ describe('sidebar section configs (structural)', () => {
   it('user sections are exactly the user list, in order', () => {
     const sections = getUserSections('acme', false);
     const labels = allLabels(sections);
+    // Spec 237: Instagram and Threads keep only the Accounts leaf —
+    // their Schedule / Publish Now / Auto Repost / Auto Download
+    // Upload sections are deleted. This list fails on the old code.
     expect(labels).toEqual([
       'Home',
       'Muse Assistant',
@@ -161,15 +164,7 @@ describe('sidebar section configs (structural)', () => {
       'Bulk Delete Posts',
       'Analytics',
       'Accounts',
-      'Schedule',
-      'Publish Now',
-      'Auto Repost',
-      'Auto Download/Upload',
       'Accounts',
-      'In-app Schedule',
-      'Publish Now',
-      'Auto Repost',
-      'Auto Download/Upload',
       'My Plan',
       'Purchase',
       'Payments',
@@ -276,18 +271,21 @@ describe('AppSidebar rendering (separation matrix)', () => {
 
   it('platform groups open only when active', () => {
     const { unmount } = renderSidebar(getUserSections('acme', false));
-    // Home: Instagram leaves are hidden (group closed). The Instagram
-    // Schedule link is disambiguated by href: Facebook also has a
-    // leaf now labelled In-App Schedule, and it is open by default.
+    // Home: Instagram leaves are hidden (group closed).
     expect(
-      document.querySelector('a[href="/tenant/acme/instagram/schedule"]'),
+      document.querySelector('a[href="/tenant/acme/instagram/accounts"]'),
     ).toBeNull();
     unmount();
     mockPathname = '/tenant/acme/instagram/accounts';
     renderSidebar(getUserSections('acme', false));
+    // Group opens on its Accounts route — and spec 237 means there
+    // is no Schedule leaf to open to: the group holds Accounts only.
+    expect(
+      document.querySelector('a[href="/tenant/acme/instagram/accounts"]'),
+    ).toBeTruthy();
     expect(
       document.querySelector('a[href="/tenant/acme/instagram/schedule"]'),
-    ).toBeTruthy();
+    ).toBeNull();
   });
 
   it('billing leaves highlight by prefix on their own routes', () => {

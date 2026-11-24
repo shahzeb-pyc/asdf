@@ -15,7 +15,6 @@ import {
   resolveTikwmVideo,
 } from '@/lib/server/tikwm';
 import { FacebookReelError, publishFacebookReel } from '@/lib/server/facebook-reel';
-import { InstagramReelError, publishInstagramReel } from '@/lib/server/instagram-reel';
 import { authenticate, loadMirror } from '../../../route';
 import {
   loadDestinationsByExternalIds,
@@ -32,9 +31,9 @@ import type { DatabaseClient } from '@fbuploadpro/contracts';
  * This is the manual counterpart to the tick's failure discipline:
  * failed posts are NEVER auto-retried, but the owner may
  * re-attempt one explicitly. The publish itself reuses the mirror
- * setup path's publishers (web `publishFacebookReel` /
- * `publishInstagramReel`) — there is no second publish
- * implementation, no worker change, and no scheduler change.
+ * setup path's publisher (web `publishFacebookReel`) — there is no
+ * second publish implementation, no worker change, and no scheduler
+ * change.
  *
  * Rules (all server-enforced):
  * - Only a row currently `failed` may be retried; pre-existing
@@ -61,7 +60,7 @@ import type { DatabaseClient } from '@fbuploadpro/contracts';
  *   retry — the retry is one explicit user action, not a resume.
  * - The tick's `last_posted_*` stamps are NOT touched: the tick
  *   owns them, and a retry is a single-post re-attempt, not a
- *   check. Facebook + Instagram targets only (the two the web
+ *   check. Facebook targets only (the one the web
  *   setup path can publish); anything else is a loud 400.
  */
 
@@ -69,7 +68,6 @@ type Db = SupabaseClient | DatabaseClient;
 
 export interface RetryMirrorPostDeps {
   publishReel?: typeof publishFacebookReel;
-  publishInstagramReel?: typeof publishInstagramReel;
   resolveTikwmVideo?: typeof resolveTikwmVideo;
   /** Paid-feed re-fetch for the resolve-failure fallback (mirror E02). */
   fetchTikwmPosts?: typeof fetchTikwmUserPosts;
@@ -219,80 +217,6 @@ async function stampMirrorAfterRetry(
   if (error) throw new Error(`Failed to update mirror: ${error.message}`);
 }
 
-/**
- * Instagram account token for a mirror target — the same lookup the
- * setup path uses (the account IS the destination for Instagram,
- * and destination rows carry no token). Scoped to the workspace +
- * the mirror's target external id; decrypted in memory only.
- */
-/**
- * Whether the Instagram account for a mirror target is a Unified
- * Login (BISU) account: metadata.token_kind === 'bisu' exactly.
- * Anything else is legacy and must never be guessed as BISU.
- * Mirrors the worker and Publish Now rule.
- */
-async function loadInstagramAccountIsBisu(
-  db: Db,
-  workspaceId: string,
-  targetExternalId: string
-): Promise<boolean> {
-  let metadata: unknown = null;
-  if (isLegacyClient(db)) {
-    const rows = (await db.query(
-      `SELECT metadata FROM social_accounts
-       WHERE workspace_id = $1 AND platform = 'instagram' AND external_account_id = $2 LIMIT 1`,
-      [workspaceId, targetExternalId]
-    )) as Record<string, unknown>[];
-    metadata = rows[0]?.metadata ?? null;
-  } else {
-    const supabase = db as SupabaseClient;
-    const { data, error } = await supabase
-      .from('social_accounts')
-      .select('metadata')
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'instagram')
-      .eq('external_account_id', targetExternalId)
-      .maybeSingle();
-    if (error) throw new Error(`Failed to load Instagram account: ${error.message}`);
-    metadata = (data as Record<string, unknown> | null)?.metadata ?? null;
-  }
-  return (
-    typeof metadata === 'object' &&
-    metadata !== null &&
-    (metadata as Record<string, unknown>).token_kind === 'bisu'
-  );
-}
-
-async function loadInstagramAccountToken(
-  db: Db,
-  workspaceId: string,
-  targetExternalId: string
-): Promise<string | null> {
-  const encryptionKey = getTokenEncryptionKey();
-  let encrypted: string | null = null;
-  if (isLegacyClient(db)) {
-    const rows = (await db.query(
-      `SELECT encrypted_access_token FROM social_accounts
-       WHERE workspace_id = $1 AND platform = 'instagram' AND external_account_id = $2 LIMIT 1`,
-      [workspaceId, targetExternalId]
-    )) as Record<string, unknown>[];
-    const token = rows[0]?.encrypted_access_token;
-    encrypted = typeof token === 'string' ? token : null;
-  } else {
-    const supabase = db as SupabaseClient;
-    const { data, error } = await supabase
-      .from('social_accounts')
-      .select('encrypted_access_token')
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'instagram')
-      .eq('external_account_id', targetExternalId)
-      .maybeSingle();
-    if (error) throw new Error(`Failed to load Instagram account: ${error.message}`);
-    const token = (data as Record<string, unknown> | null)?.encrypted_access_token;
-    encrypted = typeof token === 'string' ? token : null;
-  }
-  return encrypted ? decryptToken(encrypted, encryptionKey) : null;
-}
 
 function respond(
   postId: string,
@@ -372,7 +296,7 @@ export async function handleRetryMirrorPost(
       );
     }
     const targetPlatform = mirror.target_platform;
-    if (targetPlatform !== 'facebook' && targetPlatform !== 'instagram') {
+    if (targetPlatform !== 'facebook') {
       return NextResponse.json(
         {
           error: 'RETRY_UNSUPPORTED',
@@ -420,31 +344,20 @@ export async function handleRetryMirrorPost(
       }
     }
 
-    // Target token, same lookup as setup: the page token for
-    // Facebook, the account token for Instagram.
+    // Target token: the page token for Facebook (spec 237: the
+    // Instagram account-token branch was deleted with the
+    // Instagram Auto Repost section).
     const encryptionKey = getTokenEncryptionKey();
-    let publishToken: string | null = null;
-    if (targetPlatform === 'instagram') {
-      publishToken = await loadInstagramAccountToken(
-        db,
-        workspaceId,
-        mirror.target_external_id
-      );
-    } else {
-      const destinations = await loadDestinationsByExternalIds(db, workspaceId, 'facebook', [
-        mirror.target_external_id,
-      ]);
-      const destination =
-        destinations.get(`facebook:${mirror.target_external_id}`) ?? null;
-      publishToken = destination?.encrypted_destination_token
-        ? await decryptToken(destination.encrypted_destination_token, encryptionKey)
-        : null;
-    }
+    const destinations = await loadDestinationsByExternalIds(db, workspaceId, 'facebook', [
+      mirror.target_external_id,
+    ]);
+    const destination = destinations.get(`facebook:${mirror.target_external_id}`) ?? null;
+    const publishToken = destination?.encrypted_destination_token
+      ? await decryptToken(destination.encrypted_destination_token, encryptionKey)
+      : null;
     if (!publishToken) {
       const message =
-        targetPlatform === 'instagram'
-          ? 'This Instagram account has no posting token. Reconnect the account and try again.'
-          : 'This page has no posting token. Reconnect the page and try again.';
+        'This page has no posting token. Reconnect the page and try again.';
       await updateMirrorPostOutcome(db, post.id, {
         status: 'failed',
         publishedPostId: null,
@@ -456,27 +369,14 @@ export async function handleRetryMirrorPost(
       return respond(post.id, 'failed', null, message);
     }
 
-    // Publish via the setup path's publishers.
+    // Publish via the setup path's publisher.
     try {
-      const publishedPostId =
-        targetPlatform === 'instagram'
-          ? await (deps.publishInstagramReel ?? publishInstagramReel)({
-              igUserId: mirror.target_external_id,
-              accessToken: publishToken,
-              isBisu: await loadInstagramAccountIsBisu(
-                db,
-                workspaceId,
-                mirror.target_external_id
-              ),
-              videoUrl,
-              caption,
-            })
-          : await (deps.publishReel ?? publishFacebookReel)({
-              pageId: mirror.target_external_id,
-              pageToken: publishToken,
-              videoUrl,
-              caption,
-            });
+      const publishedPostId = await (deps.publishReel ?? publishFacebookReel)({
+        pageId: mirror.target_external_id,
+        pageToken: publishToken,
+        videoUrl,
+        caption,
+      });
       await updateMirrorPostOutcome(db, post.id, {
         status: 'posted',
         publishedPostId,
@@ -488,7 +388,7 @@ export async function handleRetryMirrorPost(
       return respond(post.id, 'posted', publishedPostId, null);
     } catch (err) {
       const rawMessage =
-        err instanceof FacebookReelError || err instanceof InstagramReelError
+        err instanceof FacebookReelError
           ? err.message
           : err instanceof Error
             ? err.message

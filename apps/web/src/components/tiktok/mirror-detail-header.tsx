@@ -24,10 +24,9 @@ import {
 
 /**
  * Mirror detail header — the Pages dedicated header pattern for
- * mirrors, shared by the Facebook detail shell and the Instagram
- * Auto Repost detail shell (the Instagram shell previously kept
- * its own copy of the header; both now render this one component
- * so the two surfaces cannot drift apart again).
+ * mirrors, rendered by the Facebook detail shell. Spec 237: the
+ * Instagram Auto Repost detail shell was deleted, so this is the
+ * only detail header.
  *
  * The TARGET PAGE is the primary identity (avatar with status
  * ring, name, Added date, followers + category, account), exactly
@@ -96,9 +95,7 @@ export interface MirrorDetailHeaderProps {
   onDeleteRequest: () => void;
   /**
    * Spec 155: link to Facebook Accounts for the banner's reconnect
-   * action. Supplied by the Facebook detail shell only — Instagram
-   * mirrors never show the Facebook banner, so the Instagram shell
-   * omits it.
+   * action. Supplied by the Facebook detail shell.
    */
   accountsHref?: string;
 }
@@ -112,22 +109,18 @@ export function MirrorDetailHeader({
   accountsHref,
 }: Readonly<MirrorDetailHeaderProps>) {
   const [menuOpen, setMenuOpen] = React.useState(false);
-  // Spec 155: Facebook mirrors show the resolved Facebook detail
-  // (own fb_status, else the target's detail); Instagram mirrors
-  // keep the coarse status exactly as before.
+  // Spec 155: the header shows the resolved Facebook detail
+  // (own fb_status, else the target's detail).
   const mark = mirrorDisplayMark(mirror);
   const ringClass = MIRROR_STATUS_RING_CLASSES[mark.kind];
   const isPaused = mirror.status === 'paused';
-  const isFacebook = mirror.targetPlatform === 'facebook';
   // The banner only exists for a mapped Facebook error status.
   // `mark_verified` has no mirror-side action — reactivation lives
   // on the target Page itself — so the checkpoint banner renders
   // without a button; `reconnect` links to Facebook Accounts.
   // A generic `error` (no detail anywhere) maps to no wire status
   // and falls back to the raw-error box below.
-  const wireStatus = isFacebook
-    ? pageStatusFromMirrorFbStatus(mark.displayStatus)
-    : null;
+  const wireStatus = pageStatusFromMirrorFbStatus(mark.displayStatus);
   const fbAlert = wireStatus
     ? getFacebookPageStatusAlert(wireStatus, 'mirrors')
     : null;
@@ -146,10 +139,8 @@ export function MirrorDetailHeader({
   // Pause stays available, and Delete always stays available.
   // An errored-but-active mirror shows Pause (available); the
   // lock only ever disables Resume.
-  const resumeLocked = isFacebook && isPaused && mirror.targetFbStatus != null;
-  const facebookUrl = isFacebook
-    ? `https://facebook.com/${mirror.targetExternalId}`
-    : null;
+  const resumeLocked = isPaused && mirror.targetFbStatus != null;
+  const facebookUrl = `https://facebook.com/${mirror.targetExternalId}`;
   const targetInitials = getUserInitials(mirror.targetDisplayName);
   const sourceInitial = (mirror.sourceUsername[0] ?? '?').toUpperCase();
   const addedDate = mirror.targetAddedAt ? formatAddedDate(mirror.targetAddedAt) : '';
@@ -164,11 +155,10 @@ export function MirrorDetailHeader({
 
   return (
     <div data-testid="mirror-detail-header">
-      {/* Spec 155: a Facebook mirror with a mapped error status
+      {/* Spec 155: a mirror with a mapped error status
           shows the shared ADU banner (mirrors wording) instead of
-          the raw stored error. The raw-error box stays for
-          Instagram mirrors (unchanged) and for a Facebook mirror
-          in generic error with no detail anywhere. */}
+          the raw stored error. The raw-error box stays for a
+          mirror in generic error with no detail anywhere. */}
       {fbAlert ? (
         <div className="mb-6 overflow-hidden rounded-md border border-line">
           <Banner
@@ -235,23 +225,21 @@ export function MirrorDetailHeader({
               >
                 {mirror.targetDisplayName}
               </h1>
-              {facebookUrl ? (
-                <a
-                  data-testid="mirror-detail-facebook-link"
-                  href={facebookUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="shrink-0 truncate text-metadata text-brand-facebook hover:underline"
-                >
-                  View on Facebook{' '}
-                  <MoveUpRightIcon aria-hidden className="inline size-3 shrink-0" />
-                </a>
-              ) : null}
+              <a
+                data-testid="mirror-detail-facebook-link"
+                href={facebookUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 truncate text-metadata text-brand-facebook hover:underline"
+              >
+                View on Facebook{' '}
+                <MoveUpRightIcon aria-hidden className="inline size-3 shrink-0" />
+              </a>
               <span
                 data-testid="mirror-detail-platform-tag"
                 className="shrink-0 rounded-full border border-brand-gold px-2.5 py-0.5 text-metadata font-bold text-brand-gold"
               >
-                {isFacebook ? 'Facebook' : 'Instagram'}
+                Facebook
               </span>
             </div>
 
