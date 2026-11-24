@@ -28,6 +28,7 @@ export * from './scheduling.js';
 export * from './domain/dispatcher.js';
 export * from './domain/publishing.js';
 export * from './domain/insights.js';
+export * from './domain/analytics.js';
 export * from './domain/auth.js';
 export * from './domain/desktop.js';
 export * from './domain/desktop-bridge.js';

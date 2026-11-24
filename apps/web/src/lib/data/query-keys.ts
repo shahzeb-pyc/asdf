@@ -213,6 +213,15 @@ export const queryKeys = {
           [...tenantRoot, 'insights', pageId, range] as const,
       },
 
+      /** Combined Facebook analytics (spec 241): one aggregate per
+       * workspace + period, so each picker combination caches
+       * separately. */
+      analytics: {
+        all: [...tenantRoot, 'analytics'] as const,
+        aggregate: (params: { workspace: string; period: string }) =>
+          [...tenantRoot, 'analytics', 'aggregate', params] as const,
+      },
+
       workspaces: {
         all: [...tenantRoot, 'workspaces'] as const,
         list: [...tenantRoot, 'workspaces', 'list'] as const,

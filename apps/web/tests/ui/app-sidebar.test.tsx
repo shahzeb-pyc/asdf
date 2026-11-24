@@ -159,6 +159,7 @@ describe('sidebar section configs (structural)', () => {
       'Auto Repost',
       'Auto Download/Upload',
       'Bulk Delete Posts',
+      'Analytics',
       'Accounts',
       'Schedule',
       'Publish Now',

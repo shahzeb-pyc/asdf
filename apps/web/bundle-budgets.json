@@ -635,6 +635,12 @@
         "firstLoadRawBytes": 567683,
         "routeSpecificGzipBytes": 30139,
         "routeSpecificRawBytes": 94238
+      },
+      "/tenant/[subdomain]/analytics": {
+        "firstLoadGzipBytes": 163927,
+        "firstLoadRawBytes": 555711,
+        "routeSpecificGzipBytes": 23641,
+        "routeSpecificRawBytes": 82580
       }
     },
     "totalClientJs": {

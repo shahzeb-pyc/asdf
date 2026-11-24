@@ -30,7 +30,7 @@ function labels(sections: ReturnType<typeof getUserSections>): string[] {
 }
 
 describe('getUserSections white-label brand (spec 191)', () => {
-  it('lists Bulk Delete Posts last in the Facebook group (spec 213)', () => {
+  it('lists Analytics last in the Facebook group (spec 241)', () => {
     const sections = getUserSections('acme', true, 'fbuploadpro');
     const facebook = sections
       .flatMap((s) => s.items)
@@ -45,10 +45,11 @@ describe('getUserSections white-label brand (spec 191)', () => {
       'Auto Repost',
       'Auto Download/Upload',
       'Bulk Delete Posts',
+      'Analytics',
     ]);
-    const bulkDelete = facebook.leaves[facebook.leaves.length - 1];
-    expect(bulkDelete?.href).toContain('/bulk-delete-posts');
-    expect(facebook.tooltip).toContain('Bulk Delete Posts');
+    const analytics = facebook.leaves[facebook.leaves.length - 1];
+    expect(analytics?.href).toContain('/analytics');
+    expect(facebook.tooltip).toContain('Analytics');
   });
 
   it('keeps Bulk Delete Posts on nextrise', () => {

@@ -4,9 +4,12 @@ import { InternalError } from '@fbuploadpro/contracts';
 import {
   INSIGHTS_FOLLOWERS_CONCURRENCY,
   INSIGHTS_FOLLOWERS_PAGE_SIZE,
+  INSIGHTS_GRAPH_TIMEOUT_MS,
   fetchLiveFollowersFromGraph,
+  fetchPageAnalyticsFromGraph,
   listDestinationPage,
   processPage,
+  type AnalyticsColumnValues,
   type InsightsFollowersDb,
   type InsightsFollowersResult,
 } from './insights-followers-tick.js';
@@ -70,6 +73,8 @@ export interface InsightsRunStart {
 export interface InsightsChunkDeps {
   /** Test seam: single-attempt live-count fetch (defaults to the Graph read). */
   fetchFollowers?: (fbPageId: string, accessToken: string) => Promise<number>;
+  /** Test seam: analytics fetch (Calls A–D, spec 241). Defaults to the Graph read. */
+  fetchAnalytics?: (fbPageId: string, accessToken: string) => Promise<AnalyticsColumnValues>;
   /** Test seam: delay (429 backoff). Defaults to setTimeout. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -391,9 +396,11 @@ async function completeInsightsChunk(
  * the old full-cycle loop did it for that page (list page → group
  * by Facebook page id → processPage at concurrency 5, with a
  * per-chunk fetchedByPage cache — a page straddling two chunks may
- * be fetched twice, same values written). A scan-level DB error
- * throws (fail loud — the queue redelivers); per-row failures stay
- * per-row inside processPage.
+ * be fetched twice, same values written). Spec 241 analytics rides
+ * the same chunk: processPage fetches Calls A–D per eligible page
+ * (100+ stored followers) and wholesale-replaces the four columns.
+ * A scan-level DB error throws (fail loud — the queue redelivers);
+ * per-row failures stay per-row inside processPage.
  *
  * A chunk for a run that is no longer live, or already done/failed,
  * is a no-op returning zero counters — a redelivery after
@@ -419,6 +426,21 @@ export async function runInsightsFollowersChunk(
     deps.fetchFollowers ??
     ((fbPageId: string, accessToken: string) =>
       fetchLiveFollowersFromGraph(fbPageId, accessToken));
+  // Spec 241: the analytics fetch rides the same chunk (Calls A–D,
+  // one fetch per page, fanned out inside processPage). The chunk
+  // budget in spec 240 already assumes this cost, so no chunk-size
+  // change is needed for the rebase.
+  const fetchAnalytics =
+    deps.fetchAnalytics ??
+    ((fbPageId: string, accessToken: string) =>
+      fetchPageAnalyticsFromGraph(
+        fbPageId,
+        accessToken,
+        fetch,
+        INSIGHTS_GRAPH_TIMEOUT_MS,
+        sleep,
+        now
+      ));
 
   const { data: runRows, error: runError } = await supabase
     .from('insights_runs')
@@ -502,13 +524,25 @@ export async function runInsightsFollowersChunk(
   // Per-chunk cache: a page fetched earlier in THIS chunk (its rows
   // straddled two scan pages) reuses the total instead of fetching
   // again. Across chunks the cache is fresh by design (see spec).
+  // Spec 241 analytics reuses the same shape via analyticsByPage.
   const fetchedByPage = new Map<string, number>();
+  const analyticsByPage = new Map<string, AnalyticsColumnValues>();
   const groupList = [...groups.values()];
   for (let i = 0; i < groupList.length; i += INSIGHTS_FOLLOWERS_CONCURRENCY) {
     const batch = groupList.slice(i, i + INSIGHTS_FOLLOWERS_CONCURRENCY);
     const outcomes = await Promise.all(
       batch.map((dests) =>
-        processPage(supabase, dests, masterKey, nowIso, fetchFollowers, sleep, fetchedByPage)
+        processPage(
+          supabase,
+          dests,
+          masterKey,
+          nowIso,
+          fetchFollowers,
+          sleep,
+          fetchedByPage,
+          fetchAnalytics,
+          analyticsByPage
+        )
       )
     );
     for (const outcome of outcomes) {

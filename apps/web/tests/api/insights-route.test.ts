@@ -32,10 +32,15 @@ function fakeDb(destinationRow: unknown) {
 }
 
 function graphPayload() {
+  // The route sums daily values whose end_time date falls inside the
+  // range window ending today — a fixed mock date ages out of the
+  // window (2026-10-27 fell out on 2026-11-24, mediaViews went 0),
+  // so the mock date is always today, never a fixed calendar date.
+  const today = new Date().toISOString().slice(0, 10);
   const daily = (name: string, value: number) => ({
     name,
     period: 'day',
-    values: [{ value, end_time: '2026-10-27T07:00:00+0000' }],
+    values: [{ value, end_time: `${today}T07:00:00+0000` }],
   });
   return {
     daily: {

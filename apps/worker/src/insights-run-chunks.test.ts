@@ -22,9 +22,23 @@
  *   exactly once.
  * - Malformed messages fail validation at enqueue and at consume.
  * - A zero-row scan finishes immediately, never sticks.
+ *
+ * Spec 241 — stored analytics ride the same chunk processor (one
+ * analytics fetch per page, same 100+ stored-followers gate):
+ * - One fetch fills all four columns on the destination row, its ADU
+ *   configs and its mirrors; a second run wholesale-replaces them.
+ * - A failed analytics fetch leaves the stored columns byte-identical
+ *   (followers still update); a no-insights token skips the page.
+ * - Pages under 100 stored followers are skipped with no Graph call.
+ * - Empty location data keeps the old locations column and still
+ *   writes the other three. A followers failure never blocks
+ *   analytics, and an analytics failure never blocks followers.
+ * - The pre-241 chunk tests stub the analytics fetch to skip
+ *   (noAnalytics), so they never hit the Graph endpoint through the
+ *   chunk's default.
  */
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { encryptToken } from '@fbuploadpro/contracts';
 import {
   INSIGHTS_CHUNK_SIZE,
@@ -34,11 +48,59 @@ import {
   startInsightsRun,
 } from './insights-run-chunks.js';
 import { handleQueueBatch } from './consumers.js';
+import {
+  InsightsGraphError,
+  InsightsNoDataError,
+  type AnalyticsColumnValues,
+} from './insights-followers-tick.js';
 
 const MASTER_KEY =
   'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
 const NOW = new Date('2026-11-10T22:00:00.000Z'); // 03:00 PKT
 const NOW_ISO = NOW.toISOString();
+
+/**
+ * The pre-241 chunk tests run the followers concern only: the
+ * analytics fetch is stubbed to skip (no-insights), so no test ever
+ * hits the real Graph endpoint through the chunk's default.
+ */
+const noAnalytics = async (): Promise<AnalyticsColumnValues> => {
+  throw new InsightsNoDataError('test stub: analytics out of scope');
+};
+
+// ---------------------------------------------------------------------------
+// Spec 241 — stored analytics
+// ---------------------------------------------------------------------------
+
+function cannedDay(date: string, mediaViews: number) {
+  return {
+    date,
+    media_views: mediaViews,
+    unique_viewers: 50,
+    profile_views: 10,
+    engagement: 20,
+    video_views: 80,
+    video_view_time_ms: 60_000,
+    total_actions: 5,
+    new_follows: 3,
+    unfollows: 1,
+    video_complete_views_30s: 40,
+  };
+}
+
+function cannedAnalytics(overrides: Partial<AnalyticsColumnValues> = {}): AnalyticsColumnValues {
+  const day = cannedDay('2026-11-09', 100);
+  return {
+    analytics1d: { ...day },
+    analytics7d: { days: [{ ...day }], unique_viewers_7d: 300 },
+    analytics28d: { days: [{ ...day }], unique_viewers_28d: 1200 },
+    locations: {
+      countries: [{ country: 'PK', followers: 900 }],
+      cities: [{ city: 'Karachi', followers: 400 }],
+    },
+    ...overrides,
+  };
+}
 
 type Row = Record<string, unknown>;
 
@@ -501,7 +563,7 @@ describe('runInsightsFollowersChunk', () => {
         0,
         INSIGHTS_CHUNK_SIZE,
         NOW,
-        { fetchFollowers: async () => 5000 }
+        { fetchFollowers: async () => 5000, fetchAnalytics: noAnalytics }
       );
       expect(first.scanned).toBe(200);
       expect(first.updated).toBe(200);
@@ -521,7 +583,7 @@ describe('runInsightsFollowersChunk', () => {
         200,
         INSIGHTS_CHUNK_SIZE,
         NOW,
-        { fetchFollowers: async () => 5000 }
+        { fetchFollowers: async () => 5000, fetchAnalytics: noAnalytics }
       );
       expect(second.scanned).toBe(1);
       expect(second.updated).toBe(1);
@@ -560,7 +622,7 @@ describe('runInsightsFollowersChunk', () => {
           0,
           INSIGHTS_CHUNK_SIZE,
           NOW,
-          { fetchFollowers: async () => 5000 }
+          { fetchFollowers: async () => 5000, fetchAnalytics: noAnalytics }
         ),
         runInsightsFollowersChunk(
           fakeClient(db) as never,
@@ -570,7 +632,7 @@ describe('runInsightsFollowersChunk', () => {
           200,
           INSIGHTS_CHUNK_SIZE,
           NOW,
-          { fetchFollowers: async () => 5000 }
+          { fetchFollowers: async () => 5000, fetchAnalytics: noAnalytics }
         ),
       ]);
       expect(first.scanned + second.scanned).toBe(201);
@@ -604,7 +666,7 @@ describe('runInsightsFollowersChunk', () => {
       0,
       INSIGHTS_CHUNK_SIZE,
       NOW,
-      { fetchFollowers },
+      { fetchFollowers, fetchAnalytics: noAnalytics },
     ] as const;
     const first = await runInsightsFollowersChunk(...args);
     expect(first.updated).toBe(200);
@@ -629,7 +691,7 @@ describe('runInsightsFollowersChunk', () => {
       200,
       INSIGHTS_CHUNK_SIZE,
       NOW,
-      { fetchFollowers }
+      { fetchFollowers, fetchAnalytics: noAnalytics }
     );
     expect(db.insights_runs[0]!.scanned).toBe(201);
     expect(db.insights_runs[0]!.updated).toBe(201);
@@ -648,7 +710,7 @@ describe('runInsightsFollowersChunk', () => {
         0,
         INSIGHTS_CHUNK_SIZE,
         NOW,
-        { fetchFollowers: async () => 5000 }
+        { fetchFollowers: async () => 5000, fetchAnalytics: noAnalytics }
       )
     ).rejects.toThrow('missing run');
 
@@ -661,7 +723,7 @@ describe('runInsightsFollowersChunk', () => {
       0,
       INSIGHTS_CHUNK_SIZE,
       NOW,
-      { fetchFollowers: async () => 5000 }
+      { fetchFollowers: async () => 5000, fetchAnalytics: noAnalytics }
     );
     expect(db.insights_runs[0]!.status).toBe('finished');
     const again = await runInsightsFollowersChunk(
@@ -672,7 +734,7 @@ describe('runInsightsFollowersChunk', () => {
       0,
       INSIGHTS_CHUNK_SIZE,
       NOW,
-      { fetchFollowers: async () => 5000 }
+      { fetchFollowers: async () => 5000, fetchAnalytics: noAnalytics }
     );
     expect(again.updated).toBe(0);
   });
@@ -697,7 +759,7 @@ describe('runInsightsFollowersChunk', () => {
           0,
           INSIGHTS_CHUNK_SIZE,
           NOW,
-          { fetchFollowers: async () => 5000 }
+          { fetchFollowers: async () => 5000, fetchAnalytics: noAnalytics }
         )
       ).rejects.toThrow('finish update failed');
       // The chunk is done, but the run is stuck live with no finished line.
@@ -716,7 +778,7 @@ describe('runInsightsFollowersChunk', () => {
         0,
         INSIGHTS_CHUNK_SIZE,
         NOW,
-        { fetchFollowers: async () => 5000 }
+        { fetchFollowers: async () => 5000, fetchAnalytics: noAnalytics }
       );
       expect(redelivered.updated).toBe(0);
       const header = db.insights_runs[0]!;
@@ -751,7 +813,7 @@ describe('markInsightsChunkFailed', () => {
       0,
       INSIGHTS_CHUNK_SIZE,
       NOW,
-      { fetchFollowers: async () => 5000 }
+      { fetchFollowers: async () => 5000, fetchAnalytics: noAnalytics }
     );
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
@@ -929,5 +991,272 @@ describe('InsightsChunkMessageSchema', () => {
     expect(db.insights_run_chunks[0]!.status).toBe('failed');
     expect(db.insights_runs[0]!.status).toBe('finished');
     expect(db.insights_runs[0]!.chunks_failed).toBe(1);
+  });
+});
+
+describe('runInsightsFollowersChunk — spec 241 analytics', () => {
+  const runChunk = (
+    db: FakeDb,
+    runId: string,
+    deps: Parameters<typeof runInsightsFollowersChunk>[7]
+  ) =>
+    runInsightsFollowersChunk(
+      fakeClient(db) as never,
+      MASTER_KEY,
+      runId,
+      0,
+      0,
+      INSIGHTS_CHUNK_SIZE,
+      NOW,
+      deps
+    );
+
+  // The finisher logs the finished line when the run completes.
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    infoSpy.mockRestore();
+  });
+
+  it('fills all four columns on destinations, adu_configs and mirrors from one fetch', async () => {
+    const db = fakeDb();
+    seedRun(db);
+    seedChunk(db);
+    await seedDestination(db);
+    seedAduConfig(db);
+    seedMirror(db);
+    const columns = cannedAnalytics();
+    let fetchCalls = 0;
+    const result = await runChunk(db, 'run-seed', {
+      fetchFollowers: async () => 1250,
+      fetchAnalytics: async () => {
+        fetchCalls += 1;
+        return columns;
+      },
+    });
+    expect(fetchCalls).toBe(1);
+    // Followers still update alongside analytics.
+    expect(result.updated).toBe(1);
+    const dest = db.destinations[0]!;
+    expect(dest.analytics_1d).toEqual(columns.analytics1d);
+    expect(dest.analytics_7d).toEqual(columns.analytics7d);
+    expect(dest.analytics_28d).toEqual(columns.analytics28d);
+    expect(dest.analytics_locations).toEqual(columns.locations);
+    expect((dest.metadata as Record<string, unknown>).analytics_updated_at).toBe(NOW_ISO);
+    // Regression: the analytics write builds on the metadata the
+    // followers write stored — it must NOT clobber current_followers
+    // back to the stale snapshot. The fake mutates rows in place, so
+    // the row alone cannot prove it; the patch below is the proof.
+    expect((dest.metadata as Record<string, unknown>).current_followers).toBe(1250);
+    expect((dest.metadata as Record<string, unknown>).followers_updated_at).toBe(NOW_ISO);
+    // Pin it at the write itself, not just the row: the destinations
+    // analytics update patch must carry the followers write's
+    // current_followers (1250), never the stale snapshot (1200).
+    const analyticsPatch = db.updates.find(
+      (u) => u.table === 'destinations' && u.patch.analytics_1d !== undefined
+    );
+    expect(analyticsPatch).toBeDefined();
+    expect(
+      (analyticsPatch!.patch.metadata as Record<string, unknown>).current_followers
+    ).toBe(1250);
+    const adu = db.adu_configs[0]!;
+    expect(adu.analytics_1d).toEqual(columns.analytics1d);
+    expect(adu.analytics_locations).toEqual(columns.locations);
+    expect(adu.analytics_updated_at).toBe(NOW_ISO);
+    const mirror = db.mirrors[0]!;
+    expect(mirror.analytics_1d).toEqual(columns.analytics1d);
+    expect(mirror.analytics_locations).toEqual(columns.locations);
+    expect(mirror.analytics_updated_at).toBe(NOW_ISO);
+  });
+
+  it('a second run wholesale-replaces the columns (no preserved days)', async () => {
+    const db = fakeDb();
+    seedRun(db);
+    seedChunk(db);
+    await seedDestination(db);
+    const first = cannedAnalytics();
+    const second = cannedAnalytics({
+      analytics1d: cannedDay('2026-11-09', 777),
+      analytics7d: { days: [cannedDay('2026-11-09', 777)], unique_viewers_7d: 999 },
+      analytics28d: { days: [cannedDay('2026-11-09', 777)], unique_viewers_28d: 888 },
+      locations: {
+        countries: [{ country: 'US', followers: 10 }],
+        cities: [{ city: 'Lahore', followers: 5 }],
+      },
+    });
+    let current = first;
+    const run = (runId: string) =>
+      runChunk(db, runId, {
+        fetchFollowers: async () => 1250,
+        fetchAnalytics: async () => current,
+      });
+    await run('run-seed');
+    current = second;
+    seedRun(db, { id: 'run-seed-2' });
+    seedChunk(db, { id: 'chunk-seed-2', run_id: 'run-seed-2' });
+    await run('run-seed-2');
+    const dest = db.destinations[0]!;
+    expect(dest.analytics_1d).toEqual(second.analytics1d);
+    expect(dest.analytics_7d).toEqual(second.analytics7d);
+    expect(dest.analytics_28d).toEqual(second.analytics28d);
+    expect(dest.analytics_locations).toEqual(second.locations);
+    // The first run's values are gone, not merged.
+    expect((dest.analytics_1d as Record<string, unknown>).media_views).toBe(777);
+    expect((dest.analytics_locations as Record<string, unknown[]>).countries).toEqual([
+      { country: 'US', followers: 10 },
+    ]);
+  });
+
+  it('a failed analytics fetch leaves the stored columns byte-identical (followers still update)', async () => {
+    const db = fakeDb();
+    seedRun(db);
+    seedChunk(db);
+    const old = cannedAnalytics();
+    await seedDestination(db, {
+      metadata: {
+        starting_followers: 1000,
+        current_followers: 1200,
+        analytics_updated_at: '2026-11-09T22:00:00.000Z',
+      },
+      analytics_1d: old.analytics1d,
+      analytics_7d: old.analytics7d,
+      analytics_28d: old.analytics28d,
+      analytics_locations: old.locations,
+    });
+    seedAduConfig(db, {
+      analytics_1d: old.analytics1d,
+      analytics_locations: old.locations,
+      analytics_updated_at: '2026-11-09T22:00:00.000Z',
+    });
+    const result = await runChunk(db, 'run-seed', {
+      fetchFollowers: async () => 1250,
+      fetchAnalytics: async () => {
+        throw new InsightsGraphError('Graph insights call failed (HTTP 500)');
+      },
+    });
+    // The followers concern still succeeded.
+    expect(result.updated).toBe(1);
+    const dest = db.destinations[0]!;
+    expect(dest.analytics_1d).toEqual(old.analytics1d);
+    expect(dest.analytics_7d).toEqual(old.analytics7d);
+    expect(dest.analytics_28d).toEqual(old.analytics28d);
+    expect(dest.analytics_locations).toEqual(old.locations);
+    expect((dest.metadata as Record<string, unknown>).analytics_updated_at).toBe(
+      '2026-11-09T22:00:00.000Z'
+    );
+    expect(db.adu_configs[0]!.analytics_1d).toEqual(old.analytics1d);
+  });
+
+  it('a no-insights token skips the page and keeps the old columns', async () => {
+    const db = fakeDb();
+    seedRun(db);
+    seedChunk(db);
+    const old = cannedAnalytics();
+    await seedDestination(db, {
+      analytics_1d: old.analytics1d,
+      analytics_locations: old.locations,
+    });
+    const result = await runChunk(db, 'run-seed', {
+      fetchFollowers: async () => 1250,
+      fetchAnalytics: async () => {
+        throw new InsightsNoDataError('no insights data');
+      },
+    });
+    expect(result.updated).toBe(1);
+    expect(db.destinations[0]!.analytics_1d).toEqual(old.analytics1d);
+    expect(db.destinations[0]!.analytics_locations).toEqual(old.locations);
+  });
+
+  it('a page under 100 stored followers is skipped with no Graph call', async () => {
+    const db = fakeDb();
+    seedRun(db);
+    seedChunk(db);
+    await seedDestination(db, {
+      metadata: { starting_followers: 10, current_followers: 50 },
+    });
+    let fetchCalls = 0;
+    const result = await runChunk(db, 'run-seed', {
+      fetchFollowers: async () => 55,
+      fetchAnalytics: async () => {
+        fetchCalls += 1;
+        return cannedAnalytics();
+      },
+    });
+    expect(fetchCalls).toBe(0);
+    expect(result.updated).toBe(1);
+    expect(db.destinations[0]!.analytics_1d).toBeUndefined();
+  });
+
+  it('a page with no stored follower count is skipped, never guessed', async () => {
+    const db = fakeDb();
+    seedRun(db);
+    seedChunk(db);
+    await seedDestination(db, { metadata: { starting_followers: 0 } });
+    let fetchCalls = 0;
+    const result = await runChunk(db, 'run-seed', {
+      fetchFollowers: async () => 500,
+      fetchAnalytics: async () => {
+        fetchCalls += 1;
+        return cannedAnalytics();
+      },
+    });
+    expect(fetchCalls).toBe(0);
+    expect(result.updated).toBe(1);
+  });
+
+  it('empty locations keep the old locations column and still write the other three', async () => {
+    const db = fakeDb();
+    seedRun(db);
+    seedChunk(db);
+    const oldLocations = {
+      countries: [{ country: 'PK', followers: 900 }],
+      cities: [{ city: 'Karachi', followers: 400 }],
+    };
+    await seedDestination(db, { analytics_locations: oldLocations });
+    const columns = cannedAnalytics({ locations: null });
+    const result = await runChunk(db, 'run-seed', {
+      fetchFollowers: async () => 1250,
+      fetchAnalytics: async () => columns,
+    });
+    expect(result.updated).toBe(1);
+    const dest = db.destinations[0]!;
+    expect(dest.analytics_1d).toEqual(columns.analytics1d);
+    expect(dest.analytics_7d).toEqual(columns.analytics7d);
+    expect(dest.analytics_28d).toEqual(columns.analytics28d);
+    expect(dest.analytics_locations).toEqual(oldLocations);
+  });
+
+  it('a followers failure does not block analytics', async () => {
+    const db = fakeDb();
+    seedRun(db);
+    seedChunk(db);
+    await seedDestination(db);
+    const columns = cannedAnalytics();
+    const result = await runChunk(db, 'run-seed', {
+      fetchFollowers: async () => {
+        throw new InsightsGraphError('Graph followers fetch failed: HTTP 500', 500);
+      },
+      fetchAnalytics: async () => columns,
+    });
+    expect(result.failed).toBe(1);
+    expect(result.updated).toBe(0);
+    expect(db.destinations[0]!.analytics_1d).toEqual(columns.analytics1d);
+  });
+
+  it('an analytics failure does not block followers', async () => {
+    const db = fakeDb();
+    seedRun(db);
+    seedChunk(db);
+    await seedDestination(db);
+    const result = await runChunk(db, 'run-seed', {
+      fetchFollowers: async () => 1250,
+      fetchAnalytics: async () => {
+        throw new InsightsGraphError('Graph insights call failed (HTTP 500)');
+      },
+    });
+    expect(result.updated).toBe(1);
+    expect(db.destinations[0]!.analytics_1d).toBeUndefined();
   });
 });
