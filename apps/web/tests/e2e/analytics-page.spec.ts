@@ -68,6 +68,7 @@ const FIXTURES = {
     dateRangeLabel: '26 Oct – 22 Nov 2026',
     periodLabel: 'Last 28 days · combined',
     pagesIncluded: 5,
+    pagesConnected: 5,
     updatedAt: '2026-11-23T03:12:00.000Z',
     followers: { total: 60975, gained: 59803 },
     mediaViews: 590700,
@@ -107,6 +108,7 @@ const FIXTURES = {
     dateRangeLabel: '16 – 22 Nov 2026',
     periodLabel: 'Last 7 days · combined',
     pagesIncluded: 5,
+    pagesConnected: 5,
     updatedAt: '2026-11-23T03:12:00.000Z',
     followers: { total: 60975, gained: 59803 },
     mediaViews: 147650,
@@ -146,6 +148,7 @@ const FIXTURES = {
     dateRangeLabel: '22 Nov 2026',
     periodLabel: 'Yesterday · combined',
     pagesIncluded: 5,
+    pagesConnected: 5,
     updatedAt: '2026-11-23T03:12:00.000Z',
     followers: { total: 60975, gained: 59803 },
     mediaViews: 20260,
@@ -185,6 +188,7 @@ const FIXTURES = {
     dateRangeLabel: '26 Oct – 22 Nov 2026',
     periodLabel: 'Last 28 days · combined',
     pagesIncluded: 5,
+    pagesConnected: 12,
     updatedAt: '2026-11-23T03:12:00.000Z',
     followers: { total: 72000, gained: 61000 },
     mediaViews: 700000,
@@ -224,6 +228,7 @@ const FIXTURES = {
     dateRangeLabel: '',
     periodLabel: 'Last 28 days · combined',
     pagesIncluded: 0,
+    pagesConnected: 0,
     updatedAt: null,
     followers: { total: 0, gained: 0 },
     mediaViews: 0,
@@ -355,6 +360,10 @@ test.describe('Analytics page at desktop width (spec 241)', () => {
 
     await expect28DayValues(page);
 
+    // Spec 242: third hero KPI — every connected page in the scope.
+    await expect(page.getByText('Total pages connected')).toBeVisible();
+    await expect(page.getByText('5', { exact: true })).toBeVisible();
+
     // 7 days: every value swaps (keepPreviousData keeps the old ones
     // visible until the refetch lands — the text assertions wait).
     await page.getByRole('button', { name: '7 days' }).click();
@@ -371,6 +380,8 @@ test.describe('Analytics page at desktop width (spec 241)', () => {
     await expect(page.getByText('340')).toBeVisible();
     await expect(page.getByText('16 – 22 Nov 2026', { exact: true })).toBeVisible();
     await expect(page.getByText('Last 7 days · combined')).toBeVisible();
+    // Spec 242: the period picker must NOT change the pages total.
+    await expect(page.getByText('5', { exact: true })).toBeVisible();
     await expect(
       page.getByRole('img', { name: /Line chart of combined daily media views.*147,650/ }),
     ).toBeVisible();
@@ -403,6 +414,8 @@ test.describe('Analytics page at desktop width (spec 241)', () => {
     await page.getByLabel('Workspace', { exact: true }).selectOption('all');
     await expect(page.getByText('72,000')).toBeVisible();
     await expect(page.getByText('700,000')).toBeVisible();
+    // Spec 242: the workspace picker MUST change the pages total.
+    await expect(page.getByText('12', { exact: true })).toBeVisible();
     await expect(page.getByText('60,975')).toHaveCount(0);
 
     await expectNoDocumentOverflow(page);

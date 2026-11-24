@@ -46,6 +46,7 @@ function aggregateFixture(overrides: Partial<AnalyticsAggregateResponse>): Analy
     dateRangeLabel: '26 Oct – 22 Nov 2026',
     periodLabel: 'Last 28 days · combined',
     pagesIncluded: 5,
+    pagesConnected: 5,
     updatedAt: '2026-11-23T03:12:00.000Z',
     followers: { total: 60975, gained: 59803 },
     mediaViews: 590700,
@@ -119,6 +120,7 @@ const FIXTURES = {
   }),
   all: aggregateFixture({
     workspace: 'all',
+    pagesConnected: 12,
     mediaViews: 700000,
     uniqueViewers: 300000,
     followers: { total: 72000, gained: 61000 },
@@ -127,6 +129,7 @@ const FIXTURES = {
     dateRangeLabel: '',
     periodLabel: 'Last 28 days · combined',
     pagesIncluded: 0,
+    pagesConnected: 0,
     updatedAt: null,
     followers: { total: 0, gained: 0 },
     mediaViews: 0,
@@ -207,6 +210,9 @@ describe('AnalyticsPage', () => {
 
     await screen.findByText('60,975');
     expect(screen.getByText('+59,803')).toBeInTheDocument();
+    // Spec 242: third hero KPI — every connected page in the scope.
+    expect(screen.getByText('Total pages connected')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
     expect(screen.getByText('590,700')).toBeInTheDocument();
     expect(screen.getByText('250,100')).toBeInTheDocument();
     expect(screen.getByText('458,000')).toBeInTheDocument();
@@ -250,6 +256,9 @@ describe('AnalyticsPage', () => {
 
     await screen.findByText('147,650');
     expect(screen.getByText('69,750')).toBeInTheDocument();
+    // Spec 242: the period picker must NOT change the pages total.
+    expect(screen.getByText('Total pages connected')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
     expect(screen.getByText('114,000')).toBeInTheDocument();
     expect(screen.getByText('25,300')).toBeInTheDocument();
     expect(screen.getByText('93')).toBeInTheDocument();
@@ -297,6 +306,8 @@ describe('AnalyticsPage', () => {
     await screen.findByText('700,000');
     expect(screen.getByText('300,000')).toBeInTheDocument();
     expect(screen.getByText('72,000')).toBeInTheDocument();
+    // Spec 242: the workspace picker MUST change the pages total.
+    expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.queryByText('590,700')).not.toBeInTheDocument();
   });
 

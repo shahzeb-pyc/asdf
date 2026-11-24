@@ -12,6 +12,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import {
   aggregateAnalytics,
+  countConnectedPages,
   formatDateRangeLabel,
   parseStoredAnalytics,
   periodLabel,
@@ -35,6 +36,11 @@ import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
  * set the worker fetches. A stored column that does not parse is
  * logged and contributes nothing (fail loud in the log, never a
  * guessed number in the response).
+ *
+ * Spec 242 — `pagesConnected` counts distinct Facebook page ids
+ * over the SAME destinations scan (every status except
+ * `disconnected`); it follows the workspace picker and never
+ * changes with the period picker.
  *
  * Reads are bounded and paged (200 rows per page, ordered by id) —
  * PostgREST silently truncates at 1,000 rows, so an unbounded read
@@ -207,17 +213,27 @@ export async function handleGetAnalytics(
   }
 
   try {
-    const destinations = await fetchAll<DestinationRow>((offset) =>
+    // No status filter here: the listed set needs active rows only,
+    // but the spec-242 count reads the same scan with every status
+    // except `disconnected`. The split below keeps the listed set
+    // exactly as it was.
+    const allDestinations = await fetchAll<DestinationRow>((offset) =>
       supabase
         .from('destinations')
         .select(
           'id, workspace_id, external_destination_id, status, metadata, analytics_1d, analytics_7d, analytics_28d, analytics_locations'
         )
         .eq('platform', 'facebook')
-        .eq('status', 'active')
         .in('workspace_id', workspaceIds)
         .order('id', { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1)
+    );
+    const destinations = allDestinations.filter((d) => d.status === 'active');
+    const pagesConnected = countConnectedPages(
+      allDestinations.map((d) => ({
+        externalDestinationId: d.external_destination_id,
+        status: d.status,
+      }))
     );
     const aduRows = await fetchAll<AduRow>((offset) =>
       supabase
@@ -328,6 +344,7 @@ export async function handleGetAnalytics(
       dateRangeLabel: formatDateRangeLabel(aggregate.chart.map((p) => p.date)),
       periodLabel: periodLabel(period),
       pagesIncluded: aggregate.pagesIncluded,
+      pagesConnected,
       updatedAt: aggregate.updatedAt,
       followers: aggregate.followers,
       mediaViews: aggregate.mediaViews,

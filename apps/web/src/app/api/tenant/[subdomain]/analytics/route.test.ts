@@ -129,14 +129,15 @@ function destRow(
   fbId: string,
   current: number,
   starting: number,
-  withAnalytics = true
+  withAnalytics = true,
+  status = 'active'
 ): Row {
   return {
     id,
     workspace_id: workspaceId,
     external_destination_id: fbId,
     platform: 'facebook',
-    status: 'active',
+    status,
     metadata: {
       starting_followers: starting,
       current_followers: current,
@@ -389,6 +390,80 @@ describe('GET /api/tenant/[subdomain]/analytics', () => {
     // The stored PK count (900) exceeds the current total (800):
     // the share clamps at 100, the count stays exact.
     expect(body.topCountries).toEqual([{ name: 'Pakistan', count: 900, sharePct: 100 }]);
+  });
+
+  it('pagesConnected counts every non-disconnected page (spec 242), even ones the listed set excludes', async () => {
+    const token = await sessionToken();
+    const db = new FakeSupabase(
+      workspaceTables({
+        destinations: [
+          destRow('dest-a1', WS_A, 'fb-a', 1200, 1000),
+          // Same page held in a second section: still one connected page.
+          destRow('dest-a2', WS_A, 'fb-a', 1200, 1000),
+          // Paused, error, and under-100 pages count as connected…
+          destRow('dest-b1', WS_A, 'fb-b', 800, 500, true, 'paused'),
+          destRow('dest-c1', WS_A, 'fb-c', 50, 10, true, 'error'),
+          // …but a disconnected page does not.
+          destRow('dest-d1', WS_A, 'fb-d', 5000, 4000, true, 'disconnected'),
+        ],
+      })
+    );
+    const res = await handleGetAnalytics(
+      request(token),
+      'acme',
+      db as unknown as SupabaseClient
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.pagesConnected).toBe(3); // fb-a, fb-b, fb-c
+    expect(body.pagesIncluded).toBe(1); // only fb-a is active with 100+ followers
+    expect(body.followers).toEqual({ total: 1200, gained: 200 });
+  });
+
+  it('pagesConnected follows the workspace picker, and does not change with the period', async () => {
+    const token = await sessionToken();
+    const db = new FakeSupabase(
+      workspaceTables({
+        destinations: [
+          destRow('dest-a1', WS_A, 'fb-a', 1200, 1000),
+          destRow('dest-b1', WS_B, 'fb-b', 800, 500),
+          destRow('dest-b2', WS_B, 'fb-b2', 300, 200, true, 'paused'),
+        ],
+      })
+    );
+    const single = (await (
+      await handleGetAnalytics(
+        request(token, `workspace=${WS_B}&period=28`),
+        'acme',
+        db as unknown as SupabaseClient
+      )
+    ).json()) as Record<string, unknown>;
+    expect(single.pagesConnected).toBe(2);
+    expect(single.pagesIncluded).toBe(1);
+    const all = (await (
+      await handleGetAnalytics(request(token, 'workspace=all&period=28'), 'acme', db as unknown as SupabaseClient)
+    ).json()) as Record<string, unknown>;
+    expect(all.pagesConnected).toBe(3);
+    const oneDay = (await (
+      await handleGetAnalytics(request(token, 'workspace=all&period=1'), 'acme', db as unknown as SupabaseClient)
+    ).json()) as Record<string, unknown>;
+    expect(oneDay.pagesConnected).toBe(3);
+  });
+
+  it('pagesConnected is zero when no page is connected', async () => {
+    const token = await sessionToken();
+    const db = new FakeSupabase(
+      workspaceTables({
+        destinations: [destRow('dest-d1', WS_A, 'fb-d', 5000, 4000, true, 'disconnected')],
+      })
+    );
+    const res = await handleGetAnalytics(
+      request(token),
+      'acme',
+      db as unknown as SupabaseClient
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.pagesConnected).toBe(0);
+    expect(body.pagesIncluded).toBe(0);
   });
 
   it('the scan pages in 200-row bounds across 250 rows', async () => {

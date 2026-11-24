@@ -154,6 +154,26 @@ function zeroTotals(): Omit<AnalyticsAggregate, 'pagesIncluded' | 'updatedAt' | 
 }
 
 /**
+ * Spec 242 — pages connected in the picked scope: distinct Facebook
+ * page ids over destination rows, every status except `disconnected`
+ * (a disconnected page is not connected — it is hidden from every
+ * pages list). Mirrors and ADU configs never add: the destination
+ * row is the page, so only destination rows are counted, and a page
+ * held in two sections still counts once.
+ */
+export function countConnectedPages(
+  rows: ReadonlyArray<{ externalDestinationId: string; status: string }>
+): number {
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (row.status === 'disconnected') continue;
+    if (!row.externalDestinationId) continue;
+    ids.add(row.externalDestinationId);
+  }
+  return ids.size;
+}
+
+/**
  * Aggregate deduped page records for one period. The records must
  * already be filtered to the listed set (Facebook only, 100+
  * followers, deduped by page id) — this function only sums.

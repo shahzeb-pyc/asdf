@@ -142,6 +142,13 @@ export const AnalyticsAggregateResponseSchema = z
     periodLabel: z.string(),
     /** Number of distinct Facebook pages included (deduped by page id). */
     pagesIncluded: z.number().int().nonnegative(),
+    /**
+     * Spec 242 — distinct Facebook pages connected in the picked
+     * scope: every page except `disconnected`, deduped by page id.
+     * Unlike pagesIncluded (100+ followers only), this counts all
+     * connected pages, and it never changes with the period picker.
+     */
+    pagesConnected: z.number().int().nonnegative(),
     /** Latest analytics_updated_at across the included pages, or null. */
     updatedAt: z.string().nullable(),
     followers: z.object({
