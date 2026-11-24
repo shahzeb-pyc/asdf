@@ -55,8 +55,18 @@ function stubFrom(
   }
 ) {
   let lastTable = '';
+  // Spec 240: the insights cron starts a run (count query + header
+  // insert) and the retention cron prunes old runs (delete + count).
+  // The chain resolves those shapes: a count select answers count 0,
+  // an insights_runs insert answers one row with a stub id — every
+  // other chain still answers the empty result the old tests assume.
+  let lastOp = '';
+  let lastSelectCount = false;
   const emptyChain: any = {
-    select: () => emptyChain,
+    select: (_cols?: unknown, opts?: { count?: string }) => {
+      if (opts?.count === 'exact') lastSelectCount = true;
+      return emptyChain;
+    },
     eq: () => emptyChain,
     neq: () => emptyChain,
     not: () => emptyChain,
@@ -68,9 +78,18 @@ function stubFrom(
     order: () => emptyChain,
     limit: () => emptyChain,
     range: () => emptyChain,
-    update: () => emptyChain,
-    insert: () => emptyChain,
-    delete: () => emptyChain,
+    update: () => {
+      lastOp = 'update';
+      return emptyChain;
+    },
+    insert: () => {
+      lastOp = 'insert';
+      return emptyChain;
+    },
+    delete: () => {
+      lastOp = 'delete';
+      return emptyChain;
+    },
     in: () => emptyChain,
     single: () => Promise.resolve({ data: null, error: null }),
     maybeSingle: () =>
@@ -84,6 +103,16 @@ function stubFrom(
       return Promise.resolve({ error: null });
     },
     then: (resolve: (v: unknown) => void) => {
+      if (lastSelectCount) {
+        lastSelectCount = false;
+        resolve({ data: null, error: null, count: 0 });
+        return;
+      }
+      if (lastOp === 'insert' && lastTable === 'insights_runs') {
+        lastOp = '';
+        resolve({ data: [{ id: 'stub-run-id' }], error: null });
+        return;
+      }
       resolve({ data: [], error: null });
     },
   };
@@ -114,6 +143,8 @@ function stubFrom(
   return (table: string) => {
     fromTables.push(table);
     lastTable = table;
+    lastOp = '';
+    lastSelectCount = false;
     return opts?.failPaymentsScan && table === 'subscription_payments'
       ? failingChain
       : emptyChain;
@@ -275,7 +306,7 @@ describe('handleScheduled downgrade-activation tick wiring (C3)', () => {
     errSpy.mockRestore();
   });
 
-  it('insights cron runs the follower cycle, not the downgrade tick (spec 162)', async () => {
+  it('insights cron enqueues the follower cycle, not the downgrade tick (spec 162, spec 240)', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { db, fromTables } = minuteDb();
     await expect(runCron('0 22 * * *', db)).resolves.toBeUndefined();

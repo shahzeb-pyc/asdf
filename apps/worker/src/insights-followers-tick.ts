@@ -36,8 +36,11 @@ import { decryptToken, InternalError } from '@fbuploadpro/contracts';
  * .range(), ordered by id so page boundaries are stable even
  * though the tick mutates destinations.updated_at mid-run); per-page Graph calls run at a small concurrency (5)
  * with exponential backoff on 429. A scan-level DB error throws
- * (fail loud — the cron invocation reports it, tomorrow retries).
- * No per-run rows are stored, so there is no retention problem.
+ * (fail loud — the queue redelivers it, tomorrow retries).
+ * No per-run rows are stored in this module — the run record lives
+ * in insights_runs / insights_run_chunks (spec 240, see
+ * insights-run-chunks.ts), which owns the cycle now: one queue
+ * message per offset page, one chunk per consumer invocation.
  */
 
 /** Cron expression for the daily follower refresh (wrangler.toml triggers). */
@@ -79,20 +82,6 @@ export interface InsightsFollowersResult {
   mirrorsUpdated: number;
 }
 
-export interface InsightsFollowersOptions {
-  db: InsightsFollowersDb;
-  masterKey: string;
-  now?: Date;
-  /**
-   * Test seam: single-attempt live-count fetch. Defaults to the
-   * Graph read below (global fetch, timeout, 429 surfaced as a
-   * status-carrying error for the backoff wrapper).
-   */
-  fetchFollowers?: (fbPageId: string, accessToken: string) => Promise<number>;
-  /** Test seam: delay (429 backoff). Defaults to setTimeout. */
-  sleep?: (ms: number) => Promise<void>;
-}
-
 /** A Graph read failure, carrying the HTTP status for the 429 retry rule. */
 export class InsightsGraphError extends Error {
   readonly status: number | undefined;
@@ -105,11 +94,6 @@ export class InsightsGraphError extends Error {
 }
 
 type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
-
-const defaultSleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 
 function dbErrorDetail(error: unknown): string {
   const detail = error as { code?: unknown; message?: unknown };
@@ -187,7 +171,7 @@ async function fetchLiveFollowersWithBackoff(
   }
 }
 
-interface DestinationScanRow {
+export interface DestinationScanRow {
   id: string;
   external_destination_id: string;
   encrypted_destination_token: string | null;
@@ -208,9 +192,10 @@ function isGatedByFbStatus(metadata: Record<string, unknown> | null): boolean {
   return typeof marker === 'string' && marker.length > 0;
 }
 
-async function listDestinationPage(
+export async function listDestinationPage(
   supabase: SupabaseClient,
-  offset: number
+  offset: number,
+  limit: number = INSIGHTS_FOLLOWERS_PAGE_SIZE
 ): Promise<DestinationScanRow[]> {
   const { data, error } = await supabase
     .from('destinations')
@@ -224,7 +209,7 @@ async function listDestinationPage(
     // mid-run, which can shift the order between page fetches. Order
     // by the immutable id so every page boundary is stable.
     .order('id', { ascending: true })
-    .range(offset, offset + INSIGHTS_FOLLOWERS_PAGE_SIZE - 1);
+    .range(offset, offset + limit - 1);
   if (error) {
     throw new InternalError(
       `Insights followers scan failed: ${dbErrorDetail(error)}`
@@ -251,7 +236,7 @@ async function listDestinationPage(
  * pages) reuses the cached total via fetchedByPage instead of
  * fetching again.
  */
-interface PageOutcome {
+export interface PageOutcome {
   updated: number;
   skipped: number;
   failed: number;
@@ -259,7 +244,7 @@ interface PageOutcome {
   mirrors: number;
 }
 
-async function processPage(
+export async function processPage(
   supabase: SupabaseClient,
   dests: DestinationScanRow[],
   masterKey: string,
@@ -421,76 +406,4 @@ async function processPage(
     );
   }
   return { updated, skipped, failed, adu: aduUpdated, mirrors: mirrorsUpdated };
-}
-
-/**
- * Runs one daily follower-refresh cycle: bounded paged scan of
- * Facebook destinations, live Graph check per page (concurrency 5),
- * targeted writes on success only. Returns the run counters and logs
- * one structured counter line (counts only — never tokens, captions,
- * or row contents).
- */
-export async function runInsightsFollowersCycle(
-  options: InsightsFollowersOptions
-): Promise<InsightsFollowersResult> {
-  const { db, masterKey, now = new Date() } = options;
-  const nowIso = now.toISOString();
-  const sleep = options.sleep ?? defaultSleep;
-  const fetchFollowers =
-    options.fetchFollowers ??
-    ((fbPageId: string, accessToken: string) =>
-      fetchLiveFollowersFromGraph(fbPageId, accessToken));
-  const supabase = db as unknown as SupabaseClient;
-
-  const result: InsightsFollowersResult = {
-    scanned: 0,
-    updated: 0,
-    skipped: 0,
-    failed: 0,
-    aduUpdated: 0,
-    mirrorsUpdated: 0,
-  };
-
-  let offset = 0;
-  // Spec 174 3A: one Graph fetch per page. Rows are grouped by
-  // external id (a page imported into two sections has two rows);
-  // a page whose rows straddle two scan pages reuses the fetched
-  // total via fetchedByPage instead of fetching again.
-  const fetchedByPage = new Map<string, number>();
-  for (;;) {
-    const page = await listDestinationPage(supabase, offset);
-    result.scanned += page.length;
-    const groups = new Map<string, DestinationScanRow[]>();
-    for (const dest of page) {
-      const key = dest.external_destination_id || dest.id;
-      const group = groups.get(key);
-      if (group) group.push(dest);
-      else groups.set(key, [dest]);
-    }
-    const groupList = [...groups.values()];
-    for (let i = 0; i < groupList.length; i += INSIGHTS_FOLLOWERS_CONCURRENCY) {
-      const chunk = groupList.slice(i, i + INSIGHTS_FOLLOWERS_CONCURRENCY);
-      const outcomes = await Promise.all(
-        chunk.map((dests) =>
-          processPage(supabase, dests, masterKey, nowIso, fetchFollowers, sleep, fetchedByPage)
-        )
-      );
-      for (const outcome of outcomes) {
-        result.updated += outcome.updated;
-        result.skipped += outcome.skipped;
-        result.failed += outcome.failed;
-        result.aduUpdated += outcome.adu;
-        result.mirrorsUpdated += outcome.mirrors;
-      }
-    }
-    if (page.length < INSIGHTS_FOLLOWERS_PAGE_SIZE) break;
-    offset += INSIGHTS_FOLLOWERS_PAGE_SIZE;
-  }
-
-  console.info(
-    `[insights-followers] run scanned=${result.scanned} updated=${result.updated} ` +
-      `skipped=${result.skipped} failed=${result.failed} adu_updated=${result.aduUpdated} ` +
-      `mirrors_updated=${result.mirrorsUpdated}`
-  );
-  return result;
 }

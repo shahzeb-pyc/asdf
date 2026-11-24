@@ -34,10 +34,13 @@ import {
   RETENTION_CRON,
   type RetentionDbClient,
 } from './retention.js';
+import { INSIGHTS_FOLLOWERS_CRON } from './insights-followers-tick.js';
 import {
-  INSIGHTS_FOLLOWERS_CRON,
-  runInsightsFollowersCycle,
-} from './insights-followers-tick.js';
+  InsightsChunkMessageSchema,
+  markInsightsRunFailed,
+  startInsightsRun,
+  type InsightsChunkMessage,
+} from './insights-run-chunks.js';
 import {
   runRefreshCycle,
   TOKEN_REFRESH_CRON,
@@ -51,18 +54,6 @@ import {
 import { captureWorkerError, captureWorkerEvent } from './analytics.js';
 import { resolveWorkerMasterKey } from './master-key.js';
 import { verifyBearerToken } from './manual-run-auth.js';
-
-/**
- * Spec 163 — in-flight guard for the insights-followers cycle, shared
- * by the scheduled cron and the manual run endpoint. Module-level, so
- * it is per-isolate: it stops a second run starting on THIS isolate,
- * but Cloudflare may route the cron and a manual call to different
- * isolates, so a cross-isolate overlap is still possible (documented
- * in specs/163-insights-manual-run/spec.md). That overlap is safe —
- * the cycle is idempotent and concurrent runs write the same live
- * values; the cost is duplicate Graph calls, not corrupt data.
- */
-let insightsFollowersCycleInFlight = false;
 
 /**
  * Derive a `waitUntil` callback from an ExecutionContext (spec 139).
@@ -108,10 +99,7 @@ export {
   SECTION_CHECK_CRON,
 } from './section-check.js';
 export type { SectionCheckDbClient, SectionCheckResult } from './section-check.js';
-export {
-  runInsightsFollowersCycle,
-  INSIGHTS_FOLLOWERS_CRON,
-} from './insights-followers-tick.js';
+export { INSIGHTS_FOLLOWERS_CRON } from './insights-followers-tick.js';
 export type { RetentionRunResult, RetentionDbClient } from './retention.js';
 export type { RefreshCycleResult, RefreshDbClient } from './refresh.js';
 
@@ -164,6 +152,11 @@ export interface Env {
   PUBLISH_FAST_QUEUE?: Queue<PublishQueueMessage>;
   /** Producer binding for the publish-heavy lane queue (spec 121). */
   PUBLISH_HEAVY_QUEUE?: Queue<PublishQueueMessage>;
+  /**
+   * Producer binding for the insights-cycle queue (spec 240): one
+   * message per 200-row offset page of the follower scan.
+   */
+  INSIGHTS_CYCLE_QUEUE?: Queue<InsightsChunkMessage>;
   /** Comma-separated extra origins allowed by CORS (see getAllowedOrigin). */
   CORS_ALLOWED_ORIGINS?: string;
 }
@@ -289,33 +282,57 @@ export async function handleScheduled(
     return;
   }
 
-  // Insights-followers cron (spec 162): the daily follower refresh
-  // (03:00 PKT) runs ONLY this cycle — it fetches the live follower
-  // total per Facebook page from Graph and writes current followers
-  // + a last-updated timestamp (destinations metadata, Facebook ADU
-  // configs, Facebook mirrors). Like retention it writes no
-  // heartbeat row of its own and reports through its structured
-  // counter log line; a scan-level failure is captured and rethrown
-  // like the refresh cycle, per-row failures stay per-row.
-  // Spec 163: the cycle shares the in-flight guard with the manual
-  // run endpoint. If a manual run is already in flight on this
-  // isolate the cron skips instead of doubling the work — the manual
-  // run performs the same writes, so nothing is lost.
+  // Insights-followers cron (spec 162, spec 240): the daily follower
+  // refresh (03:00 PKT) enqueues the cycle as chunked queue messages
+  // and returns — the cycle itself runs as one consumer invocation
+  // per 200-row offset page, so the 15-minute cron window never
+  // bounds the full scan. The run record is the in-flight guard
+  // (shared with the manual endpoint, on every isolate): a cron
+  // firing while a run is live skips with a log line. An enqueue
+  // failure marks the run failed and is captured + rethrown like
+  // the other dedicated crons, so a broken start never reports a
+  // silent skip.
   if (controller.cron === INSIGHTS_FOLLOWERS_CRON) {
-    if (insightsFollowersCycleInFlight) {
-      console.warn(
-        '[Scheduled] insights followers cycle already in flight (manual run); skipping scheduled run'
-      );
-      return;
-    }
-    insightsFollowersCycleInFlight = true;
+    const cronNow = options?.now ?? new Date(controller.scheduledTime);
+    let runId: string | null = null;
     try {
-      await runInsightsFollowersCycle({
-        db: db as unknown as Parameters<typeof runInsightsFollowersCycle>[0]['db'],
-        masterKey,
-        now: options?.now ?? new Date(controller.scheduledTime),
-      });
+      const started = await startInsightsRun(
+        db as unknown as Parameters<typeof startInsightsRun>[0],
+        'cron',
+        cronNow
+      );
+      if (!started) {
+        console.warn(
+          '[Scheduled] insights followers run already in flight; skipping scheduled run'
+        );
+        return;
+      }
+      runId = started.runId;
+      if (started.chunks.length > 0) {
+        const queue = env.INSIGHTS_CYCLE_QUEUE;
+        if (!queue) {
+          throw new InternalError('INSIGHTS_CYCLE_QUEUE binding is not configured');
+        }
+        const messages = started.chunks.map((chunk) =>
+          InsightsChunkMessageSchema.parse(chunk)
+        );
+        await queue.sendBatch(messages.map((body) => ({ body })));
+      }
     } catch (err) {
+      if (runId) {
+        try {
+          await markInsightsRunFailed(
+            db as unknown as Parameters<typeof markInsightsRunFailed>[0],
+            runId,
+            cronNow
+          );
+        } catch (markErr) {
+          console.error(
+            '[Scheduled] insights followers run mark-failed failed after enqueue error:',
+            markErr
+          );
+        }
+      }
       console.error('[Scheduled] insights followers cycle failed:', err);
       captureWorkerError(
         env,
@@ -324,8 +341,6 @@ export async function handleScheduled(
         waitUntil
       );
       throw err;
-    } finally {
-      insightsFollowersCycleInFlight = false;
     }
     return;
   }
@@ -684,7 +699,7 @@ export async function handleScheduled(
  * consumed by the every-minute tick in handleScheduled.)
  */
 export async function handleQueue(
-  batch: MessageBatch<PublishQueueMessage>,
+  batch: MessageBatch<PublishQueueMessage | InsightsChunkMessage>,
   env: Env,
   _ctx?: ExecutionContext,
   options?: QueueOptions
@@ -694,7 +709,7 @@ export async function handleQueue(
     throw new InternalError('Database client is not configured; cannot consume queue batch');
   }
   const registry = options?.registry ?? createWorkerPublisherRegistry(env);
-  await handleQueueBatch(batch as MessageBatch<PublishQueueMessage>, {
+  await handleQueueBatch(batch, {
     db,
     registry,
     // Audit S3: production fail-closed key rules, same as web —
@@ -925,7 +940,7 @@ function getAllowedOrigin(request: Request, env: Env): string | null {
 }
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const allowedOrigin = getAllowedOrigin(request, env);
 
@@ -959,11 +974,20 @@ export default {
       });
     }
 
-    // 3. Manual insights-followers run (spec 163): runs the EXACT
-    // same daily cycle as the 03:00 PKT cron, on demand. Bearer
-    // token only — no token, wrong token, or unconfigured secret
-    // 401s before any work happens. The token value never appears
-    // in a response or a log line.
+    // 3. Manual insights-followers run (spec 163, spec 240): runs the
+    // EXACT same daily cycle as the 03:00 PKT cron, on demand — but
+    // in the background. The cycle takes ~4.5+ minutes at current
+    // page counts, far longer than one HTTP request can stay open
+    // (proven 2026-11-23: a synchronous run died at ~271s after
+    // 970 rows), so the handler answers 202 immediately after
+    // enqueueing the cycle as chunked queue messages — one message
+    // per 200-row offset page — and the queue consumers run one
+    // chunk each. Bearer token only — no token, wrong token, or
+    // unconfigured secret 401s before any work happens. The token
+    // value never appears in a response or a log line. The 202
+    // carries the runId for log correlation; the cycle summary
+    // stays in the worker log (the finisher logs one finished line
+    // with the run totals), since the cycle hasn't run yet.
     if (request.method === 'POST' && url.pathname === '/admin/insights-followers/run') {
       const authorized = await verifyBearerToken(
         request.headers.get('Authorization'),
@@ -974,12 +998,6 @@ export default {
           status: 401,
           headers: corsHeaders,
         });
-      }
-      if (insightsFollowersCycleInFlight) {
-        return new Response(
-          JSON.stringify({ error: 'insights_followers_cycle_in_flight' }),
-          { status: 409, headers: corsHeaders }
-        );
       }
       const manualDb = initWorkerDb(env, env.__TEST_DB__);
       const manualMasterKey = env.TOKEN_ENCRYPTION_KEY;
@@ -992,38 +1010,79 @@ export default {
           { status: 503, headers: corsHeaders }
         );
       }
-      insightsFollowersCycleInFlight = true;
-      const started = Date.now();
+      let started: Awaited<ReturnType<typeof startInsightsRun>>;
       try {
-        const result = await runInsightsFollowersCycle({
-          db: manualDb as unknown as Parameters<
-            typeof runInsightsFollowersCycle
-          >[0]['db'],
-          masterKey: manualMasterKey,
-          now: new Date(),
-        });
-        return new Response(
-          JSON.stringify({ ...result, durationMs: Date.now() - started }),
-          { status: 200, headers: corsHeaders }
+        started = await startInsightsRun(
+          manualDb as unknown as Parameters<typeof startInsightsRun>[0],
+          'manual',
+          new Date()
         );
       } catch (err) {
-        console.error('[Manual] insights followers cycle failed:', err);
-        captureWorkerError(
-          env,
-          err,
-          {
-            site: 'manual-insights-followers-run',
-            kind: 'insights_followers_cycle_failed',
-          },
-          waitUntilFromCtx(ctx)
-        );
+        console.error('[Manual] insights followers run start failed:', err);
         return new Response(
-          JSON.stringify({ error: 'insights_followers_cycle_failed' }),
-          { status: 500, headers: corsHeaders }
+          JSON.stringify({ error: 'insights_followers_unavailable' }),
+          { status: 503, headers: corsHeaders }
         );
-      } finally {
-        insightsFollowersCycleInFlight = false;
       }
+      if (started === null) {
+        // A run is already live — the run record is the guard.
+        return new Response(
+          JSON.stringify({ error: 'insights_followers_cycle_in_flight' }),
+          { status: 409, headers: corsHeaders }
+        );
+      }
+      if (started.chunks.length > 0) {
+        const queue = env.INSIGHTS_CYCLE_QUEUE;
+        if (!queue) {
+          console.error(
+            '[Manual] insights followers run enqueue failed: INSIGHTS_CYCLE_QUEUE binding is not configured'
+          );
+          await markInsightsRunFailed(
+            manualDb as unknown as Parameters<typeof markInsightsRunFailed>[0],
+            started.runId,
+            new Date()
+          ).catch((markErr: unknown) => {
+            console.error(
+              '[Manual] insights followers run mark-failed failed after enqueue error:',
+              markErr
+            );
+          });
+          return new Response(
+            JSON.stringify({ error: 'insights_followers_enqueue_failed' }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+        try {
+          const messages = started.chunks.map((chunk) =>
+            InsightsChunkMessageSchema.parse(chunk)
+          );
+          await queue.sendBatch(messages.map((body) => ({ body })));
+        } catch (err) {
+          console.error('[Manual] insights followers run enqueue failed:', err);
+          await markInsightsRunFailed(
+            manualDb as unknown as Parameters<typeof markInsightsRunFailed>[0],
+            started.runId,
+            new Date()
+          ).catch((markErr: unknown) => {
+            console.error(
+              '[Manual] insights followers run mark-failed failed after enqueue error:',
+              markErr
+            );
+          });
+          return new Response(
+            JSON.stringify({ error: 'insights_followers_enqueue_failed' }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+      }
+      return new Response(
+        JSON.stringify({
+          status: 'accepted',
+          message: 'Insights followers run started in the background.',
+          runId: started.runId,
+        }),
+        { status: 202, headers: corsHeaders }
+      );
     }
 
     return new Response(
@@ -1046,7 +1105,7 @@ export default {
   },
 
   async queue(
-    batch: MessageBatch<PublishQueueMessage>,
+    batch: MessageBatch<PublishQueueMessage | InsightsChunkMessage>,
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {

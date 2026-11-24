@@ -1,5 +1,7 @@
 /**
- * Spec 162 — daily insights-followers worker.
+ * Spec 240 — the chunk processor moves each destination row through
+ * the per-page followers tick. A chunk scans one 200-row page,
+ * ordered by id; a run is one or more chunks.
  *
  * Tested against a small fake Supabase client (downgrade-tick style)
  * with REAL token encryption (encryptToken fixtures, decryptToken in
@@ -28,8 +30,13 @@ import {
   fetchLiveFollowersFromGraph,
   INSIGHTS_FOLLOWERS_PAGE_SIZE,
   InsightsGraphError,
-  runInsightsFollowersCycle,
+  type InsightsFollowersResult,
 } from './insights-followers-tick.js';
+import {
+  runInsightsFollowersChunk,
+  type InsightsChunkDeps,
+  type InsightsRunDb,
+} from './insights-run-chunks.js';
 
 const MASTER_KEY =
   'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
@@ -42,6 +49,8 @@ interface FakeDb {
   destinations: Row[];
   adu_configs: Row[];
   mirrors: Row[];
+  insights_runs: Row[];
+  insights_run_chunks: Row[];
   /** Every range() call the tick made (pins the bounded scan). */
   ranges: Array<{ table: string; from: number | null; to: number | null }>;
   /** Every order() call the tick made (pins the stable scan order). */
@@ -100,6 +109,8 @@ class FakeBuilder {
   private tableRows(): Row[] {
     if (this.table === 'destinations') return this.db.destinations;
     if (this.table === 'adu_configs') return this.db.adu_configs;
+    if (this.table === 'insights_runs') return this.db.insights_runs;
+    if (this.table === 'insights_run_chunks') return this.db.insights_run_chunks;
     return this.db.mirrors;
   }
 
@@ -140,7 +151,16 @@ class FakeBuilder {
 }
 
 function fakeDb(): FakeDb {
-  return { destinations: [], adu_configs: [], mirrors: [], ranges: [], orders: [], updates: [] };
+  return {
+    destinations: [],
+    adu_configs: [],
+    mirrors: [],
+    insights_runs: [],
+    insights_run_chunks: [],
+    ranges: [],
+    orders: [],
+    updates: [],
+  };
 }
 
 function fakeClient(db: FakeDb): unknown {
@@ -195,7 +215,87 @@ function seedMirror(db: FakeDb, overrides: Partial<Row> = {}): Row {
   return row;
 }
 
-describe('runInsightsFollowersCycle', () => {
+let runCounter = 0;
+
+/**
+ * One chunk of a run, seeded directly into the fake run tables
+ * (startInsightsRun itself is covered by insights-run-chunks.test.ts).
+ * Each call gets its own run row unless the caller passes a runId —
+ * the paging tests share one run across two chunks.
+ */
+async function runCycle(
+  db: FakeDb,
+  overrides: InsightsChunkDeps = {},
+  chunk: {
+    runId?: string;
+    chunkIndex?: number;
+    offset?: number;
+    limit?: number;
+    totalChunks?: number;
+  } = {}
+): Promise<InsightsFollowersResult> {
+  const runId = chunk.runId ?? `run-${++runCounter}`;
+  const chunkIndex = chunk.chunkIndex ?? 0;
+  const offset = chunk.offset ?? 0;
+  const limit = chunk.limit ?? INSIGHTS_FOLLOWERS_PAGE_SIZE;
+  let run = db.insights_runs.find((r) => r.id === runId);
+  if (!run) {
+    run = {
+      id: runId,
+      trigger: 'manual',
+      status: 'running',
+      started_at: NOW_ISO,
+      finished_at: null,
+      chunks_total: chunk.totalChunks ?? 1,
+      chunks_done: 0,
+      chunks_failed: 0,
+      scanned: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      adu_updated: 0,
+      mirrors_updated: 0,
+    };
+    db.insights_runs.push(run);
+    // All chunk rows exist from the start — startInsightsRun inserts
+    // them in one bulk insert, and the finisher counts done/failed
+    // against the rows that exist, so a lazily-seeded second chunk
+    // would finish the run after the first.
+    const total = chunk.totalChunks ?? 1;
+    for (let i = 0; i < total; i += 1) {
+      db.insights_run_chunks.push({
+        id: `chunk-${runId}-${i}`,
+        run_id: runId,
+        chunk_index: i,
+        offset: i * limit,
+        limit,
+        status: 'pending',
+        attempts: 0,
+        scanned: 0,
+        updated: 0,
+        skipped: 0,
+        failed: 0,
+        adu_updated: 0,
+        mirrors_updated: 0,
+        updated_at: NOW_ISO,
+      });
+    }
+  } else if (chunk.totalChunks !== undefined) {
+    run.chunks_total = chunk.totalChunks;
+  }
+  return runInsightsFollowersChunk(
+    fakeClient(db) as unknown as InsightsRunDb,
+    MASTER_KEY,
+    runId,
+    chunkIndex,
+    offset,
+    limit,
+    NOW,
+    overrides
+  );
+}
+
+describe('runInsightsFollowersChunk', () => {
   it('updates current, never starting, over two runs with a changed live count', async () => {
     const db = fakeDb();
     const dest = await seedDestination(db);
@@ -204,12 +304,7 @@ describe('runInsightsFollowersCycle', () => {
     const liveByRun = [5000, 5200];
     const fetchFollowers = async () => liveByRun.shift() ?? 5200;
 
-    const first = await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
-      fetchFollowers,
-    });
+    const first = await runCycle(db, { fetchFollowers });
     expect(first.updated).toBe(1);
     expect(first.failed).toBe(0);
     expect((dest.metadata as Row).starting_followers).toBe(1000);
@@ -219,12 +314,7 @@ describe('runInsightsFollowersCycle', () => {
     expect(adu.current_followers).toBe(5000);
     expect(adu.followers_updated_at).toBe(NOW_ISO);
 
-    const second = await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
-      fetchFollowers,
-    });
+    const second = await runCycle(db, { fetchFollowers });
     expect(second.updated).toBe(1);
     expect((dest.metadata as Row).starting_followers).toBe(1000);
     expect((dest.metadata as Row).current_followers).toBe(5200);
@@ -239,22 +329,12 @@ describe('runInsightsFollowersCycle', () => {
     const liveByRun = [5000, 5100];
     const fetchFollowers = async () => liveByRun.shift() ?? 5100;
 
-    await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
-      fetchFollowers,
-    });
+    await runCycle(db, { fetchFollowers });
     expect(mirror.starting_followers).toBe(5000);
     expect(mirror.current_followers).toBe(5000);
     expect(mirror.followers_updated_at).toBe(NOW_ISO);
 
-    await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
-      fetchFollowers,
-    });
+    await runCycle(db, { fetchFollowers });
     expect(mirror.starting_followers).toBe(5000);
     expect(mirror.current_followers).toBe(5100);
     expect(mirror.followers_updated_at).toBe(NOW_ISO);
@@ -266,12 +346,20 @@ describe('runInsightsFollowersCycle', () => {
     const adu = seedAduConfig(db);
     const mirror = seedMirror(db, { starting_followers: 900, current_followers: 1100 });
     const before = JSON.stringify({ dest, adu, mirror });
-    const updatesBefore = db.updates.length;
+    // Only the three stores count here — the chunk processor still
+    // writes its own run/chunk bookkeeping rows (claim, completion,
+    // finisher) for a failed page; the stores themselves must see
+    // no write at all.
+    const storeUpdates = () =>
+      db.updates.filter(
+        (u) =>
+          u.table === 'destinations' ||
+          u.table === 'adu_configs' ||
+          u.table === 'mirrors'
+      ).length;
+    const updatesBefore = storeUpdates();
 
-    const result = await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
+    const result = await runCycle(db, {
       fetchFollowers: async () => {
         throw new InternalError('Graph checkpoint');
       },
@@ -279,7 +367,7 @@ describe('runInsightsFollowersCycle', () => {
     expect(result.failed).toBe(1);
     expect(result.updated).toBe(0);
     expect(JSON.stringify({ dest, adu, mirror })).toBe(before);
-    expect(db.updates.length).toBe(updatesBefore);
+    expect(storeUpdates()).toBe(updatesBefore);
   });
 
   it('a decrypt failure and an exhausted 429 both leave the row untouched', async () => {
@@ -288,10 +376,7 @@ describe('runInsightsFollowersCycle', () => {
     const adu = seedAduConfig(db);
     const before = JSON.stringify({ dest, adu });
 
-    const decryptResult = await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
+    const decryptResult = await runCycle(db, {
       fetchFollowers: async () => 5000,
     });
     expect(decryptResult.failed).toBe(1);
@@ -302,10 +387,7 @@ describe('runInsightsFollowersCycle', () => {
       external_destination_id: 'fb-page-b',
     });
     const sleeps: number[] = [];
-    const rateLimited = await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
+    const rateLimited = await runCycle(db, {
       fetchFollowers: async () => {
         const err = new Error('rate limited') as Error & { status: number };
         err.status = 429;
@@ -328,10 +410,7 @@ describe('runInsightsFollowersCycle', () => {
     const adu = seedAduConfig(db);
     let attempts = 0;
     const sleeps: number[] = [];
-    const result = await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
+    const result = await runCycle(db, {
       fetchFollowers: async () => {
         attempts += 1;
         if (attempts <= 2) {
@@ -398,12 +477,7 @@ describe('runInsightsFollowersCycle', () => {
       pausedMirror,
     });
 
-    const result = await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
-      fetchFollowers: async () => 5000,
-    });
+    const result = await runCycle(db, { fetchFollowers: async () => 5000 });
     expect(result.updated).toBe(1);
     expect((live.metadata as Row).current_followers).toBe(5000);
     expect(JSON.stringify({
@@ -431,10 +505,7 @@ describe('runInsightsFollowersCycle', () => {
       metadata: { starting_followers: 1000, current_followers: 1250 },
     });
     let fetches = 0;
-    const result = await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
+    const result = await runCycle(db, {
       fetchFollowers: async () => {
         fetches += 1;
         return 1300;
@@ -458,14 +529,30 @@ describe('runInsightsFollowersCycle', () => {
         external_destination_id: `fb-page-${i}`,
       });
     }
-    const result = await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
-      fetchFollowers: async () => 5000,
-    });
-    expect(result.scanned).toBe(201);
-    expect(result.updated).toBe(201);
+    const first = await runCycle(
+      db,
+      { fetchFollowers: async () => 5000 },
+      {
+        runId: 'run-paging',
+        chunkIndex: 0,
+        offset: 0,
+        limit: INSIGHTS_FOLLOWERS_PAGE_SIZE,
+        totalChunks: 2,
+      }
+    );
+    const second = await runCycle(
+      db,
+      { fetchFollowers: async () => 5000 },
+      {
+        runId: 'run-paging',
+        chunkIndex: 1,
+        offset: INSIGHTS_FOLLOWERS_PAGE_SIZE,
+        limit: INSIGHTS_FOLLOWERS_PAGE_SIZE,
+        totalChunks: 2,
+      }
+    );
+    expect(first.scanned + second.scanned).toBe(201);
+    expect(first.updated + second.updated).toBe(201);
     const destRanges = db.ranges.filter((r) => r.table === 'destinations');
     expect(destRanges).toEqual([
       { table: 'destinations', from: 0, to: INSIGHTS_FOLLOWERS_PAGE_SIZE - 1 },
@@ -500,24 +587,42 @@ describe('runInsightsFollowersCycle', () => {
     // page boundary: the new row lands in page 2 and every seeded
     // row is still visited exactly once.
     let churned = false;
-    const result = await runInsightsFollowersCycle({
-      db: fakeClient(db) as never,
-      masterKey: MASTER_KEY,
-      now: NOW,
-      fetchFollowers: async () => {
-        if (!churned) {
-          churned = true;
-          for (const row of db.destinations) row.updated_at = NOW_ISO;
-          await seedDestination(db, {
-            id: 'dest-zzz',
-            external_destination_id: 'fb-page-zzz',
-          });
-        }
-        return 5000;
+    const first = await runCycle(
+      db,
+      {
+        fetchFollowers: async () => {
+          if (!churned) {
+            churned = true;
+            for (const row of db.destinations) row.updated_at = NOW_ISO;
+            await seedDestination(db, {
+              id: 'dest-zzz',
+              external_destination_id: 'fb-page-zzz',
+            });
+          }
+          return 5000;
+        },
       },
-    });
-    expect(result.scanned).toBe(202);
-    expect(result.updated).toBe(202);
+      {
+        runId: 'run-churn',
+        chunkIndex: 0,
+        offset: 0,
+        limit: INSIGHTS_FOLLOWERS_PAGE_SIZE,
+        totalChunks: 2,
+      }
+    );
+    const second = await runCycle(
+      db,
+      { fetchFollowers: async () => 5000 },
+      {
+        runId: 'run-churn',
+        chunkIndex: 1,
+        offset: INSIGHTS_FOLLOWERS_PAGE_SIZE,
+        limit: INSIGHTS_FOLLOWERS_PAGE_SIZE,
+        totalChunks: 2,
+      }
+    );
+    expect(first.scanned + second.scanned).toBe(202);
+    expect(first.updated + second.updated).toBe(202);
     expect(db.updates.filter((u) => u.table === 'destinations').length).toBe(202);
     // The interleaved row was picked up in this run, not next day's.
     const inserted = db.destinations.find((r) => r.id === 'dest-zzz');

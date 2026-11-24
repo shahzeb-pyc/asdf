@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@fbuploadpro/contracts": "workspace:*",
-    "@supabase/supabase-js": "^2.117.3"
+    "@supabase/supabase-js": "^2.117.3",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250224.0",
