@@ -129,55 +129,91 @@ function applyRateLimitCooldown<
 /**
  * Status family 1A/4A server gate for the status PATCH. Menu hiding
  * alone is never trusted: the API must reject a status change the
- * UI would never offer. Allowed transitions, by CURRENT wire status
- * (after the 5A cooldown flip, so a page past cooldown is 'active'):
- * - active / paused: active or paused (Pause / Resume)
- * - page_checkpoint: active ONLY — this is the Mark Verified &
- *   Reactivate banner path, which PATCHes 'active' and clears the
- *   checkpoint marker. Pausing a checkpoint page is blocked: it
- *   would overwrite the checkpoint marker with the paused marker.
- * - invalid_token, fb_rate_limited (pre-cooldown), disconnected,
- *   unknown: nothing. Expired pages recover by reconnecting, not by
- *   a status PATCH; rate-limited pages wait for the cooldown; a
- *   disconnected page is re-added, not resumed.
+ * UI would never offer. Spec 236: the automation toggle reactivates
+ * a page from ANY current wire status — turning it on clears the
+ * error and the worker retries at the next posting time; a failed
+ * publish then falls back to the real error status. The only wire
+ * status that can never be toggled is 'disconnected': that page is
+ * gone and must be re-added, not resumed.
  * Timezone-only updates bypass this gate (no status in the body).
  */
-function statusTransitionAllowed(
-  current: FacebookPageStatus,
-  requested: 'active' | 'paused'
-): boolean {
-  if (current === 'active' || current === 'paused') return true;
-  if (current === 'page_checkpoint') return requested === 'active';
-  return false;
+function statusTransitionAllowed(current: FacebookPageStatus): boolean {
+  return current !== 'disconnected';
 }
 
 const STATUS_TOGGLE_BLOCKED_MESSAGES: Partial<
   Record<FacebookPageStatus, string>
 > = {
-  invalid_token:
-    "Cannot change automation while this Page's connection has expired. Reconnect the parent Facebook account first.",
-  page_checkpoint:
-    'Cannot pause a Page waiting on a Facebook identity check. Use Mark Verified & Reactivate Page first.',
-  fb_rate_limited:
-    'Cannot resume a rate-limited Page yet. It auto-resumes after 3 days.',
   disconnected:
     'Cannot change automation on a disconnected Page. Add it again first.',
-  // Spec 155: each new error status gets its own refusal instead of
-  // the generic fallback — the gate already blocks them all (only
-  // active/paused and checkpoint→active are allowed above).
-  page_not_accessible:
-    'Cannot change automation while this Page is not accessible. Confirm the page still exists and reconnect the parent Facebook account first.',
-  missing_page_access:
-    'Cannot change automation while this Page is missing access. Ask an admin to restore your role in Business Manager first.',
-  missing_permission:
-    'Cannot change automation while this Page is missing a permission. Ask an admin to grant the permission first.',
-  check_developer_app:
-    'Cannot change automation while this Page is blocked in the developer app. Fix the problem in your developer app first.',
-  account_suspended:
-    'Cannot change automation while the connected Facebook account is suspended. Once Facebook clears the restriction, try again.',
-  '2fa_required_on_BM':
-    'Cannot change automation until Business Manager two-factor authentication is complete.',
 };
+
+/**
+ * Spec 236: turning the toggle ON also revives the linked account
+ * when Facebook expired it (invalid_token) — the claim RPCs and the
+ * worker both require an active account, so without this the page
+ * would read active yet stay skipped. A revoked or errored account
+ * cannot be revived this way: it needs a reconnect. Returns
+ * 'revoked' for those, 'failed' when the account could not be read
+ * or written (the caller fails loud), 'ok' otherwise. Missing
+ * account rows are 'ok' — there is nothing to revive.
+ */
+type AccountToggleCheck = 'ok' | 'revoked' | 'failed';
+
+async function reviveExpiredAccountSql(
+  dbClient: DatabaseClient,
+  accountId: string,
+  workspaceId: string
+): Promise<AccountToggleCheck> {
+  const rows = (await dbClient.query(
+    `SELECT status FROM social_accounts WHERE id = $1 AND workspace_id = $2`,
+    [accountId, workspaceId]
+  )) as Array<{ status: string }>;
+  if (rows.length === 0) return 'ok';
+  const account = rows[0];
+  if (account.status === 'expired') {
+    await dbClient.query(
+      `UPDATE social_accounts SET status = 'active', updated_at = now() WHERE id = $1 AND workspace_id = $2`,
+      [accountId, workspaceId]
+    );
+    return 'ok';
+  }
+  if (account.status === 'revoked' || account.status === 'error') {
+    return 'revoked';
+  }
+  return 'ok';
+}
+
+async function reviveExpiredAccountSupabase(
+  supabase: SupabaseClient,
+  accountId: string,
+  workspaceId: string
+): Promise<AccountToggleCheck> {
+  const { data: account, error: accountError } = await supabase
+    .from('social_accounts')
+    .select('status')
+    .eq('id', accountId)
+    .eq('workspace_id', workspaceId)
+    .maybeSingle();
+  if (accountError) return 'failed';
+  if (!account) return 'ok';
+  if (account.status === 'expired') {
+    const { error: updateError } = await supabase
+      .from('social_accounts')
+      .update({ status: 'active', updated_at: new Date().toISOString() })
+      .eq('id', accountId)
+      .eq('workspace_id', workspaceId);
+    if (updateError) return 'failed';
+    return 'ok';
+  }
+  if (account.status === 'revoked' || account.status === 'error') {
+    return 'revoked';
+  }
+  return 'ok';
+}
+
+const ACCOUNT_REVOKED_MESSAGE =
+  'Cannot resume this Page — its Facebook account was revoked. Reconnect the account first.';
 
 async function authenticateTenantRequest(
   request: NextRequest,
@@ -502,7 +538,7 @@ export async function handleUpdatePage(
     // 404 for a page that exists, so it is rejected with 409 here.
     if (parsed.data.status || parsed.data.timezone) {
       const currentRows = (await dbClient.query(
-        `SELECT status, metadata, updated_at
+        `SELECT status, metadata, updated_at, account_id
          FROM destinations
          WHERE id = $1 AND workspace_id = $2 AND platform = 'facebook'`,
         [pageId, workspaceId]
@@ -510,6 +546,7 @@ export async function handleUpdatePage(
         status: string;
         metadata: Record<string, unknown> | string | null;
         updated_at: string;
+        account_id: string | null;
       }>;
       const currentRow = currentRows?.[0];
       if (currentRow) {
@@ -535,27 +572,42 @@ export async function handleUpdatePage(
             currentRow.status,
             currentMetadata
           );
-          const effectiveCurrent =
-            currentWire === 'fb_rate_limited'
-              ? evaluatePageHealth({
-                  status: currentWire,
-                  updatedAt: currentRow.updated_at,
-                  rateLimitedAt:
-                    typeof currentMetadata?.rate_limited_at === 'string'
-                      ? currentMetadata.rate_limited_at
-                      : null,
-                })
-              : currentWire;
-          if (!statusTransitionAllowed(effectiveCurrent, parsed.data.status)) {
+          // Spec 236: the toggle reactivates from any wire status
+          // except 'disconnected' — a disconnected page must be
+          // re-added, not resumed.
+          if (!statusTransitionAllowed(currentWire)) {
             return NextResponse.json(
               {
                 error: 'PAGE_STATUS_NOT_ALLOWED',
                 message:
-                  STATUS_TOGGLE_BLOCKED_MESSAGES[effectiveCurrent] ??
+                  STATUS_TOGGLE_BLOCKED_MESSAGES[currentWire] ??
                   'This Page cannot change automation right now.',
               },
               { status: 409 }
             );
+          }
+          // Spec 236: turning the toggle ON also revives an expired
+          // linked account (see reviveExpiredAccountSql). OFF never
+          // touches the account.
+          if (
+            parsed.data.status === 'active' &&
+            typeof currentRow.account_id === 'string' &&
+            currentRow.account_id
+          ) {
+            const accountCheck = await reviveExpiredAccountSql(
+              dbClient,
+              currentRow.account_id,
+              workspaceId
+            );
+            if (accountCheck === 'revoked') {
+              return NextResponse.json(
+                {
+                  error: 'PAGE_STATUS_NOT_ALLOWED',
+                  message: ACCOUNT_REVOKED_MESSAGE,
+                },
+                { status: 409 }
+              );
+            }
           }
         } else {
           const visible =
@@ -613,7 +665,7 @@ export async function handleUpdatePage(
       // the update and then return the unchanged page as success.
       const { data: current, error: currentError } = await supabase
         .from('destinations')
-        .select('status, metadata, updated_at')
+        .select('status, metadata, updated_at, account_id')
         .eq('id', pageId)
         .eq('workspace_id', workspaceId)
         .eq('platform', 'facebook')
@@ -633,8 +685,9 @@ export async function handleUpdatePage(
       // Status-family gate (Supabase path), same rule as SQL: a
       // present row that may not change status is rejected with
       // 409. A missing row (current null) skips the gate and falls
-      // through to the existing 404 path below. Checkpoint ->
-      // active is allowed here — that is the Mark Verified banner.
+      // through to the existing 404 path below. Spec 236: the
+      // toggle reactivates from any wire status except
+      // 'disconnected'.
       if (parsed.data.status && current) {
         const gateMetadata =
           (current.metadata as Record<string, unknown> | null) ?? {};
@@ -642,27 +695,51 @@ export async function handleUpdatePage(
           current.status,
           gateMetadata
         );
-        const gateEffective =
-          gateWire === 'fb_rate_limited'
-            ? evaluatePageHealth({
-                status: gateWire,
-                updatedAt: (current as { updated_at?: string }).updated_at ?? null,
-                rateLimitedAt:
-                  typeof gateMetadata.rate_limited_at === 'string'
-                    ? gateMetadata.rate_limited_at
-                    : null,
-              })
-            : gateWire;
-        if (!statusTransitionAllowed(gateEffective, parsed.data.status)) {
+        if (!statusTransitionAllowed(gateWire)) {
           return NextResponse.json(
             {
               error: 'PAGE_STATUS_NOT_ALLOWED',
               message:
-                STATUS_TOGGLE_BLOCKED_MESSAGES[gateEffective] ??
+                STATUS_TOGGLE_BLOCKED_MESSAGES[gateWire] ??
                 'This Page cannot change automation right now.',
             },
             { status: 409 }
           );
+        }
+        // Spec 236: turning the toggle ON also revives an expired
+        // linked account (see reviveExpiredAccountSupabase). OFF
+        // never touches the account.
+        if (
+          parsed.data.status === 'active' &&
+          typeof (current as { account_id?: unknown }).account_id ===
+            'string' &&
+          (current as { account_id: string }).account_id
+        ) {
+          const accountCheck = await reviveExpiredAccountSupabase(
+            supabase,
+            (current as { account_id: string }).account_id,
+            workspaceId
+          );
+          if (accountCheck === 'revoked') {
+            return NextResponse.json(
+              {
+                error: 'PAGE_STATUS_NOT_ALLOWED',
+                message: ACCOUNT_REVOKED_MESSAGE,
+              },
+              { status: 409 }
+            );
+          }
+          if (accountCheck === 'failed') {
+            logServerError(
+              '[pages] Account read failed before update',
+              new Error('reviveExpiredAccountSupabase failed'),
+              { source: 'page-update', pageId }
+            );
+            return NextResponse.json(
+              { error: 'Failed to update page' },
+              { status: 500 }
+            );
+          }
         }
       }
 

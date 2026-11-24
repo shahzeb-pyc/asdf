@@ -11,7 +11,10 @@ import { handlePublishNow } from '../../src/app/api/tenant/[subdomain]/publishin
  * Pages status family (audit R1/R2/R3/R21, Shahzeb's locked
  * 1A/2A/4A/5A decisions): the status PATCH gate, the Queue/Dashboard
  * Publish Now gate, and the dedicated detail rate-limit cooldown
- * flip. Mocks model RAW destinations rows (unified vocabulary:
+ * flip. Spec 236 rewrote the toggle gate: ON/OFF from ANY wire
+ * status except 'disconnected' — the 409 cases below now assert
+ * that new contract (only disconnected still refuses).
+ * Mocks model RAW destinations rows (unified vocabulary:
  * 'active' / 'disconnected' + fb_status marker / 'error' +
  * checkpoint marker / 'rate_limited'), never the wire-formatted
  * detail row — a mock that returns a wire 'paused' status for the
@@ -160,36 +163,43 @@ describe('Pages status family', () => {
   });
 
   describe('status PATCH gate (SQL path)', () => {
-    it('blocks Pause on a checkpoint page (409, update never runs)', async () => {
+    it('allows Pause on a checkpoint page (200, spec 236)', async () => {
       const mockDb = sqlMock(
         { status: 'error', metadata: { fb_status: 'checkpoint' }, updated_at: new Date().toISOString() },
-        null
+        wireDetailRow({ status: 'paused' })
       );
       const res = await handleUpdatePage(patchRequest({ status: 'paused' }), 'acme', pageId, mockDb);
-      expect(res.status).toBe(409);
+      expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json.error).toBe('PAGE_STATUS_NOT_ALLOWED');
+      expect(json.success).toBe(true);
+      expect(json.page.status).toBe('paused');
       const calls = (mockDb.query as unknown as ReturnType<typeof vi.fn>).mock.calls as Array<[string]>;
-      expect(calls.some(([sql]) => sql.includes('UPDATE destinations'))).toBe(false);
+      expect(calls.some(([sql]) => sql.includes('UPDATE destinations'))).toBe(true);
     });
 
-    it('blocks Resume on an expired-token page (409)', async () => {
+    it('allows Resume on an expired-token page (200, spec 236)', async () => {
       const mockDb = sqlMock(
-        { status: 'error', metadata: {}, updated_at: new Date().toISOString() },
-        null
+        { status: 'error', metadata: { fb_status: 'invalid_token' }, updated_at: new Date().toISOString() },
+        wireDetailRow({ status: 'active' })
       );
       const res = await handleUpdatePage(patchRequest({ status: 'active' }), 'acme', pageId, mockDb);
-      expect(res.status).toBe(409);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.page.status).toBe('active');
     });
 
-    it('blocks Resume on a rate-limited page before the cooldown (409)', async () => {
+    it('allows Resume on a rate-limited page before the cooldown (200, spec 236)', async () => {
       const now = new Date().toISOString();
       const mockDb = sqlMock(
         { status: 'rate_limited', metadata: { rate_limited_at: now }, updated_at: now },
-        null
+        wireDetailRow({ status: 'active' })
       );
       const res = await handleUpdatePage(patchRequest({ status: 'active' }), 'acme', pageId, mockDb);
-      expect(res.status).toBe(409);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.page.status).toBe('active');
     });
 
     it('allows Pause on a rate-limited page past the cooldown (200)', async () => {
@@ -289,10 +299,13 @@ describe('Pages status family', () => {
       expect(json.page.status).toBe('active');
     });
 
-    it('blocks checkpoint -> paused (409)', async () => {
+    it('allows checkpoint -> paused (200, spec 236)', async () => {
       const mock = supabaseMock(
         { status: 'error', metadata: { fb_status: 'checkpoint' }, updated_at: new Date().toISOString() },
-        supabaseDetailRow('error', { fb_status: 'checkpoint' })
+        // A paused page is stored raw as disconnected + the paused
+        // marker (wirePageStatusToUnified) — a wire 'paused' status
+        // in this row would read back as 'disconnected'.
+        supabaseDetailRow('disconnected', { fb_status: 'paused' })
       );
       const res = await handleUpdatePage(
         patchRequest({ status: 'paused' }),
@@ -300,7 +313,10 @@ describe('Pages status family', () => {
         pageId,
         mock as never
       );
-      expect(res.status).toBe(409);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.page.status).toBe('paused');
     });
   });
 
