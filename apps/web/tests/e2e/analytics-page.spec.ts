@@ -426,7 +426,7 @@ test.describe('Analytics page at desktop width (spec 241)', () => {
 
     await expect(
       page.getByText(
-        'No analytics data yet — pages with 100+ followers are picked up on the next daily run.',
+        'No analytics data yet — Facebook only shares insights once a page is big enough, around 6,000–9,000 followers.',
       ),
     ).toBeVisible();
     await expect(page.getByText('No location data yet.')).toHaveCount(2);

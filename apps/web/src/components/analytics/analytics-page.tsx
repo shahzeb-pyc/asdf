@@ -143,8 +143,8 @@ export function AnalyticsPage({
         <>
           {data.hasNoData ? (
             <p className="mb-6 text-body text-ink-sub">
-              No analytics data yet — pages with 100+ followers are picked up on the next
-              daily run.
+              No analytics data yet — Facebook only shares insights once a page is big
+              enough, around 6,000–9,000 followers.
             </p>
           ) : null}
           <AnalyticsAudience data={data} />
