@@ -128,10 +128,12 @@ function TopCities({ items }: Readonly<{ items: AnalyticsLocationItem[] }>): Rea
 
 /**
  * Audience overview (spec 241, analytics-final §3) — the all-time
- * totals and where followers are. The two hero numbers are the
- * combined totals across the picked scope; the countries and cities
- * come from the stored lifetime locations, shares computed from the
- * combined total followers at read time.
+ * totals and where followers are. The hero numbers are the combined
+ * totals across the picked scope; the countries and cities come
+ * from the stored lifetime locations, shares computed from the
+ * combined total followers at read time. Spec 242 adds the third
+ * hero number: pages connected — a current total that never changes
+ * with the period picker.
  */
 export function AnalyticsAudience({
   data,
@@ -147,7 +149,7 @@ export function AnalyticsAudience({
         </h2>
       </div>
 
-      <div className="grid grid-cols-1 divide-y divide-line border-y border-line sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+      <div className="grid grid-cols-1 divide-y divide-line border-y border-line sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         <div className="py-6 sm:pr-8 lg:py-7 lg:pr-12">
           <div className="flex items-center gap-2 text-body font-semibold text-ink-sub">
             <span className="h-1.5 w-1.5 rounded-full bg-link" aria-hidden="true" />
@@ -158,13 +160,23 @@ export function AnalyticsAudience({
           </div>
         </div>
 
-        <div className="py-6 sm:pl-8 lg:py-7 lg:pl-12">
+        <div className="py-6 sm:px-8 lg:py-7 lg:px-12">
           <div className="flex items-center gap-2 text-body font-semibold text-ink-sub">
             <span className="h-1.5 w-1.5 rounded-full bg-brand-emerald" aria-hidden="true" />
             <span>Total followers gained</span>
           </div>
           <div className="mt-2.5 text-4xl leading-none font-bold tracking-display tabular-nums text-brand-emerald sm:text-5xl">
             {formatSigned(data.followers.gained)}
+          </div>
+        </div>
+
+        <div className="py-6 sm:pl-8 lg:py-7 lg:pl-12">
+          <div className="flex items-center gap-2 text-body font-semibold text-ink-sub">
+            <span className="h-1.5 w-1.5 rounded-full bg-ink-dim" aria-hidden="true" />
+            <span>Total pages connected</span>
+          </div>
+          <div className="mt-2.5 text-4xl leading-none font-bold tracking-display tabular-nums text-ink sm:text-5xl">
+            {formatCount(data.pagesConnected)}
           </div>
         </div>
       </div>

@@ -141,6 +141,7 @@ describe('AnalyticsAggregateResponseSchema', () => {
       dateRangeLabel: '26 Oct – 22 Nov 2026',
       periodLabel: 'Last 28 days · combined',
       pagesIncluded: 5,
+      pagesConnected: 5,
       updatedAt: '2026-11-23T03:00:00.000Z',
       followers: { total: 60_975, gained: 59_803 },
       mediaViews: 590_700,
@@ -160,5 +161,35 @@ describe('AnalyticsAggregateResponseSchema', () => {
       hasNoData: false,
     });
     expect(parsed.success).toBe(true);
+  });
+
+  it('rejects a negative pagesConnected (spec 242)', () => {
+    const parsed = AnalyticsAggregateResponseSchema.safeParse({
+      success: true,
+      workspace: 'all',
+      period: '28',
+      dateRangeLabel: '',
+      periodLabel: 'Last 28 days · combined',
+      pagesIncluded: 0,
+      pagesConnected: -1,
+      updatedAt: null,
+      followers: { total: 0, gained: 0 },
+      mediaViews: 0,
+      uniqueViewers: 0,
+      profileViews: 0,
+      engagement: 0,
+      videoViews: 0,
+      videoCompleteViews30s: 0,
+      watchTimeMs: 0,
+      totalActions: 0,
+      newFollows: 0,
+      unfollows: 0,
+      netFollows: 0,
+      chart: [],
+      topCountries: [],
+      topCities: [],
+      hasNoData: true,
+    });
+    expect(parsed.success).toBe(false);
   });
 });

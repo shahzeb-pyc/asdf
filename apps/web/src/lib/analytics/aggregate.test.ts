@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   aggregateAnalytics,
+  countConnectedPages,
   countryName,
   formatDateRangeLabel,
   formatWatchTime,
@@ -208,6 +209,37 @@ describe('aggregateAnalytics', () => {
     const out = aggregateAnalytics([a], '1');
     expect(out.mediaViews).toBe(0);
     expect(out.hasNoData).toBe(false); // the 7d/28d columns still parse
+  });
+});
+
+describe('countConnectedPages (spec 242)', () => {
+  it('counts every status except disconnected, deduped by page id', () => {
+    expect(
+      countConnectedPages([
+        { externalDestinationId: 'fb-a', status: 'active' },
+        { externalDestinationId: 'fb-b', status: 'paused' },
+        { externalDestinationId: 'fb-c', status: 'error' },
+        { externalDestinationId: 'fb-d', status: 'checkpoint' },
+        { externalDestinationId: 'fb-e', status: 'rate_limited' },
+        { externalDestinationId: 'fb-f', status: 'invalid_token' },
+        // Same page in a second section: still one page.
+        { externalDestinationId: 'fb-a', status: 'active' },
+        // Disconnected is not connected.
+        { externalDestinationId: 'fb-g', status: 'disconnected' },
+        // A row with no page id counts nothing.
+        { externalDestinationId: '', status: 'active' },
+      ])
+    ).toBe(6);
+  });
+
+  it('zero rows is zero, and a scope of only disconnected pages is zero', () => {
+    expect(countConnectedPages([])).toBe(0);
+    expect(
+      countConnectedPages([
+        { externalDestinationId: 'fb-a', status: 'disconnected' },
+        { externalDestinationId: 'fb-b', status: 'disconnected' },
+      ])
+    ).toBe(0);
   });
 });
 
