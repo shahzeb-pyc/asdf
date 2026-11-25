@@ -47,7 +47,9 @@ vi.mock('@/lib/server/pagination', () => ({
   parsePaginationParams: vi.fn(),
 }));
 
-import { loadMirror, handleUpdateMirror } from './route';
+import { loadMirror, handleUpdateMirror, handleDeleteMirror } from './route';
+import { getBillingAdminClient } from '@/lib/billing/route-helpers';
+import { releaseUsageForFeature } from '@/lib/billing/entitlement';
 
 const MIRROR_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const WORKSPACE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -116,9 +118,9 @@ describe('loadMirror (spec 155 B1)', () => {
  * error state, so the tick's error-skip rule (own fresh cooldown,
  * or error mirror + uncheckable target) cannot block the retry.
  * OFF pauses from any status and leaves the stored detail alone —
- * the card reads Paused from the mirror status. Instagram mirrors
- * never touch a destination. Each ON case FAILS on the old code,
- * which left the fb detail and the target error in place.
+ * the card reads Paused from the mirror status. Each ON case FAILS
+ * on the old code, which left the fb detail and the target error
+ * in place.
  */
 type Row = Record<string, unknown>;
 type Filter = { op: 'eq' | 'in'; col: string; val: unknown };
@@ -183,7 +185,6 @@ class MirrorFakeBuilder {
 
 interface MirrorSeed {
   status: string;
-  targetPlatform?: string;
   fbStatus?: string | null;
   fbRateLimitedAt?: string | null;
   catchUpPending?: boolean;
@@ -205,7 +206,7 @@ function mirrorStore(seed: MirrorSeed): {
         source_username: 'creator',
         source_display_name: 'Creator',
         source_avatar_url: null,
-        target_platform: seed.targetPlatform ?? 'facebook',
+        target_platform: 'facebook',
         target_external_id: '123456',
         target_display_name: 'Page',
         target_avatar_url: null,
@@ -234,7 +235,7 @@ function mirrorStore(seed: MirrorSeed): {
               name: 'Page',
               avatar_url: null,
               encrypted_destination_token: 'enc-token',
-              platform: seed.targetPlatform ?? 'facebook',
+              platform: 'facebook',
               section: 'mirror',
               status: seed.destStatus,
               metadata: seed.destMetadata ?? {},
@@ -375,27 +376,6 @@ describe('handleUpdateMirror toggle reactivates from any status (spec 236)', () 
     expect(updatedTables).not.toContain('destinations');
   });
 
-  it('ON for an Instagram mirror never touches a destination', async () => {
-    const { store, updatedTables, fake } = mirrorStore({
-      status: 'error',
-      targetPlatform: 'instagram',
-      fbStatus: null,
-      destStatus: 'error',
-      destMetadata: {},
-    });
-    mockMirrorAuth();
-    const res = await handleUpdateMirror(
-      patchMirrorRequest({ status: 'active' }),
-      'acme',
-      MIRROR_ID,
-      fake as never
-    );
-    expect(res.status).toBe(200);
-    expect((store.mirrors[0] as Row).status).toBe('active');
-    expect(updatedTables).not.toContain('destinations');
-    expect((store.destinations[0] as Row).status).toBe('error');
-  });
-
   it('404s for an unknown mirror', async () => {
     const { fake } = mirrorStore({ status: 'paused' });
     mockMirrorAuth();
@@ -444,5 +424,48 @@ describe('handleUpdateMirror toggle reactivates from any status (spec 236)', () 
     expect(destUpdate).toBeDefined();
     expect(destUpdate!.sql).toContain("status = 'active'");
     expect(destUpdate!.sql).toContain("metadata - 'fb_status' - 'rate_limited_at'");
+  });
+});
+
+/**
+ * Mirror delete — spec 253.
+ *
+ * Deleting a Facebook mirror still frees its billing unit (the
+ * cap-at-add release). This pins the Facebook behaviour across the
+ * removal of the dead arm in the release condition: the
+ * release runs for a Facebook target exactly as before. There was
+ * no DELETE test before this spec, so the kept toggle tests alone
+ * could not prove the delete path unchanged.
+ */
+describe('handleDeleteMirror billing release (spec 253)', () => {
+  it('DELETE of a Facebook mirror releases its billing unit', async () => {
+    vi.clearAllMocks();
+    mocks.isLegacyClient.mockReturnValue(true);
+    const billingClient = {} as never;
+    vi.mocked(getBillingAdminClient).mockReturnValue(billingClient);
+    vi.mocked(releaseUsageForFeature).mockResolvedValue(true);
+    const query = vi.fn(async (sql: string, _params: unknown[]) => {
+      if (sql.trimStart().startsWith('SELECT')) return [{ ...MIRROR_ROW }];
+      return [];
+    });
+    mockMirrorAuth();
+    const res = await handleDeleteMirror(
+      new NextRequest('http://localhost/api/tenant/acme/tiktok-mirrors/x', {
+        method: 'DELETE',
+      }),
+      'acme',
+      MIRROR_ID,
+      { query } as never
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ deleted: true });
+    expect(releaseUsageForFeature).toHaveBeenCalledTimes(1);
+    expect(releaseUsageForFeature).toHaveBeenCalledWith(
+      billingClient,
+      'user-1',
+      'facebook',
+      '123456',
+      'tiktok-mirror'
+    );
   });
 });
