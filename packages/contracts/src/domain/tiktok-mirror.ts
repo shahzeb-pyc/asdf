@@ -52,6 +52,20 @@ export const TikTokUsernameSchema = z
 export const MirrorStatusSchema = z.enum(['active', 'paused', 'error']);
 export type MirrorStatus = z.infer<typeof MirrorStatusSchema>;
 
+/**
+ * Spec 239: the target destination's stored coarse status. The
+ * unified destinations CHECK allows exactly these four values;
+ * anything else (notably a legacy 'paused' row) is not a known
+ * status and is reported as null, never invented.
+ */
+export const MirrorTargetStatusSchema = z.enum([
+  'active',
+  'rate_limited',
+  'disconnected',
+  'error',
+]);
+export type MirrorTargetStatus = z.infer<typeof MirrorTargetStatusSchema>;
+
 export const MirrorPostStatusSchema = z.enum(['posted', 'failed', 'skipped', 'pending']);
 export type MirrorPostStatus = z.infer<typeof MirrorPostStatusSchema>;
 
@@ -279,10 +293,7 @@ export const MirrorViewSchema = z.object({
    * row is gone. Optional so existing MirrorView producers keep
    * parsing unchanged.
    */
-  targetStatus: z
-    .enum(['active', 'rate_limited', 'disconnected', 'error'])
-    .nullable()
-    .optional(),
+  targetStatus: MirrorTargetStatusSchema.nullable().optional(),
   /**
    * Target page details for the Pages-style detail header. These
    * are DETAIL-view fields (the list view carries its own copies
