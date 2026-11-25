@@ -650,7 +650,11 @@ export class FacebookPublisher implements Publisher {
       targetDestinationStatus = undefined;
     }
 
-    let targetAccountStatus: DatabaseSocialAccountRow['status'] | undefined;
+    // Settlement side-effect vocabulary, not the row vocabulary
+    // (spec 248): a publisher only ever expires an account, so the
+    // local is typed as the outcome's field — the widened row status
+    // ('disconnected' included) must not flow into the settle args.
+    let targetAccountStatus: PublishOutcome['targetAccountStatus'];
     // Classifier-only: expire the account only when the evaluation
     // says expired. (The legacy `isAuthError && (190 || 102)`
     // disjunct bypassed the classifier and expired the account for

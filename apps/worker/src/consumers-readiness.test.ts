@@ -44,6 +44,25 @@ describe('evaluatePublishReadiness (BG4)', () => {
   });
 });
 
+describe('evaluatePublishReadiness (disconnected account, spec 248)', () => {
+  it('defers a disconnected account with a NULL access token', () => {
+    const account = {
+      ...BASE_ACCOUNT,
+      status: 'disconnected',
+      encrypted_access_token: null,
+      encrypted_refresh_token: null,
+      token_expires_at: null,
+    } as never;
+    const result = evaluatePublishReadiness(
+      DEST as never,
+      account,
+      new Date('2026-10-30T00:00:00.000Z')
+    );
+    expect(result).not.toBeNull();
+    expect(result?.code).toBe('account_not_active');
+  });
+});
+
 describe('evaluatePublishReadiness (3-day rate_limited anchor, 20261102160000)', () => {
   const NOW = new Date('2026-10-30T00:00:00.000Z');
   const account = { ...BASE_ACCOUNT } as never;
