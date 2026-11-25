@@ -404,6 +404,16 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   const [displayName, setDisplayName] = React.useState('');
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(null);
   const [failedAccountAvatarUrl, setFailedAccountAvatarUrl] = React.useState<string | null>(null);
+  // Spec 255: the automation switch is a controlled Switch whose
+  // checked state only moves when the PATCH response lands — on click
+  // nothing visibly changes until then, and a second click mid-flight
+  // fires a second PATCH. Track the in-flight toggle so the switch
+  // disables and shows Updating... while the request runs.
+  const [isUpdatingAutomation, setIsUpdatingAutomation] = React.useState(false);
+  // Synchronous in-flight guard: the disabled prop only takes effect
+  // after React commits, so a second click dispatched before that
+  // commit would otherwise fire a second PATCH. The ref closes it.
+  const automationPatchInFlightRef = React.useRef(false);
 
   // Return links carry the hub query state (pagination step 3): the
   // hub card carries `?q=&status=&sort=&page=` through to this page's
@@ -583,6 +593,24 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
       scroll: false,
     });
   }, [router, searchParams, subdomain, configId]);
+
+  // Spec 255: the automation toggle's own in-flight guard. Other
+  // patch() callers (posts/day, identity, source) are untouched —
+  // only the switch goes through here, so only it disables and shows
+  // Updating... while its PATCH runs. On failure patch() already
+  // leaves the config (and the switch) at the previous state and
+  // shows the error banner; the finally below re-enables the switch.
+  const handleAutomationToggle = async (checked: boolean) => {
+    if (automationPatchInFlightRef.current) return;
+    automationPatchInFlightRef.current = true;
+    setIsUpdatingAutomation(true);
+    try {
+      await patch({ status: checked ? 'active' : 'paused' }, 'Automation');
+    } finally {
+      automationPatchInFlightRef.current = false;
+      setIsUpdatingAutomation(false);
+    }
+  };
 
   const patch = async (body: Record<string, unknown>, label: string) => {
     setError(null);
@@ -820,12 +848,12 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
           </div>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <label className="flex items-center gap-2 text-body">
-            Automation {config.status === 'active' ? 'Active' : 'Paused'}
+          <label data-testid="adu-automation-label" className="flex items-center gap-2 text-body">
+            Automation {isUpdatingAutomation ? 'Updating...' : config.status === 'active' ? 'Active' : 'Paused'}
             <Switch
               checked={config.status === 'active'}
-              disabled={automationLocked}
-              onCheckedChange={(checked) => void patch({ status: checked ? 'active' : 'paused' }, 'Automation')}
+              disabled={automationLocked || isUpdatingAutomation}
+              onCheckedChange={(checked) => void handleAutomationToggle(checked)}
             />
           </label>
           <Link href={hubHref}><Button type="button" variant="outline">Back to Hub</Button></Link>

@@ -92,9 +92,10 @@ interface FetchCall {
   body?: unknown;
 }
 
-/** `failPatch`: a config PATCH (e.g. the automation switch) 500s. `config`: overrides for the fetched config. */
-function setupFetch(opts: { failPatch?: boolean; config?: Record<string, unknown> } = {}) {
+/** `failPatch`: a config PATCH (e.g. the automation switch) 500s. `config`: overrides for the fetched config. `deferPatch`: hold config PATCHes until `releasePatch()` is called, so a second click can land while the first request is in flight. */
+function setupFetch(opts: { failPatch?: boolean; config?: Record<string, unknown>; deferPatch?: boolean } = {}) {
   const calls: FetchCall[] = [];
+  const patchReleasers: Array<() => void> = [];
   const fetchMock = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     const method = init?.method ?? 'GET';
     calls.push({ url, method, body: init?.body ? JSON.parse(init.body) : undefined });
@@ -103,7 +104,15 @@ function setupFetch(opts: { failPatch?: boolean; config?: Record<string, unknown
     }
     if (url === BASE && method === 'PATCH') {
       if (opts.failPatch) return jsonResponse({ error: 'Boom.' }, false, 500);
-      return jsonResponse({ config: makeConfig() });
+      if (opts.deferPatch) {
+        await new Promise<void>((resolve) => {
+          patchReleasers.push(resolve);
+        });
+      }
+      const body = init?.body ? JSON.parse(init.body) : {};
+      return jsonResponse({
+        config: makeConfig({ ...(opts.config ?? {}), ...(body.status ? { status: body.status } : {}) }),
+      });
     }
     if (url === `${BASE}/reels` && method === 'POST') return jsonResponse({ queued: true });
     if (url.startsWith(`${BASE}/reels?`) && method === 'GET') {
@@ -120,7 +129,13 @@ function setupFetch(opts: { failPatch?: boolean; config?: Record<string, unknown
     return jsonResponse({ error: `not mocked: ${method} ${url}` }, false, 404);
   });
   vi.stubGlobal('fetch', fetchMock);
-  return { calls, fetchMock };
+  return {
+    calls,
+    fetchMock,
+    releasePatch: () => {
+      patchReleasers.splice(0).forEach((resolve) => resolve());
+    },
+  };
 }
 
 function renderPage() {
@@ -292,6 +307,42 @@ describe('AduDetailPage (adu-opt-c)', { timeout: 20000 }, () => {
     expect(screen.getByText('Boom.')).toBeInTheDocument();
     expect(screen.getAllByText('First caption').length).toBeGreaterThan(0);
     expect(calls.find((c) => c.method === 'PATCH' && c.url === BASE)).toBeDefined();
+  });
+
+  it('Spec 255: double-clicking the automation switch fires exactly one PATCH and shows Updating... while pending', async () => {
+    const { calls, releasePatch } = setupFetch({ deferPatch: true });
+    renderPage();
+    await screen.findByText('Ellie Blossom');
+    const toggle = screen.getByRole('switch', { name: /Automation/ });
+    // Two clicks in the same tick: the second lands while the first
+    // PATCH is still in flight.
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    // Exactly one request for the two clicks.
+    expect(calls.filter((c) => c.method === 'PATCH' && c.url === BASE)).toHaveLength(1);
+    // Explicit working state while pending, and the switch is disabled
+    // so no further click can fire. (The label reads "Automation
+    // Updating..." — match by test id, not by the bare word.)
+    expect(screen.getByTestId('adu-automation-label')).toHaveTextContent('Updating...');
+    expect(toggle).toBeDisabled();
+    // Release: the returned config flips the switch, still one PATCH.
+    releasePatch();
+    await screen.findByText('Automation saved.');
+    expect(screen.getByTestId('adu-automation-label')).toHaveTextContent('Automation Paused');
+    expect(toggle).toBeEnabled();
+    expect(calls.filter((c) => c.method === 'PATCH' && c.url === BASE)).toHaveLength(1);
+  });
+
+  it('Spec 255: a failed automation PATCH leaves the switch at its previous state and re-enables it', async () => {
+    const { calls } = setupFetch({ failPatch: true });
+    renderPage();
+    await screen.findByText('Ellie Blossom');
+    const toggle = screen.getByRole('switch', { name: /Automation/ });
+    await userEvent.setup().click(toggle);
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.getByTestId('adu-automation-label')).toHaveTextContent('Automation Active');
+    expect(toggle).toBeEnabled();
+    expect(calls.filter((c) => c.method === 'PATCH' && c.url === BASE)).toHaveLength(1);
   });
 
   it('F18: Insights receives the config timezone, not UTC', async () => {

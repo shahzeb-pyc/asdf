@@ -160,6 +160,13 @@ export function DedicatedPageHeader({
   const router = useRouter();
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false);
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+  // Spec 255: synchronous in-flight guard. The Pause/Resume item and
+  // the Reactivate button are disabled while updating, but that
+  // disabled state only takes effect after React commits — a second
+  // activation dispatched before that commit would otherwise fire a
+  // second mutation. The ref closes that window: both handlers below
+  // are idempotent while a status update is in flight.
+  const statusUpdateInFlightRef = React.useRef(false);
   const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = React.useState(false);
   const [isDisconnecting, setIsDisconnecting] = React.useState(false);
   const [failedAccountAvatarUrl, setFailedAccountAvatarUrl] =
@@ -194,10 +201,13 @@ export function DedicatedPageHeader({
   // the mutation settles. The shell's success/error toasts remain the
   // completion feedback — no extra toasts are added here.
   const handleStatusAction = async () => {
+    if (statusUpdateInFlightRef.current) return;
+    statusUpdateInFlightRef.current = true;
     setIsUpdatingStatus(true);
     try {
       await onStatusToggle(resumeAction ? 'active' : 'paused');
     } finally {
+      statusUpdateInFlightRef.current = false;
       setIsUpdatingStatus(false);
       setIsMenuOpen(false);
     }
@@ -211,6 +221,8 @@ export function DedicatedPageHeader({
   };
 
   const handleReactivate = async () => {
+    if (statusUpdateInFlightRef.current) return;
+    statusUpdateInFlightRef.current = true;
     setIsUpdatingStatus(true);
     try {
       if (onMarkVerified) {
@@ -219,6 +231,7 @@ export function DedicatedPageHeader({
         await onStatusToggle('active');
       }
     } finally {
+      statusUpdateInFlightRef.current = false;
       setIsUpdatingStatus(false);
     }
   };
