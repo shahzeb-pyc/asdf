@@ -69,14 +69,27 @@ import { captureWorkerError, type PostHogEnv } from './analytics.js';
 //      overlapping ticks can never double-post.
 // Oldest-first posting keeps the Facebook page in TikTok order.
 //
-// Failure discipline (fail loud, self-healing):
-//   - A failed post is recorded as `failed` and the mirror goes
-//     to `error` with last_error; the next tick retries the check,
-//     not the post (the failed row is manually retryable only).
-//   - A watermarked-only item gets a `skipped` row + mirror error
-//     note; it is never posted.
-//   - A tikwm failure marks the mirror `error` and continues with
-//     the other mirrors.
+// Failure discipline (fail loud, self-healing — spec 254):
+//   - A failed post is recorded as `failed` and NOTHING flips:
+//     the mirror stays `active` and the target is untouched. Only
+//     a CONFIRMED error flips the mirror to `error`: either a
+//     definitive Facebook failure (one that maps to a mirror
+//     fb_status marker, or no-token / target-gone) at once, or the
+//     SAME failure 5 times in a row (consecutive-failure count +
+//     stable signature on the mirrors row, surviving ticks and
+//     restarts). A successful post resets the count; a different
+//     signature restarts it at 1. The count never resets on
+//     toggle OFF/ON. The failed post's own error stays on its
+//     history row; an unconfirmed failure writes no mirror
+//     last_error and shows no banner — the mirror's last_error is
+//     written only on a confirmed flip, or cleared on a clean
+//     check.
+//   - A watermarked-only item gets a `skipped` row and is never
+//     posted; a skip is a per-reel content issue, not a broken
+//     mirror, so it never counts toward the failure streak.
+//   - A tikwm feed failure counts toward the same streak (5
+//     consecutive failed checks flip the mirror); a successful
+//     check resets a feed-failure streak.
 //   - A tick that completes without new errors clears the mirror
 //     error back to `active` (the history rows keep the record).
 //   - Paused mirrors are never fetched or posted.
@@ -140,6 +153,14 @@ export const MIRROR_JOB_CLAIM_PER_TICK = 200;
  *  Promise.allSettled — no extra dependency). */
 export const MIRROR_JOB_CONCURRENCY = 50;
 
+/**
+ * Spec 254: how many consecutive failures with the SAME stable
+ * signature flip a mirror to error. A single failure of any kind
+ * never flips it — only a definitive Facebook error (at once) or
+ * this many identical failures in a row.
+ */
+export const MIRROR_CONFIRMED_FAILURE_THRESHOLD = 5;
+
 /** Max attempts per job before exhaustion (the database
  *  equivalent of the old queue max_retries = 3). */
 export const MIRROR_JOB_MAX_ATTEMPTS = 3;
@@ -183,6 +204,16 @@ export interface MirrorTickMirror {
    */
   fbStatus: string | null;
   fbRateLimitedAt: string | null;
+  /**
+   * Spec 254: the consecutive-failure streak (mirrors.
+   * consecutive_failure_count / last_failure_signature). Optional
+   * on purpose: rows read through a path that does not select the
+   * columns (and older callers) carry no streak, which the tick
+   * treats as 0 / null — exactly the pre-migration starting
+   * point. The production fetchMirror always selects them.
+   */
+  consecutiveFailureCount?: number;
+  lastFailureSignature?: string | null;
   /**
    * Spec 155: the target destination's status + rate-limit anchor
    * (destinations.status / metadata.rate_limited_at), for the
@@ -252,6 +283,15 @@ export interface MirrorTickDeps {
        */
       fbStatus?: string | null;
       fbRateLimitedAt?: string | null;
+      /**
+       * Spec 254: the consecutive-failure streak
+       * (`mirrors.consecutive_failure_count` /
+       * `last_failure_signature`). The final stamp always writes
+       * both together — the pair is only ever meaningful as one
+       * value. Undefined leaves both untouched (early returns).
+       */
+      consecutiveFailureCount?: number;
+      lastFailureSignature?: string | null;
     }
   ) => Promise<void>;
   fetchFeed: (username: string) => Promise<TikwmVideoItem[]>;
@@ -415,6 +455,34 @@ function mapMirrorPublishErrorToFbStatus(err: unknown): MirrorFbStatus | null {
   return null;
 }
 
+/**
+ * Spec 254: the stable signature of an UNMAPPED publish failure,
+ * for the consecutive-failure count. Two failures count as "the
+ * same" only when their signatures are equal — and sameness is
+ * never guessed from free-form error text:
+ * - Graph errors use their (code, subcode) pair, e.g.
+ *   `graph:2` or `graph:1:2424009`. A mapped error never reaches
+ *   here (it flips at once as definitive), so every signature
+ *   this produces is a failure the mirror cannot classify.
+ * - Anything without Graph facts (plain errors, network failures)
+ *   is the single `transient` key: the tick cannot tell two such
+ *   failures apart, so they count as the same streak — failing
+ *   five checks in a row for any unclassified reason is itself
+ *   the confirmation that something is persistently wrong.
+ * The fixed keys for non-publish failures (`resolve_failed`,
+ * `feed_fetch_failed`, `no_token`, `target_gone`) are used at
+ * their call sites, not here.
+ */
+function failureSignatureForPublishError(err: unknown): string {
+  const facts = extractGraphFacts(err);
+  if (facts.code !== undefined) {
+    return facts.subcode !== undefined
+      ? `graph:${facts.code}:${facts.subcode}`
+      : `graph:${facts.code}`;
+  }
+  return 'transient';
+}
+
 function toIso(createTime: number | undefined): string | null {
   return typeof createTime === 'number' ? new Date(createTime * 1000).toISOString() : null;
 }
@@ -427,11 +495,13 @@ function toIso(createTime: number | undefined): string | null {
  * stop-on-first-failure, and the final stamp (status, error,
  * last_checked_at, catch_up_pending, next_check_at = check
  * time + 1h). It never throws for per-mirror business
- * failures (they are stamped as mirror errors); only a
- * failure of the final stamp's own error capture is logged,
- * exactly as before. Transport/DB failures raised by
- * fetchMirror (consumer side, before this runs) still
- * propagate to the job retry path (see runMirrorJobTick).
+ * failures (spec 254: they are recorded on the post row and
+ * counted toward the confirmed-error streak; only a confirmed
+ * error stamps the mirror itself); only a failure of the final
+ * stamp's own error capture is logged, exactly as before.
+ * Transport/DB failures raised by fetchMirror (consumer side,
+ * before this runs) still propagate to the job retry path
+ * (see runMirrorJobTick).
  */
 export async function processMirrorCheck(
   deps: MirrorTickDeps,
@@ -518,6 +588,37 @@ export async function processMirrorCheck(
     let fbStatusPatch:
       | { fbStatus: MirrorFbStatus | null; fbRateLimitedAt: string | null }
       | undefined;
+    // Spec 254: the consecutive-failure streak, working copy of the
+    // stored pair (mirrors.consecutive_failure_count /
+    // last_failure_signature). `confirmedError` turns true only on
+    // a definitive failure or on the 5th consecutive same failure
+    // — nothing else flips the mirror. `mirrorError` still records
+    // the latest failure message, but the final stamp writes it to
+    // last_error ONLY when confirmed (or clears it on a clean
+    // check): an unconfirmed failure must show no banner/detail,
+    // and the detail header renders last_error whenever it is set.
+    let failureCount = mirror.consecutiveFailureCount ?? 0;
+    let failureSignature = mirror.lastFailureSignature ?? null;
+    let confirmedError = false;
+    const recordRepetition = (signature: string): void => {
+      if (failureSignature === signature) {
+        failureCount += 1;
+      } else {
+        // A different signature restarts the streak at 1 for the
+        // new failure — the old streak is no longer consecutive.
+        failureCount = 1;
+        failureSignature = signature;
+      }
+      if (failureCount >= MIRROR_CONFIRMED_FAILURE_THRESHOLD) {
+        // The streak itself is the confirmation. The count is
+        // deliberately NOT reset here: only a successful post (or
+        // a successful check, for a feed streak) or a different
+        // signature resets it, so a healed mirror that fails
+        // again with the same signature re-confirms at once —
+        // the underlying problem never proved fixed.
+        confirmedError = true;
+      }
+    };
     try {
       const feed = await deps.fetchFeed(mirror.sourceUsername);
       const knownSourceIds = await deps.listKnownSourceIds(mirror.id);
@@ -527,8 +628,16 @@ export async function processMirrorCheck(
         knownSourceIds,
       });
       // The feed was fetched: this is a successful check, whatever
-      // happens to individual posts below.
+      // happens to individual posts below. Spec 254: a successful
+      // check resets a FEED-failure streak — a feed_fetch_failed
+      // streak is about consecutive failed checks, and this check
+      // did not fail. A publish-failure streak is NOT reset here:
+      // only a successful post resets that (below).
       feedFetched = true;
+      if (failureSignature === 'feed_fetch_failed') {
+        failureCount = 0;
+        failureSignature = null;
+      }
       // Catch-up detection (owner rule): resumed mirrors, or a gap
       // since the last successful check over the 2-hour bound.
       // An unparseable stamp never triggers gap catch-up (fail
@@ -564,8 +673,9 @@ export async function processMirrorCheck(
         });
         if (claimedId) {
           result.skipped += 1;
-          mirrorError =
-            'A recent reel offers only a watermarked version and was skipped.';
+          // Spec 254: a skip is a per-reel content issue, not a
+          // broken mirror — it sets no mirrorError and never
+          // counts toward the failure streak.
         }
       }
 
@@ -636,6 +746,12 @@ export async function processMirrorCheck(
               error: message,
             });
             if (failedId) {
+              // Spec 254: a resolve failure is repetition-class —
+              // it flips only as the 5th consecutive same failure.
+              // (Unreachable past the loop guard above — a reel
+              // without a feed play URL never reaches resolve —
+              // kept as the fail-loud contract.)
+              recordRepetition('resolve_failed');
               mirrorError = message;
               result.failed += 1;
             }
@@ -660,6 +776,11 @@ export async function processMirrorCheck(
             status: 'failed',
             error: message,
           });
+          // Spec 254: no-token / target-gone is definitive — the
+          // target cannot post — so it flips at once, as before.
+          // The Facebook detail is left untouched, as before: no
+          // marker is stamped for these cases.
+          confirmedError = true;
           mirrorError = message;
           result.failed += 1;
           break;
@@ -684,6 +805,10 @@ export async function processMirrorCheck(
             lastPostedSourceId: reel.video_id,
             lastPostedCreateTime: typeof reel.create_time === 'number' ? reel.create_time : null,
           });
+          // Spec 254: a successful post resets the streak — any
+          // failure after this starts a fresh count.
+          failureCount = 0;
+          failureSignature = null;
           result.posted += 1;
         } catch (err) {
           const rawMessage = errorMessage(err);
@@ -701,17 +826,31 @@ export async function processMirrorCheck(
           await deps.updatePost(claimedId, { status: 'failed', error: message });
           mirrorError = message;
           result.failed += 1;
-          // Spec 155: a publish failure stamps the
-          // mirror's Facebook detail (or clears it when the
-          // failure is transient/unmapped). The mapping reads
-          // the RAW error, not the rewritten restriction message
-          // above.
+          // Spec 254: classify the publish failure. A failure that
+          // maps to a mirror fb_status marker is definitive — it
+          // flips at once, as before. Anything else is
+          // repetition-class: it flips only as the 5th consecutive
+          // failure with the same stable signature. The mapping
+          // reads the RAW error, not the rewritten restriction
+          // message above.
           const mapped = mapMirrorPublishErrorToFbStatus(err);
-          fbStatusPatch = {
-            fbStatus: mapped,
-            fbRateLimitedAt:
-              mapped === 'fb_rate_limited' ? now.toISOString() : null,
-          };
+          if (mapped !== null) {
+            confirmedError = true;
+            fbStatusPatch = {
+              fbStatus: mapped,
+              fbRateLimitedAt:
+                mapped === 'fb_rate_limited' ? now.toISOString() : null,
+            };
+          } else {
+            recordRepetition(failureSignatureForPublishError(err));
+            // Unchanged (spec 155): an unmapped failure clears a
+            // stale stored detail, so it never outlives the
+            // failure that produced it.
+            fbStatusPatch = {
+              fbStatus: null,
+              fbRateLimitedAt: null,
+            };
+          }
           // Stop this mirror's loop: later reels stay unclaimed for
           // the next tick instead of stacking failures.
           break;
@@ -720,6 +859,12 @@ export async function processMirrorCheck(
     } catch (err) {
       const message = errorMessage(err);
       mirrorError = message;
+      // Spec 254: a failure before the feed was fetched is a
+      // feed-fetch failure (the check never got to look at reels);
+      // anything later in the check is an unclassified infra
+      // failure. Both are repetition-class — neither flips the
+      // mirror on its own.
+      recordRepetition(feedFetched ? 'transient' : 'feed_fetch_failed');
       captureWorkerError(
         deps.env ?? {},
         err instanceof Error ? err : new Error(message),
@@ -733,8 +878,23 @@ export async function processMirrorCheck(
     }
     try {
       await deps.updateMirror(mirror.id, {
-        status: mirrorError ? 'error' : 'active',
-        lastError: mirrorError,
+        // Spec 254: only a confirmed error flips the mirror to
+        // error. An unconfirmed failure leaves the stored status
+        // exactly as it was (active stays active; an error mirror
+        // stays error until a clean check clears it). A clean
+        // check flips to active.
+        status: confirmedError ? 'error' : mirrorError ? mirror.status : 'active',
+        // last_error is written only on a confirmed flip (the
+        // failure message) or a clean check (null, clearing it).
+        // An unconfirmed failure leaves it untouched: the detail
+        // header renders last_error whenever it is set, so writing
+        // it here would show an error banner on an active mirror.
+        // The failed post's own error stays on its history row.
+        ...(confirmedError || !mirrorError ? { lastError: mirrorError } : {}),
+        // Spec 254: the streak rides the final stamp, always
+        // written as a pair (see the updateMirror contract).
+        consecutiveFailureCount: failureCount,
+        lastFailureSignature: failureSignature,
         // last_checked_at means the last SUCCESSFUL check: a tick
         // whose feed fetch failed does not advance it, so the gap
         // rule above keeps seeing the missed checks. next_check_at
@@ -951,6 +1111,8 @@ export function buildMirrorTickDeps(
       lastError?: string | null;
       fbStatus?: string | null;
       fbRateLimitedAt?: string | null;
+      consecutiveFailureCount?: number;
+      lastFailureSignature?: string | null;
     }
   ): Promise<void> => {
     const values: Record<string, unknown> = {};
@@ -970,6 +1132,14 @@ export function buildMirrorTickDeps(
     if (patch.fbStatus !== undefined) values.fb_status = patch.fbStatus;
     if (patch.fbRateLimitedAt !== undefined) {
       values.fb_rate_limited_at = patch.fbRateLimitedAt;
+    }
+    // Spec 254: the consecutive-failure streak. The final stamp
+    // always writes both together; undefined leaves both untouched.
+    if (patch.consecutiveFailureCount !== undefined) {
+      values.consecutive_failure_count = patch.consecutiveFailureCount;
+    }
+    if (patch.lastFailureSignature !== undefined) {
+      values.last_failure_signature = patch.lastFailureSignature;
     }
     const { error } = await (db as unknown as {
       from: (table: string) => {
@@ -1047,7 +1217,7 @@ export function buildMirrorTickDeps(
       const { data, error } = await db
         .from('mirrors')
         .select(
-          'id, workspace_id, source_platform, source_username, target_platform, target_external_id, status, catch_up_pending, last_checked_at, last_posted_source_id, last_posted_create_time, fb_status, fb_rate_limited_at'
+          'id, workspace_id, source_platform, source_username, target_platform, target_external_id, status, catch_up_pending, last_checked_at, last_posted_source_id, last_posted_create_time, fb_status, fb_rate_limited_at, consecutive_failure_count, last_failure_signature'
         )
         .eq('id', mirrorId)
         .maybeSingle();
@@ -1116,6 +1286,18 @@ export function buildMirrorTickDeps(
         fbStatus: typeof row.fb_status === 'string' ? row.fb_status : null,
         fbRateLimitedAt:
           typeof row.fb_rate_limited_at === 'string' ? row.fb_rate_limited_at : null,
+        // Spec 254: the consecutive-failure streak. A missing key
+        // (a row read through a path that does not select the
+        // columns) defaults to no streak, exactly like fb_status
+        // above; no value is ever invented.
+        consecutiveFailureCount:
+          typeof row.consecutive_failure_count === 'number'
+            ? row.consecutive_failure_count
+            : 0,
+        lastFailureSignature:
+          typeof row.last_failure_signature === 'string'
+            ? row.last_failure_signature
+            : null,
         targetStatus: dest !== undefined && typeof dest.status === 'string' ? dest.status : null,
         targetRateLimitedAt:
           dest !== undefined &&
