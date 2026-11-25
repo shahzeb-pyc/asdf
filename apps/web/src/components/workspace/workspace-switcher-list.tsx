@@ -160,7 +160,7 @@ export function SwitcherWorkspaceList({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   aria-hidden="true"
-                  className="shrink-0 text-primary"
+                  className="shrink-0 text-brand-bronze dark:text-primary"
                 >
                   <polyline points="20 6 9 17 4 12" />
                 </svg>

@@ -149,10 +149,11 @@ describe('TopbarPlanPill', () => {
     expect(screen.getByTestId('topbar-plan-pill').className).toContain('text-signal-critical');
   });
 
-  it('keeps Upgrade gold', () => {
+  it('keeps Upgrade gold (bronze on light, bright gold on dark)', () => {
     entitlementState.value = entitlement({ plan: 'free', active: false, hasPriorPeriod: false, periodEndsAt: null });
     renderPill();
-    expect(screen.getByTestId('topbar-plan-pill').className).toContain('text-brand-gold');
+    expect(screen.getByTestId('topbar-plan-pill').className).toContain('text-brand-bronze');
+    expect(screen.getByTestId('topbar-plan-pill').className).toContain('dark:text-primary');
   });
 
   it('shows Expires today on the final calendar day, not 1 day left', () => {

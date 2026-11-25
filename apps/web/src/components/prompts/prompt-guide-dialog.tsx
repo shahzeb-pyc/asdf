@@ -39,7 +39,7 @@ export function PromptGuideDialog() {
               How to use a master prompt
             </span>
           </span>
-          <span aria-hidden className="font-semibold text-brand-gold">
+          <span aria-hidden className="font-semibold text-brand-bronze dark:text-primary">
             →
           </span>
         </button>

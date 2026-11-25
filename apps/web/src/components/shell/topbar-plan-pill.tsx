@@ -110,7 +110,7 @@ export function TopbarPlanPill({
         href={buildTenantHref(subdomain, '/purchase', useCleanPaths)}
         aria-label="Upgrade your plan, open Purchase"
         data-testid="topbar-plan-pill"
-        className="flex h-control shrink-0 items-center rounded-sm border border-line bg-panel px-3 text-body font-medium text-brand-gold outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
+        className="flex h-control shrink-0 items-center rounded-sm border border-line bg-panel px-3 text-body font-medium text-brand-bronze dark:text-primary outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
       >
         Upgrade
       </Link>

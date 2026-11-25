@@ -160,7 +160,7 @@ export function PromptDetailSection({
             type="button"
             data-testid="prompt-detail-back"
             onClick={onBack}
-            className="text-sm font-semibold text-brand-gold"
+            className="text-sm font-semibold text-brand-bronze dark:text-primary"
           >
             ← Back to prompts
           </button>
@@ -183,7 +183,7 @@ export function PromptDetailSection({
             <HeartIcon
               aria-hidden
               className={
-                detail.isFavourite ? "text-brand-gold" : undefined
+                detail.isFavourite ? "text-brand-bronze dark:text-primary" : undefined
               }
               fill={detail.isFavourite ? "currentColor" : "none"}
             />
@@ -261,7 +261,7 @@ export function PromptDetailSection({
                     onClick={() => setSelectedMediaId(item.id)}
                     className={
                       selected
-                        ? "relative block h-20 w-28 overflow-hidden rounded-xl border-2 border-brand-gold bg-panel"
+                        ? "relative block h-20 w-28 overflow-hidden rounded-xl border-2 border-brand-bronze dark:border-primary bg-panel"
                         : "relative block h-20 w-28 overflow-hidden rounded-xl border border-line bg-panel"
                     }
                   >
@@ -312,7 +312,7 @@ export function PromptDetailSection({
           </Tag>
           <Tag
             variant="outline"
-            className="border-brand-gold text-brand-gold"
+            className="border-brand-bronze text-brand-bronze dark:border-primary dark:text-primary"
           >
             {promptLengthDisplay(
               detail.exactDurationSeconds,
