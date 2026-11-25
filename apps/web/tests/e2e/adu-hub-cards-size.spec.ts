@@ -117,12 +117,15 @@ const CONFIGS = [
 /** Serves the ADU hub list + stats endpoints for this spec. */
 
 /**
- * Recorded card box heights on main (56ad14da), same fixtures,
- * both viewports: desktop 314.66 × 317.875, phone 342 × 317.875.
- * Any redesign that moves a card's height off this baseline fails
- * here — the three cards sharing a wrong height is not a pass.
+ * Recorded card box heights, same fixtures, both viewports:
+ * desktop 314.66 × 345.25, phone 342 × 345.25. The 317.875
+ * baseline (main 56ad14da) grew by 27.375 in spec 247, which added
+ * the Facebook link row under the source link row — an approved
+ * redesign, so the baseline moves with it. Any redesign that moves
+ * a card's height off this baseline fails here — the three cards
+ * sharing a wrong height is not a pass.
  */
-const BASELINE_CARD_HEIGHT = 317.875;
+const BASELINE_CARD_HEIGHT = 345.25;
 /** Baseline gap, counts-grid bottom to Today text top (mt-3). */
 const BASELINE_TODAY_GAP = 12;
 async function installAduHubFixtures(page: import('@playwright/test').Page) {
