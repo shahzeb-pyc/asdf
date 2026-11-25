@@ -1305,6 +1305,20 @@ export async function runAduTick(options: {
       result.retried += 1;
       continue;
     }
+    // Spec 248: a disconnected row carries a NULL access token. The
+    // status guard above already retried non-active accounts, so a
+    // NULL token here is unreachable at runtime — but the row type is
+    // nullable and the guard is required for the decrypt call below
+    // to typecheck. A row that somehow reaches this point is marked
+    // like a not-active account, never published from.
+    if (acc.encrypted_access_token === null) {
+      await supabase
+        .from('adu_posting_jobs')
+        .update({ status: 'pending_publish', last_error_code: 'account_token_missing', last_error_message: 'Social account has no access token.' })
+        .eq('id', job.id);
+      result.retried += 1;
+      continue;
+    }
     const reel = job.adu_reels ?? {};
     const item = {
       id: job.id,

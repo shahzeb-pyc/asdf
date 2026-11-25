@@ -323,10 +323,26 @@ describe('DatabaseSocialAccountRowSchema', () => {
     );
   });
 
-  it('rejects the pre-unification account status vocabulary', () => {
-    // The old account table's 'disconnected' backfilled to 'revoked' in social_accounts.
+  it('accepts a disconnected row with NULL tokens (spec 248)', () => {
+    // Disconnect (spec 248) NULLs both tokens and the expiry and sets
+    // status 'disconnected': the row must validate — the worker defers
+    // it at publish time instead of failing boundary validation.
+    const parsed = DatabaseSocialAccountRowSchema.parse({
+      ...validSocialAccountRow,
+      status: 'disconnected',
+      encrypted_access_token: null,
+      encrypted_refresh_token: null,
+      token_expires_at: null,
+    });
+    expect(parsed.status).toBe('disconnected');
+    expect(parsed.encrypted_access_token).toBeNull();
+    expect(parsed.encrypted_refresh_token).toBeNull();
+    expect(parsed.token_expires_at).toBeNull();
+  });
+
+  it('rejects a bogus account status', () => {
     expect(
-      DatabaseSocialAccountRowSchema.safeParse({ ...validSocialAccountRow, status: 'disconnected' })
+      DatabaseSocialAccountRowSchema.safeParse({ ...validSocialAccountRow, status: 'paused' })
         .success
     ).toBe(false);
     expect(

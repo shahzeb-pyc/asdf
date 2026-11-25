@@ -809,6 +809,15 @@ async function processPublishMessage(
   }
   const masterKey = deps.masterKey;
 
+  // Fail loud (spec 248): a disconnected row carries a NULL access
+  // token, but the deferral above already returns for any non-active
+  // account — reaching this point with no token means the row is
+  // corrupt, not disconnected. The message stays un-acked for queue
+  // retry, like every other unexpected throw on this path.
+  if (account.encrypted_access_token === null) {
+    throw new InternalError(`Social account ${account.id} has no access token`);
+  }
+
   const tokens = {
     accessToken: await decryptToken(account.encrypted_access_token, masterKey),
     refreshToken: account.encrypted_refresh_token

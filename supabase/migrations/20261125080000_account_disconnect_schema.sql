@@ -1,0 +1,44 @@
+-- Account disconnect schema fix (spec 248): allow 'disconnected' status
+-- + nullable token on social_accounts.
+--
+-- Bug: disconnecting ANY account failed with 500 "Something went wrong"
+-- (UI: "Couldn't disconnect account. Please refresh and try again."),
+-- including accounts with no pages linked. disconnectAccountRow
+-- (apps/web/src/lib/connect/disconnect.ts) runs:
+--   UPDATE social_accounts SET status = 'disconnected',
+--     encrypted_access_token = NULL, encrypted_refresh_token = NULL,
+--     token_expires_at = NULL, updated_at = now() WHERE ...
+-- On live prod (newdb, ref chbtrophjeavksryvglv) that UPDATE hits TWO
+-- independent blockers, proven with rolled-back transactions:
+--   1. status 'disconnected' is not in social_accounts_status_check
+--      ('active','expired','revoked','error') -> CheckViolation.
+--   2. encrypted_access_token is NOT NULL -> NotNullViolation.
+-- Either one alone breaks every disconnect; both parts of this
+-- migration are required.
+--
+-- Why the code and the DB disagree: the unified schema migration
+-- (20261022120000 section 4b) created social_accounts with the 4-value
+-- CHECK and a NOT NULL token, while the same migration's destinations
+-- CHECK DOES include 'disconnected'. Spec 174's disconnect code was
+-- written for the intended "disconnect + strip, never delete" design,
+-- but no migration ever added 'disconnected' to the account CHECK or
+-- dropped the token NOT NULL. Disconnect has NEVER worked since the
+-- unified schema — this is not a new regression.
+--
+-- Safety:
+-- - The new CHECK is a strict superset of the old one: every status
+--   value legal today stays legal, so the ADD CONSTRAINT re-validation
+--   passes on all existing rows (proven live: 0 of 1,201 rows carry
+--   'disconnected'; all existing values are in the old 4-value set).
+-- - DROP NOT NULL changes no data: every existing row already has a
+--   non-NULL token (the column was NOT NULL).
+-- - Plain DROP CONSTRAINT (no IF EXISTS) on purpose: if the constraint
+--   name is ever wrong, the migration fails LOUDLY instead of silently
+--   leaving the old 4-value CHECK in place beside a new one.
+-- - Idempotent: re-running drops the 5-value CHECK and re-adds it;
+--   DROP NOT NULL is a no-op the second time.
+-- - encrypted_refresh_token and token_expires_at are already nullable.
+ALTER TABLE public.social_accounts DROP CONSTRAINT social_accounts_status_check;
+ALTER TABLE public.social_accounts ADD CONSTRAINT social_accounts_status_check
+  CHECK (status IN ('active', 'expired', 'revoked', 'error', 'disconnected'));
+ALTER TABLE public.social_accounts ALTER COLUMN encrypted_access_token DROP NOT NULL;

@@ -368,8 +368,10 @@ describe('Boundary validation — consumers (spec 139 B15)', () => {
     const item = await makeItem();
     const { db, settleCalls } = await makeConsumerDb({
       item,
-      // 'disconnected' is the pre-unification account vocabulary.
-      account: { status: 'disconnected' },
+      // 'paused' is not in the account status vocabulary (spec 248
+      // made 'disconnected' legal, so the malformed fixture must use
+      // a genuinely bogus status).
+      account: { status: 'paused' },
     });
     const publisher = fakePublisher('facebook', async () => ({ status: 'published' }));
     const message = fakeMessage({ itemId: ITEM_ID, platform: 'facebook', lane: 'publish-fast' });

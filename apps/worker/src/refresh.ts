@@ -505,6 +505,16 @@ async function refreshOneAccount(
   // lease released, stored tokens untouched, counted deferred.
   let tokens: PublisherTokenSet;
   try {
+    // Fail loud (spec 248): the scan only returns `status='active'`
+    // rows, so a NULL access token is unreachable at runtime — but
+    // the row type is nullable (a disconnected row carries NULL),
+    // and the guard is required for the decrypt call to typecheck.
+    // A null here is classified as a decrypt failure by the catch
+    // below: lease released, counted transient-deferred, publisher
+    // never called.
+    if (row.encrypted_access_token === null) {
+      throw new InternalError(`Social account ${row.id} has no access token to refresh`);
+    }
     tokens = {
       accessToken: await decryptToken(row.encrypted_access_token, masterKey),
       refreshToken: row.encrypted_refresh_token

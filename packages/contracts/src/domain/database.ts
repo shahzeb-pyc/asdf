@@ -85,7 +85,10 @@ export interface DatabasePlatformCredentialsRow {
  * 20261022120000 §4b). Snake-case keys mirror the real table exactly:
  * `scopes` is TEXT[] (nullable), `metadata` is JSONB NOT NULL, and
  * `status` uses the unified account vocabulary
- * ('active' | 'expired' | 'revoked' | 'error').
+ * ('active' | 'expired' | 'revoked' | 'error' | 'disconnected').
+ * A disconnected row (spec 248) carries a NULL access token: the
+ * disconnect strip NULLs both tokens and the expiry, so
+ * `encrypted_access_token` is nullable here.
  */
 export const DatabaseSocialAccountRowSchema = z
   .object({
@@ -95,11 +98,11 @@ export const DatabaseSocialAccountRowSchema = z
     external_account_id: z.string().min(1).max(255),
     display_name: z.string().min(1).max(255),
     avatar_url: z.string().nullable(),
-    encrypted_access_token: z.string().min(1),
+    encrypted_access_token: z.string().min(1).nullable(),
     encrypted_refresh_token: z.string().nullable(),
     token_expires_at: z.string().datetime({ offset: true }).nullable(),
     scopes: z.array(z.string()).nullable(),
-    status: z.enum(['active', 'expired', 'revoked', 'error']),
+    status: z.enum(['active', 'expired', 'revoked', 'error', 'disconnected']),
     metadata: z.record(z.unknown()),
     created_at: z.string().datetime({ offset: true }),
     updated_at: z.string().datetime({ offset: true }),

@@ -1044,6 +1044,41 @@ describe('Publish consumers — spec 139 publish safety', () => {
     expect(message.ack).toHaveBeenCalledTimes(1);
   });
 
+  it('defers without publishing when the account was disconnected (spec 248)', async () => {
+    // The exact failure mode spec 248 closes: a queue item already
+    // 'publishing' for an account disconnected after the claim must
+    // settle 'deferred' — never throw ValidationError at the boundary
+    // and never land in the DLQ after 3 retries.
+    const item = await makeItem();
+    const { db, settleCalls } = await makeConsumerDb({
+      item,
+      account: {
+        status: 'disconnected',
+        encrypted_access_token: null,
+        encrypted_refresh_token: null,
+        token_expires_at: null,
+      },
+    });
+    const publisher = fakePublisher('facebook', async () => ({ status: 'published' }));
+    const message = fakeMessage({ itemId: item.id, platform: 'facebook', lane: 'publish-fast' });
+
+    await handlePublishBatch(fakeBatch('publish-fast', [message]) as never, {
+      db: db as never,
+      registry: registryWith(publisher),
+      masterKey: MASTER_KEY,
+      env: {},
+    });
+
+    expect(publisher.publish).not.toHaveBeenCalled();
+    expect(settleCalls).toHaveLength(1);
+    expect(settleCalls[0]).toMatchObject({
+      p_outcome_status: 'deferred',
+      p_error_code: DEFER_ACCOUNT_NOT_ACTIVE_CODE,
+      p_retry_count: 0,
+    });
+    expect(message.ack).toHaveBeenCalledTimes(1);
+  });
+
   it('settles a publisher deferral via the deferred outcome with the retry count unchanged (spec 139 defer outcome)', async () => {
     const item = await makeItem({ retry_count: 2 });
     const { db, settleCalls } = await makeConsumerDb({ item });
