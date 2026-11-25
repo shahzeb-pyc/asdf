@@ -25,16 +25,25 @@ vi.mock('@/lib/server-analytics', () => ({
   trackServerEvent: vi.fn(),
 }));
 
+let r2Config: { publicUrl: string } | null = null;
+
 vi.mock('@/lib/storage', () => ({
-  getR2Config: () => null,
+  getR2Config: () => r2Config,
+  // Mirrors the real helper in storage.ts (spec 257).
+  encodeStorageKey: (key: string) =>
+    key
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/'),
   // Post-owned keys resolve to media.example.com so the fetch
   // mock below serves their bytes, exactly as R2's public URL
-  // would in production.
+  // would in production. Mirrors the real provider (spec 257):
+  // the filename segment is percent-encoded.
   getStorageService: () => ({
     listObjects: async ({ prefix }: { prefix: string }) =>
       existingStorageKeys.has(prefix) ? [{ key: prefix }] : [],
     getPublicUrl: (key: string) =>
-      `https://media.example.com/${key.split('/').pop()}`,
+      `https://media.example.com/${encodeURIComponent(key.split('/').pop() ?? '')}`,
     deleteObject: async (key: string) => {
       deletedStorageKeys.push(key);
       existingStorageKeys.delete(key);
@@ -78,6 +87,7 @@ let mediaFetchShouldFail = false;
 let headShouldFail = false;
 let existingStorageKeys = new Set<string>();
 let deletedStorageKeys: string[] = [];
+let videoBodies: Array<Record<string, unknown>> = [];
 
 function graphResponse(ok: boolean, status: number, data: unknown) {
   return {
@@ -186,6 +196,8 @@ beforeEach(() => {
   };
   mediaFetchShouldFail = false;
   headShouldFail = false;
+  r2Config = null;
+  videoBodies = [];
   periodRow = {
     id: 'period-1',
     user_id: 'user-1',
@@ -269,6 +281,9 @@ beforeEach(() => {
       }
       const videosMatch = url.match(/\/(\d+)\/videos$/);
       if (videosMatch) {
+        if (typeof init?.body === 'string') {
+          videoBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+        }
         return graphResponse(true, 200, { id: `video-post-${videosMatch[1]}` });
       }
       if (url.includes('/video_reels')) {
@@ -567,6 +582,62 @@ describe('POST publish-now', () => {
     expect(body.results[0]).toMatchObject({
       status: 'published',
       postId: 'video-post-111',
+    });
+  });
+
+  it('publishes a temp video with a non-ASCII filename — file_url stays encoded (spec 257)', async () => {
+    // Same failure shape as Instagram's: a Devanagari filename whose
+    // public URL the old builder left raw, so Facebook could not
+    // fetch the media from file_url.
+    r2Config = { publicUrl: 'https://media.example.com' };
+    const tempKey =
+      'users/user-1/publish-now-temp/abc/कलयुग_का_महासंग्राम.mp4';
+    const encodedUrl = `https://media.example.com/${tempKey
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/')}`;
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'video',
+      targets: [target('111', 'Page One')],
+      media: {
+        source: 'temp',
+        mediaId: null,
+        tempKey,
+        url: encodedUrl,
+        mediaType: 'video',
+        aspectRatio: null,
+        width: null,
+        height: null,
+        name: 'कलयुग_का_महासंग्राम.mp4',
+      },
+    });
+    expect(status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      status: 'published',
+      postId: 'video-post-111',
+    });
+    expect(videoBodies[0]).toMatchObject({ file_url: encodedUrl });
+  });
+
+  it('sends an encoded file_url for a post-owned video with a non-ASCII filename (spec 257)', async () => {
+    const key =
+      'users/user-1/post-media/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/कलयुग_का_महासंग्राम.mp4';
+    existingStorageKeys.add(key);
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'video',
+      targets: [target('111', 'Page One')],
+      media: postOwnedMedia(key, 'video'),
+    });
+    expect(status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      status: 'published',
+      postId: 'video-post-111',
+    });
+    expect(videoBodies[0]).toMatchObject({
+      file_url:
+        'https://media.example.com/%E0%A4%95%E0%A4%B2%E0%A4%AF%E0%A5%81%E0%A4%97_%E0%A4%95%E0%A4%BE_%E0%A4%AE%E0%A4%B9%E0%A4%BE%E0%A4%B8%E0%A4%82%E0%A4%97%E0%A5%8D%E0%A4%B0%E0%A4%BE%E0%A4%AE.mp4',
     });
   });
 

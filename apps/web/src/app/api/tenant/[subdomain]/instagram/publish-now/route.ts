@@ -26,7 +26,7 @@ import {
   LARGE_JSON_BODY_LIMIT_BYTES,
   readJsonBody,
 } from '@/lib/request-body';
-import { getR2Config, getStorageService } from '@/lib/storage';
+import { getR2Config, getStorageService, encodeStorageKey } from '@/lib/storage';
 import { logServerError } from '@/lib/server-analytics';
 import {
   deletePostOwnedBytesBestEffort,
@@ -363,10 +363,24 @@ async function publishToInstagramAccount(params: {
   }
   if (statusCode === 'PUBLISHED') return containerId;
   if (statusCode === 'ERROR' || statusCode === 'EXPIRED') {
-    throw steppedError(
+    const error = steppedError(
       'Instagram could not prepare this post. Check the media and try again.',
       'container-poll'
     );
+    // The container id is the only handle Meta gives us for a failed
+    // container — log it with the status and the media URL so the
+    // next failure is diagnosable without R2 forensics (spec 257).
+    // Meta's status check returns no error detail of its own; the
+    // last poll error rides along when the final check itself failed.
+    logServerError('[instagram-publish-now] Container failed during poll', error, {
+      containerId,
+      statusCode,
+      mediaUrl,
+      ...(lastPollError !== null
+        ? { lastPollError: toGraphFailure(lastPollError).message }
+        : {}),
+    });
+    throw error;
   }
   if (statusCode !== 'FINISHED') {
     // If the last status check itself failed, say so with the real error
@@ -660,9 +674,18 @@ export async function POST(
       publicBase && media.url.startsWith(`${publicBase}/`)
         ? media.url.slice(publicBase.length + 1)
         : null;
+    // The URL the client sends back is the public URL getPublicUrl
+    // built at upload time, so its key arrives percent-encoded
+    // (spec 257) — compare against the encoded form of the claimed
+    // key, and also the raw form for an upload whose URL predates
+    // the encoding fix. Either form denotes the same key.
+    const keyMatchesUrl =
+      keyFromUrl !== null &&
+      (keyFromUrl === media.tempKey ||
+        keyFromUrl === encodeStorageKey(media.tempKey));
     if (
       !publicBase ||
-      keyFromUrl !== media.tempKey ||
+      !keyMatchesUrl ||
       !media.tempKey.startsWith(expectedPrefix) ||
       media.tempKey.includes('..')
     ) {
