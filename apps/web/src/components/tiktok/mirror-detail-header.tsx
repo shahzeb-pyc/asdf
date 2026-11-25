@@ -118,13 +118,21 @@ export function MirrorDetailHeader({
   // effect below), so a later toggle works again. This is the
   // same guard ADU and Schedule already carry on this branch.
   const pauseToggleInFlightRef = React.useRef(false);
-  // Tracks the previous `pausePending` so the guard and the menu
-  // only reset on the true -> false settle transition — not on
-  // the re-render from opening or closing the menu, which leaves
-  // `pausePending` false throughout.
-  const prevPausePendingRef = React.useRef(pausePending);
+  // Spec 255: the guard and the menu reset when the toggle settles.
+  // This effect deliberately has no dependency array: it must run
+  // after every render, not only when `pausePending` changes. A
+  // mutation that resolves before React commits a render (an
+  // instantly-resolving mock, or a very fast response) never shows
+  // `pausePending` as true in any committed render, so a true ->
+  // false transition never happens — keying the reset off that
+  // transition left the menu open forever in that case. Keying it
+  // off the in-flight ref instead fires on the first render after
+  // the click where the mutation is no longer pending: the settle
+  // render in the app, and the only render in the instant-resolve
+  // case. While the mutation is genuinely pending the effect does
+  // nothing, so the menu stays open showing Updating....
   React.useEffect(() => {
-    if (prevPausePendingRef.current && !pausePending) {
+    if (!pausePending && pauseToggleInFlightRef.current) {
       // The mutation settled (success or failure): the guard lifts
       // and the menu closes, like Schedule's header — while it ran
       // the menu stayed open so the item could show Updating....
@@ -133,8 +141,7 @@ export function MirrorDetailHeader({
       pauseToggleInFlightRef.current = false;
       setMenuOpen(false);
     }
-    prevPausePendingRef.current = pausePending;
-  }, [pausePending]);
+  });
   // Spec 155: the header shows the resolved Facebook detail
   // (own fb_status, else the target's detail).
   const mark = mirrorDisplayMark(mirror);
