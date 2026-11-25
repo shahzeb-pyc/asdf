@@ -1120,7 +1120,7 @@ export function MediaLibraryPicker({
                       >
                         <div className="flex min-w-0 items-center gap-2">
                           <FolderIcon
-                            className="size-5 shrink-0 text-primary"
+                            className="size-5 shrink-0 text-brand-bronze dark:text-primary"
                             aria-hidden
                           />
                           <span

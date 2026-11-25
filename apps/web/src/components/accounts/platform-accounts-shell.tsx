@@ -66,7 +66,7 @@ export function PlatformAccountsShell({
               <div
                 data-slot="platform-icon-container"
                 aria-hidden
-                className="mb-3 flex size-12 items-center justify-center rounded-md border border-line bg-active text-primary"
+                className="mb-3 flex size-12 items-center justify-center rounded-md border border-line bg-active text-brand-bronze dark:text-primary"
               >
                 {icon}
               </div>

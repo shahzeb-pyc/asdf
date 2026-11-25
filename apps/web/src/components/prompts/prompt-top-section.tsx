@@ -322,7 +322,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
                 onClick={() => setOpenFilter(open ? null : key)}
                 className={
                   changed
-                    ? "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-brand-gold underline underline-offset-4"
+                    ? "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-brand-bronze dark:text-primary underline underline-offset-4"
                     : "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-ink"
                 }
               >
@@ -386,7 +386,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
             onClick={toggleFavorites}
             className={
               favoritesOnly
-                ? "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-brand-gold underline underline-offset-4"
+                ? "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-brand-bronze dark:text-primary underline underline-offset-4"
                 : "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-ink"
             }
           >
@@ -402,7 +402,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
               type="button"
               data-testid="prompt-top-section-clear-all"
               onClick={resetAll}
-              className="shrink-0 whitespace-nowrap text-sm font-semibold text-brand-gold"
+              className="shrink-0 whitespace-nowrap text-sm font-semibold text-brand-bronze dark:text-primary"
             >
               Clear all
             </button>

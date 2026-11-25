@@ -76,7 +76,7 @@ export function SubfolderRowsSection({
               className="group flex cursor-pointer items-center justify-between gap-2 border-b border-line px-1 py-2 transition-colors outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link"
             >
               <div className="flex min-w-0 items-center gap-2">
-                <FolderIcon className="size-5 shrink-0 text-primary" aria-hidden />
+                <FolderIcon className="size-5 shrink-0 text-brand-bronze dark:text-primary" aria-hidden />
                 <span
                   data-testid={`folder-name-${folder.id}`}
                   className="truncate text-body font-medium text-ink"

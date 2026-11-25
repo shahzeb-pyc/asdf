@@ -19,7 +19,7 @@ export function FdolaStudioGate({ subdomain: _subdomain }: Readonly<FdolaStudioG
         <div
           data-slot="studio-gate-icon"
           data-testid="studio-gate-icon"
-          className="flex size-12 items-center justify-center rounded-md border border-line bg-active text-primary"
+          className="flex size-12 items-center justify-center rounded-md border border-line bg-active text-brand-bronze dark:text-primary"
         >
           <svg
             width="24"
