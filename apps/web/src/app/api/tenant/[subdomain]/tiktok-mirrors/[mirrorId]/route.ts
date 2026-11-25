@@ -357,8 +357,7 @@ export async function handleUpdateMirror(
     // row still carries an error (or a rate-limit anchor) would
     // block the retry — the tick skips error targets. A
     // disconnected or missing target is left alone: the tick fails
-    // loudly on the missing token. Instagram targets never touch a
-    // destination.
+    // loudly on the missing token.
     if (activating && mirror.target_platform === 'facebook') {
       const destinations = await loadDestinationsByExternalIds(
         db,
@@ -488,10 +487,7 @@ export async function handleDeleteMirror(
         logServerError('[billing] mirror usage release skipped: no billing client', null, {
           source: 'billing',
         });
-      } else if (
-        mirror.target_platform === 'facebook' ||
-        mirror.target_platform === 'instagram'
-      ) {
+      } else if (mirror.target_platform === 'facebook') {
         try {
           await releaseUsageForFeature(
             billingClient,
