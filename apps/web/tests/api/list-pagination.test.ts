@@ -720,6 +720,8 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
           // a workspace-wide lapse sync (.update/.lt/.select) first.
           // Order returns the chain (as in supabase-js); the range
           // call resolves, since it ends the query chain.
+          // Spec 249: the list excludes disconnected rows via .neq().
+          chain.neq = vi.fn(() => chain);
           chain.order = vi.fn(() => chain);
           chain.range = vi.fn(() => Promise.resolve({ data: rows, error: null }));
           chain.update = vi.fn(() => chain);
@@ -760,6 +762,7 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
           const chain: Record<string, unknown> = {};
           chain.select = vi.fn(() => chain);
           chain.eq = vi.fn(() => chain);
+          chain.neq = vi.fn(() => chain);
           chain.update = vi.fn(() => chain);
           chain.lt = vi.fn(() => chain);
           chain.order = vi.fn(() => chain);

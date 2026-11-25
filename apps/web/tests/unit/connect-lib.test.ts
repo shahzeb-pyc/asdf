@@ -336,6 +336,63 @@ describe('Persistence edge cases (legacy client)', () => {
     expect(nullCall?.filters).toContainEqual(['id', 'acct-1']);
   });
 
+  it('revives a disconnected row on reconnect (spec 249): the upsert re-activates the same row', async () => {
+    const captured: Array<{
+      payload: Record<string, unknown>;
+      onConflict: string | undefined;
+    }> = [];
+    const supabase = {
+      from: (_table: string) => {
+        const builder: Record<string, unknown> = {};
+        builder.select = () => builder;
+        builder.eq = () => builder;
+        builder.maybeSingle = async () => ({
+          data: { id: 'acct-dis' },
+          error: null,
+        });
+        builder.upsert = (
+          payload: Record<string, unknown>,
+          opts: { onConflict?: string }
+        ) => {
+          captured.push({ payload, onConflict: opts.onConflict });
+          return builder;
+        };
+        builder.single = async () => ({
+          data: { id: 'acct-dis' },
+          error: null,
+        });
+        return builder;
+      },
+    };
+    const result = await persistConnectedAccount(supabase as never, {
+      workspaceId,
+      platform: 'threads',
+      exchanged: {
+        externalAccountId: 'ext-1',
+        displayName: 'Reconnected',
+        accessToken: 'fresh-token',
+      },
+    });
+    // The same row id comes back, flagged as already existing: a
+    // reconnect revives the hidden disconnected row, it never
+    // creates a duplicate.
+    expect(result).toEqual({ accountId: 'acct-dis', alreadyExisted: true });
+    expect(captured).toHaveLength(1);
+    expect(captured[0].onConflict).toBe(
+      'workspace_id,platform,external_account_id'
+    );
+    expect(captured[0].payload.status).toBe('active');
+    expect(captured[0].payload.workspace_id).toBe(workspaceId);
+    expect(captured[0].payload.platform).toBe('threads');
+    expect(captured[0].payload.external_account_id).toBe('ext-1');
+    expect(
+      await decryptToken(
+        String(captured[0].payload.encrypted_access_token),
+        TEST_ENCRYPTION_KEY
+      )
+    ).toBe('fresh-token');
+  });
+
   it('still lands the revocation and nulls tokens when propagation fails (P0-2)', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {

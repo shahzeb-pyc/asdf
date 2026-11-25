@@ -303,18 +303,19 @@ describe('Threads accounts list route', () => {
     const res = await handleListThreadsAccounts(req, 'acme', fake as never);
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.total).toBe(4);
+    // Spec 249: the disconnected row stays saved but is hidden from
+    // the list — and out of the error bucket.
+    expect(json.total).toBe(3);
     expect(json.healthCounts).toEqual({
       connected: 1,
       expired: 2,
-      error: 1,
+      error: 0,
     });
     // Expired first (newest expired first), then the rest newest first.
     expect(json.accounts.map((a: Row) => a.displayName)).toEqual([
       'Past Token Paul',
       'Expired Willow',
       'Connected Cedar',
-      'Disconnected Dana',
     ]);
     expect(
       json.accounts.some((a: Row) => a.displayName === 'Facebook Felix')
@@ -380,7 +381,7 @@ describe('Threads accounts list route', () => {
     const json = await res.json();
     expect(json.page).toBe(1);
     expect(json.totalPages).toBe(1);
-    expect(json.accounts).toHaveLength(4);
+    expect(json.accounts).toHaveLength(3);
   });
 
   it('status=expired returns only the expired bucket', async () => {
@@ -408,6 +409,56 @@ describe('Threads accounts list route', () => {
     const json = await res.json();
     expect(json.total).toBe(1);
     expect(json.accounts[0].displayName).toBe('Connected Cedar');
+  });
+
+  it('spec 249: a disconnected account never matches search', async () => {
+    const { fake } = makeFake();
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/threads/accounts?search=dana',
+      { headers: { cookie } }
+    );
+    const res = await handleListThreadsAccounts(req, 'acme', fake as never);
+    const json = await res.json();
+    expect(json.total).toBe(0);
+    expect(json.accounts).toEqual([]);
+  });
+
+  it('spec 249: disconnect then list — the account is gone from the list, row retained', async () => {
+    const { fake, tables } = makeFake();
+    const disconnectReq = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/threads/accounts/cccccccc-cccc-4ccc-cccc-cccccccccccc',
+      { method: 'DELETE', headers: { cookie } }
+    );
+    const disconnectRes = await handleDisconnectThreadsAccount(
+      disconnectReq,
+      'acme',
+      'cccccccc-cccc-4ccc-cccc-cccccccccccc',
+      fake as never
+    );
+    expect(disconnectRes.status).toBe(200);
+    // The row is retained as disconnected (spec 174 2A) …
+    const account = tables.social_accounts.find(
+      (a) => a.id === 'cccccccc-cccc-4ccc-cccc-cccccccccccc'
+    );
+    expect(account?.status).toBe('disconnected');
+    // … but hidden from the list: only the two expired accounts remain.
+    const listReq = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/threads/accounts',
+      { headers: { cookie } }
+    );
+    const listRes = await handleListThreadsAccounts(listReq, 'acme', fake as never);
+    expect(listRes.status).toBe(200);
+    const json = await listRes.json();
+    expect(json.total).toBe(2);
+    expect(json.accounts.map((a: Row) => a.displayName)).toEqual([
+      'Past Token Paul',
+      'Expired Willow',
+    ]);
+    expect(json.healthCounts).toEqual({
+      connected: 0,
+      expired: 2,
+      error: 0,
+    });
   });
 
   it('rejects unauthenticated requests', async () => {

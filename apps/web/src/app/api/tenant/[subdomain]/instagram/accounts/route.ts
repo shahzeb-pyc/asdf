@@ -195,7 +195,11 @@ function buildAccountWhere(
   filters: InstagramAccountListFilters
 ): { where: string; params: unknown[] } {
   const params: unknown[] = [workspaceId];
-  const conditions = ['sa.workspace_id = $1', "sa.platform = 'instagram'"];
+  // Spec 249: a disconnected record stays saved but is hidden from
+  // the list (owner rule 2026-11-12) — excluded in the base WHERE so
+  // it applies under every filter and to the health counts, which
+  // count over the same WHERE.
+  const conditions = ['sa.workspace_id = $1', "sa.platform = 'instagram'", "sa.status <> 'disconnected'"];
   if (filters.search) {
     const p = `$${params.length + 1}`;
     params.push(`%${filters.search}%`);
@@ -368,6 +372,8 @@ async function fetchSupabaseAccounts(
         )
         .eq('workspace_id', workspaceId)
         .eq('platform', 'instagram')
+        // Spec 249: disconnected rows stay saved but hidden from the list.
+        .neq('status', 'disconnected')
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
         .range(from, to);

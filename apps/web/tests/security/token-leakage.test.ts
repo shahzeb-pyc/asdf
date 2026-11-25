@@ -93,6 +93,7 @@ describe('Security Audit: Zero Token & Credential Leakage (T075)', () => {
             }),
           };
           builder.eq = vi.fn(() => builder);
+          builder.neq = vi.fn(() => builder);
           return {
             select: vi.fn().mockReturnValue(builder),
           };

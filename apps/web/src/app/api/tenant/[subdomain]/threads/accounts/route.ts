@@ -224,7 +224,11 @@ export async function handleListThreadsAccounts(
         .from('social_accounts')
         .select('id', { count: 'exact', head: true })
         .eq('workspace_id', workspaceId)
-        .eq('platform', 'threads');
+        .eq('platform', 'threads')
+        // Spec 249: disconnected rows stay saved but hidden from the
+        // list — excluded from every count, so the error bucket
+        // drops them consistently.
+        .neq('status', 'disconnected');
     const withSearch = <T extends { ilike: (c: string, p: string) => T }>(
       q: T
     ): T => (search ? q.ilike('display_name', `%${search}%`) : q);
@@ -301,6 +305,11 @@ export async function handleListThreadsAccounts(
             .select(columns)
             .eq('workspace_id', workspaceId)
             .eq('platform', 'threads')
+            // Spec 249: disconnected rows stay saved but hidden from
+            // the list — excluded from every slice, including the
+            // expired slice (a disconnected row with a past token
+            // would otherwise match its token half).
+            .neq('status', 'disconnected')
             .order('created_at', { ascending: false })
         );
         if (kind === 'expired') {
