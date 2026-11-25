@@ -175,8 +175,8 @@ export function countConnectedPages(
 
 /**
  * Aggregate deduped page records for one period. The records must
- * already be filtered to the listed set (Facebook only, 100+
- * followers, deduped by page id) — this function only sums.
+ * already be filtered to the listed set (Facebook only, every status
+ * except disconnected, deduped by page id) — this function only sums.
  */
 export function aggregateAnalytics(
   records: AnalyticsPageRecord[],

@@ -32,10 +32,12 @@ import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
  * workspaces) into the combined dashboard numbers. One row per
  * Facebook page (deduped by page id, preferring the destinations
  * copy, falling back to the row with stored analytics). Listed set:
- * Facebook pages, status active, 100+ stored followers — the same
- * set the worker fetches. A stored column that does not parse is
- * logged and contributes nothing (fail loud in the log, never a
- * guessed number in the response).
+ * every Facebook page except `disconnected` — any status, any
+ * follower count. The 100+ rule stays only for the worker's fetch
+ * gate (spec 241): it decides which pages the worker pulls
+ * analytics for, not what Analytics shows. A stored column that
+ * does not parse is logged and contributes nothing (fail loud in
+ * the log, never a guessed number in the response).
  *
  * Spec 242 — `pagesConnected` counts distinct Facebook page ids
  * over the SAME destinations scan (every status except
@@ -213,10 +215,8 @@ export async function handleGetAnalytics(
   }
 
   try {
-    // No status filter here: the listed set needs active rows only,
-    // but the spec-242 count reads the same scan with every status
-    // except `disconnected`. The split below keeps the listed set
-    // exactly as it was.
+    // No status filter here: the listed set and the spec-242 count
+    // read the same scan — every status except `disconnected`.
     const allDestinations = await fetchAll<DestinationRow>((offset) =>
       supabase
         .from('destinations')
@@ -228,7 +228,7 @@ export async function handleGetAnalytics(
         .order('id', { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1)
     );
-    const destinations = allDestinations.filter((d) => d.status === 'active');
+    const destinations = allDestinations.filter((d) => d.status !== 'disconnected');
     const pagesConnected = countConnectedPages(
       allDestinations.map((d) => ({
         externalDestinationId: d.external_destination_id,
@@ -241,7 +241,7 @@ export async function handleGetAnalytics(
         .select(
           'id, destination_id, workspace_id, status, starting_followers, current_followers, analytics_1d, analytics_7d, analytics_28d, analytics_locations, analytics_updated_at'
         )
-        .eq('status', 'active')
+        .neq('status', 'disconnected')
         .in('workspace_id', workspaceIds)
         .order('id', { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1)
@@ -253,7 +253,7 @@ export async function handleGetAnalytics(
           'id, workspace_id, target_platform, target_external_id, status, starting_followers, current_followers, analytics_1d, analytics_7d, analytics_28d, analytics_locations, analytics_updated_at'
         )
         .eq('target_platform', 'facebook')
-        .eq('status', 'active')
+        .neq('status', 'disconnected')
         .in('workspace_id', workspaceIds)
         .order('id', { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1)
@@ -316,9 +316,12 @@ export async function handleGetAnalytics(
       // Prefer the destinations copy; otherwise the row with stored
       // analytics; otherwise the first row (followers still count).
       const picked = pickCandidate(fbPageId, rows, destinations);
-      // Listed set: 100+ stored followers, like the worker's fetch gate.
+      // Listed set: every page except disconnected, any follower
+      // count. Only unknown (null) followers are skipped — unknown
+      // is never guessed. The 100+ rule stays only for the worker's
+      // fetch gate (spec 241).
       const current = picked.currentFollowers;
-      if (typeof current !== 'number' || current < 100) continue;
+      if (typeof current !== 'number') continue;
       // A stored column that does not parse is corruption: log it
       // loudly, contribute nothing for that column.
       const parsed = parseStoredAnalytics(picked);
