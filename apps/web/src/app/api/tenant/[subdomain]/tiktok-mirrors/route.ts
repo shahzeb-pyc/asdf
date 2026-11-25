@@ -12,8 +12,10 @@ import {
   mirrorFbStatusFromPageStatus,
   MirrorListResponseSchema,
   MIRROR_FB_STATUSES,
+  MirrorTargetStatusSchema,
   type MirrorFbStatus,
   type MirrorListView,
+  type MirrorTargetStatus,
   type MirrorView,
 } from '@fbuploadpro/contracts';
 import {
@@ -269,6 +271,22 @@ export function targetFbStatusFor(
 }
 
 /**
+ * Spec 239: the target's stored coarse status for the detail
+ * header, or null when the target is gone or its stored status
+ * is outside the known set (a legacy 'paused' row — the unified
+ * CHECK allows only active / rate_limited / disconnected /
+ * error). Unknown is null, never invented, and never a 500 on a
+ * valid mirror.
+ */
+function targetStatusFor(
+  destination: DestinationRow | null
+): MirrorTargetStatus | null {
+  if (!destination) return null;
+  const parsed = MirrorTargetStatusSchema.safeParse(destination.status);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * Build the API view from a mirror row. The destination row is
  * resolved at request time (workspace + target platform + target
  * external id) and only refines the view: the live destination name
@@ -301,6 +319,11 @@ export function toMirrorView(
     targetDisplayName: destination?.name ?? mirror.target_display_name,
     targetAvatarUrl: destination?.avatar_url ?? mirror.target_avatar_url,
     targetDestinationId: destination?.id ?? null,
+    // Spec 239: the target's stored coarse status, so the detail
+    // header can tell a disconnected target (Resume locked) from
+    // a healthy or errored one (Resume enabled). Null when the
+    // target row is gone (or its stored status is unknown).
+    targetStatus: targetStatusFor(destination),
     targetAddedAt: details?.addedAt ?? null,
     // Spec 162: the mirror's OWN follower columns win once the daily
     // worker has populated them; before the first run (null) the

@@ -1085,6 +1085,21 @@ describe('spec 155: mirror Facebook detail (fb_status)', () => {
     expect(view.targetFbStatus).toBe('invalid_token');
   });
 
+  it('toMirrorView carries the target coarse status; a legacy paused row reads as null (spec 239)', () => {
+    const mirror = asMirrorRow(mirrorRow())!;
+    const disconnected = asDestinationRow(destRow({ status: 'disconnected' }))!;
+    expect(toMirrorView(mirror, disconnected, null, null).targetStatus).toBe(
+      'disconnected',
+    );
+    const errored = asDestinationRow(destRow({ status: 'error' }))!;
+    expect(toMirrorView(mirror, errored, null, null).targetStatus).toBe('error');
+    // A legacy 'paused' row (the unified CHECK no longer allows it)
+    // is unknown, never invented, and never a 500 on a valid mirror.
+    const paused = asDestinationRow(destRow({ status: 'paused' }))!;
+    expect(toMirrorView(mirror, paused, null, null).targetStatus).toBeNull();
+    expect(toMirrorView(mirror, null, null, null).targetStatus).toBeNull();
+  });
+
   it('toMirrorView prefers the mirror own follower columns once populated, destination values before (spec 162)', () => {
     const details = {
       addedAt: '2026-10-01T00:00:00.000Z',

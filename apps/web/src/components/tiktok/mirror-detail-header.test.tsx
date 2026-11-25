@@ -21,6 +21,7 @@ vi.mock('next/image', () => ({
 }));
 
 const MIRROR_ID = '00000000-0000-4000-8000-000000000001';
+const TARGET_DESTINATION_ID = '00000000-0000-4000-8000-000000000002';
 
 function mirror(overrides: Partial<MirrorView> = {}): MirrorView {
   return {
@@ -33,7 +34,8 @@ function mirror(overrides: Partial<MirrorView> = {}): MirrorView {
     targetExternalId: 'fb-1',
     targetDisplayName: 'Test Page',
     targetAvatarUrl: null,
-    targetDestinationId: null,
+    targetDestinationId: TARGET_DESTINATION_ID,
+    targetStatus: 'active',
     status: 'active',
     lastPostedSourceId: null,
     lastCheckedAt: null,
@@ -90,7 +92,7 @@ describe('MirrorDetailHeader Facebook banner (spec 155)', () => {
   });
 });
 
-describe('MirrorDetailHeader Resume lock (spec 155 B2)', () => {
+describe('MirrorDetailHeader Resume lock (spec 155 B2, spec 239)', () => {
   it('Resume stays enabled when the mirror carries its own detail but the target recovered', () => {
     renderHeader(
       mirror({
@@ -104,12 +106,56 @@ describe('MirrorDetailHeader Resume lock (spec 155 B2)', () => {
     expect(item.hasAttribute('disabled')).toBe(false);
   });
 
-  it('Resume is disabled while the live target still carries a Facebook error', () => {
+  it('Resume is enabled while the live target carries a Facebook error (spec 239)', () => {
     renderHeader(
       mirror({
         status: 'paused',
         fbStatus: null,
         targetFbStatus: 'missing_permission',
+        targetStatus: 'error',
+      })
+    );
+    const item = openMenuResumeItem();
+    expect(item.textContent).toContain('Resume');
+    expect(item.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('Resume is enabled while the live target is rate limited (spec 239)', () => {
+    renderHeader(
+      mirror({
+        status: 'paused',
+        fbStatus: null,
+        targetFbStatus: 'fb_rate_limited',
+        targetStatus: 'rate_limited',
+      })
+    );
+    const item = openMenuResumeItem();
+    expect(item.textContent).toContain('Resume');
+    expect(item.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('Resume is disabled while the target is missing (spec 239)', () => {
+    renderHeader(
+      mirror({
+        status: 'paused',
+        fbStatus: null,
+        targetFbStatus: null,
+        targetDestinationId: null,
+        targetStatus: null,
+      })
+    );
+    const item = openMenuResumeItem();
+    expect(item.textContent).toContain('Resume');
+    expect(item.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('Resume is disabled while the target is disconnected (spec 239)', () => {
+    renderHeader(
+      mirror({
+        status: 'paused',
+        fbStatus: null,
+        targetFbStatus: null,
+        targetStatus: 'disconnected',
       })
     );
     const item = openMenuResumeItem();
