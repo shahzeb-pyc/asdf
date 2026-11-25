@@ -195,7 +195,11 @@ function buildAccountWhere(
   filters: AccountListFilters
 ): { where: string; params: unknown[] } {
   const params: unknown[] = [workspaceId];
-  const conditions = ['sa.workspace_id = $1', "sa.platform = 'facebook'"];
+  // Spec 249: a disconnected record stays saved but is hidden from
+  // the list (owner rule 2026-11-12) — excluded in the base WHERE so
+  // it applies under every filter and to the health counts, which
+  // count over the same WHERE.
+  const conditions = ['sa.workspace_id = $1', "sa.platform = 'facebook'", "sa.status <> 'disconnected'"];
   if (filters.search) {
     // Audit N2: escape ILIKE wildcards so a literal search for
     // "100%" does not match more than the literal string (the
@@ -385,6 +389,8 @@ async function fetchSupabaseAccounts(
     `)
       .eq('workspace_id', workspaceId)
       .eq('platform', 'facebook')
+      // Spec 249: disconnected rows stay saved but hidden from the list.
+      .neq('status', 'disconnected')
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
       .range(from, from + SUPABASE_PAGE_SIZE - 1);

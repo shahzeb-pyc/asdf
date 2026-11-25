@@ -128,6 +128,21 @@ describe('Instagram accounts API', () => {
       const res403 = await handleListInstagramAccounts(wrongTenant, 'other', mockListDb([]));
       expect(res403.status).toBe(403);
     });
+
+    it("SQL path: the list queries exclude disconnected accounts (spec 249)", async () => {
+      const capturedSql: string[] = [];
+      const req = new NextRequest(
+        'http://localhost:3000/api/tenant/acme/instagram/accounts',
+        { headers: { cookie: validSessionCookie } }
+      );
+      const res = await handleListInstagramAccounts(req, 'acme', mockListDb(capturedSql));
+      expect(res.status).toBe(200);
+      // The exclusion lives in the shared WHERE, so it covers the
+      // count (health counts) and the page slice alike.
+      expect(
+        capturedSql.some((sql) => sql.includes("sa.status <> 'disconnected'"))
+      ).toBe(true);
+    });
   });
 
   describe('DELETE /api/tenant/[subdomain]/instagram/accounts/[accountId]', () => {
@@ -220,6 +235,7 @@ describe('Instagram accounts API', () => {
     const ranges: Array<{ table: string; from: number; to: number }> = [];
     class FakeQuery {
       private filters: Array<[string, unknown]> = [];
+      private neqFilters: Array<[string, unknown]> = [];
       private from = 0;
       private to: number | null = null;
       constructor(
@@ -232,6 +248,10 @@ describe('Instagram accounts API', () => {
       }
       eq(col: string, val: unknown): this {
         this.filters.push([col, val]);
+        return this;
+      }
+      neq(col: string, val: unknown): this {
+        this.neqFilters.push([col, val]);
         return this;
       }
       order(): this {
@@ -258,7 +278,8 @@ describe('Instagram accounts API', () => {
       }
       private apply(): Row[] {
         return this.rows.filter((row) =>
-          this.filters.every(([col, val]) => row[col] === val)
+          this.filters.every(([col, val]) => row[col] === val) &&
+          this.neqFilters.every(([col, val]) => row[col] !== val)
         );
       }
     }
@@ -367,6 +388,48 @@ describe('Instagram accounts API', () => {
       const res = await handleListInstagramAccounts(listRequest(), 'acme', fake as never);
       expect(res.status).toBe(500);
       expect((await res.json()).error).toBe('destinations boom');
+    });
+
+    it('spec 249: a disconnected account is absent from the list and the health counts', async () => {
+      const disconnectedRow: Row = {
+        ...accountRow('44444444-4444-4444-8444-444444444444', '2026-10-13T00:00:00Z'),
+        display_name: 'Disconnected Dana',
+        external_account_id: 'ig-disconnected',
+        status: 'disconnected',
+      };
+      const fake = supabaseWith(
+        [accountRow(ACCOUNT_ID, '2026-10-12T00:00:00Z'), disconnectedRow],
+        []
+      );
+      const res = await handleListInstagramAccounts(listRequest(), 'acme', fake as never);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.total).toBe(1);
+      expect(json.accounts).toHaveLength(1);
+      expect(json.accounts[0].displayName).toBe('Account 22222222');
+      expect(json.healthCounts).toEqual({ connected: 1, expired: 0, error: 0 });
+    });
+
+    it('spec 249: a disconnected account never matches search', async () => {
+      const disconnectedRow: Row = {
+        ...accountRow('44444444-4444-4444-8444-444444444444', '2026-10-13T00:00:00Z'),
+        display_name: 'Disconnected Dana',
+        external_account_id: 'ig-disconnected',
+        status: 'disconnected',
+      };
+      const fake = supabaseWith(
+        [accountRow(ACCOUNT_ID, '2026-10-12T00:00:00Z'), disconnectedRow],
+        []
+      );
+      const searchReq = new NextRequest(
+        'http://localhost:3000/api/tenant/acme/instagram/accounts?search=Dana',
+        { headers: { cookie: validSessionCookie } }
+      );
+      const res = await handleListInstagramAccounts(searchReq, 'acme', fake as never);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.total).toBe(0);
+      expect(json.accounts).toEqual([]);
     });
   });
 });

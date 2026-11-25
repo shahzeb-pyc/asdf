@@ -365,6 +365,8 @@ describe('Facebook Multi-Account Health Monitoring & Expiration (User Story 3 - 
               }),
             };
             builder.eq = vi.fn(() => builder);
+            // Spec 249: the list excludes disconnected rows via .neq().
+            builder.neq = vi.fn(() => builder);
             return {
               select: vi.fn().mockReturnValue(builder),
               update: vi.fn((payload: any) => {
