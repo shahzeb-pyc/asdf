@@ -301,6 +301,11 @@ export function toMirrorView(
     targetDisplayName: destination?.name ?? mirror.target_display_name,
     targetAvatarUrl: destination?.avatar_url ?? mirror.target_avatar_url,
     targetDestinationId: destination?.id ?? null,
+    // Spec 239: the target's stored coarse status, so the detail
+    // header can tell a disconnected target (Resume locked) from
+    // a healthy or errored one (Resume enabled). Null when the
+    // target row is gone.
+    targetStatus: destination?.status as MirrorView['targetStatus'] ?? null,
     targetAddedAt: details?.addedAt ?? null,
     // Spec 162: the mirror's OWN follower columns win once the daily
     // worker has populated them; before the first run (null) the

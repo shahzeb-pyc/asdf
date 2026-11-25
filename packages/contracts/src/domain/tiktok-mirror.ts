@@ -270,6 +270,20 @@ export const MirrorViewSchema = z.object({
    *  This is a view-time resolution, never a stored mirror column. */
   targetDestinationId: z.string().uuid().nullable(),
   /**
+   * Spec 239: the target destination's stored coarse status,
+   * resolved at request time (never stored on the mirror). The
+   * detail header needs it to tell a disconnected target apart
+   * from a healthy or errored one: `targetFbStatus` is null for
+   * a disconnected target as well as a healthy one, so the error
+   * detail alone cannot tell them apart. Null when the target
+   * row is gone. Optional so existing MirrorView producers keep
+   * parsing unchanged.
+   */
+  targetStatus: z
+    .enum(['active', 'rate_limited', 'disconnected', 'error'])
+    .nullable()
+    .optional(),
+  /**
    * Target page details for the Pages-style detail header. These
    * are DETAIL-view fields (the list view carries its own copies
    * via MirrorListViewSchema): the page's import date, followers,

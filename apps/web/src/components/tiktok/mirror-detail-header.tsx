@@ -124,22 +124,34 @@ export function MirrorDetailHeader({
   const fbAlert = wireStatus
     ? getFacebookPageStatusAlert(wireStatus, 'mirrors')
     : null;
-  // Spec 155 (owner default 4, SEND BACK B2): Resume is DISABLED,
-  // not hidden, while the mirror is paused and the LIVE target
-  // still carries a Facebook error. The mirror's own stored
-  // fbStatus is deliberately NOT consulted here: paused mirrors
-  // are never ticked (the tick only selects status IN
-  // ('active', 'error')), so a stale own detail would lock
-  // Resume forever — error -> pause -> target recovers would
-  // deadlock. The live target detail is the authority while
-  // paused; after resume the tick clears the stale own detail
-  // on the first clean check. A fresh own rate-limit anchor is
-  // still respected after resume: the tick skips while it is
-  // fresh, so resuming cannot publish through a cooldown.
-  // Pause stays available, and Delete always stays available.
-  // An errored-but-active mirror shows Pause (available); the
-  // lock only ever disables Resume.
-  const resumeLocked = isPaused && mirror.targetFbStatus != null;
+  // Spec 239: Resume is DISABLED, not hidden, only while the
+  // mirror is paused and the target is gone or disconnected.
+  // Spec 236's API accepts ON from any status except
+  // disconnected, and clears an errored target's error state on
+  // resume — so a Facebook error on the live target no longer
+  // locks Resume; the next tick retries from clean instead of
+  // skipping on the stored error. A missing target (no
+  // destination row, `targetDestinationId` null) or a
+  // disconnected one (row kept, token stripped) is left alone
+  // by the API, and the tick fails loudly on the missing token,
+  // so Resume stays locked there. `targetFbStatus` alone cannot
+  // tell a disconnected target from a healthy one (it is null
+  // for both), which is why the lock reads `targetStatus`.
+  // The mirror's own stored fbStatus is deliberately NOT
+  // consulted here: paused mirrors are never ticked (the tick
+  // only selects status IN ('active', 'error')), so a stale own
+  // detail would lock Resume forever — error -> pause -> target
+  // recovers would deadlock. The live target detail is the
+  // authority while paused; after resume the tick clears the
+  // stale own detail on the first clean check. A fresh own
+  // rate-limit anchor is still respected after resume: the tick
+  // skips while it is fresh, so resuming cannot publish through
+  // a cooldown. Pause stays available, and Delete always stays
+  // available. An errored-but-active mirror shows Pause
+  // (available); the lock only ever disables Resume.
+  const resumeLocked =
+    isPaused &&
+    (mirror.targetDestinationId == null || mirror.targetStatus === 'disconnected');
   const facebookUrl = `https://facebook.com/${mirror.targetExternalId}`;
   const targetInitials = getUserInitials(mirror.targetDisplayName);
   const sourceInitial = (mirror.sourceUsername[0] ?? '?').toUpperCase();
