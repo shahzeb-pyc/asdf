@@ -97,24 +97,36 @@ describe('getUserSections white-label brand (spec 191)', () => {
   });
 });
 
-describe('getUserSections Instagram / Threads (spec 237)', () => {
-  it('shows Accounts only for Instagram and Threads — the deleted sections are gone', () => {
-    // This test fails on the old code: Instagram and Threads used
-    // to list Schedule, Publish Now, Auto Repost and Auto
-    // Download/Upload leaves alongside Accounts.
+describe('getUserSections Instagram / Threads (spec 237, spec 251)', () => {
+  it('shows Accounts + Publish Now for Instagram and Accounts only for Threads', () => {
+    // Spec 237 deleted Instagram and Threads Schedule, Auto Repost
+    // and Auto Download/Upload leaves alongside Accounts. Spec 251
+    // restores Publish Now for Instagram only — the account IS the
+    // target, so it needs no pages step. Threads keeps Accounts
+    // only. This test fails on the old code: Instagram used to list
+    // Accounts only.
     const sections = getUserSections('acme', true, 'fbuploadpro');
     const groups = sections
       .flatMap((s) => s.items)
       .filter((item) => item.kind === 'group');
-    for (const key of ['instagram', 'threads'] as const) {
+    for (const [key, leaves] of [
+      ['instagram', ['Accounts', 'Publish Now']],
+      ['threads', ['Accounts']],
+    ] as const) {
       const group = groups.find((item) => item.kind === 'group' && item.key === key);
       expect(group?.kind).toBe('group');
       if (group?.kind !== 'group') continue;
-      expect(group.leaves.map((leaf) => leaf.label)).toEqual(['Accounts']);
+      expect(group.leaves.map((leaf) => leaf.label)).toEqual(leaves);
       expect(group.leaves[0]?.href).toContain(`/${key}/accounts`);
     }
+    const instagramGroup = groups.find(
+      (item) => item.kind === 'group' && item.key === 'instagram'
+    );
+    if (instagramGroup?.kind === 'group') {
+      expect(instagramGroup.leaves[1]?.href).toContain('/instagram/publish-now');
+    }
     expect(hrefs(sections).some((h) => h.includes('/instagram/schedule'))).toBe(false);
-    expect(hrefs(sections).some((h) => h.includes('/instagram/publish-now'))).toBe(false);
+    expect(hrefs(sections).some((h) => h.includes('/instagram/publish-now'))).toBe(true);
     expect(hrefs(sections).some((h) => h.includes('/instagram/auto-repost'))).toBe(false);
     expect(hrefs(sections).some((h) => h.includes('/instagram/auto-download-upload'))).toBe(false);
     expect(hrefs(sections).some((h) => h.includes('/threads/schedule'))).toBe(false);
