@@ -7,7 +7,8 @@
  * - One row per Facebook page: a page in two sections (destinations
  *   + ADU + mirror rows) is counted once, preferring destinations.
  * - Read rules: sums from stored columns, unique viewers from the
- *   stored deduplicated values, pages under 100 followers excluded.
+ *   stored deduplicated values, every page except disconnected
+ *   included (any status, any follower count).
  * - The scan pages in 200-row bounds (PostgREST truncates at 1,000).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -41,6 +42,11 @@ class FakeQuery {
 
   public eq(column: string, value: unknown): this {
     this.filters.push((r) => r[column] === value);
+    return this;
+  }
+
+  public neq(column: string, value: unknown): this {
+    this.filters.push((r) => r[column] !== value);
     return this;
   }
 
@@ -341,14 +347,31 @@ describe('GET /api/tenant/[subdomain]/analytics', () => {
     expect(body.uniqueViewers).toBe(1200);
   });
 
-  it('a page under 100 followers is excluded, and a page with no analytics yet is hasNoData with its followers still counted', async () => {
+  it('a page under 100 followers is included, with its followers and stored analytics counted', async () => {
     const token = await sessionToken();
     const db = new FakeSupabase(
       workspaceTables({
-        destinations: [
-          destRow('dest-small', WS_A, 'fb-small', 50, 10),
-          destRow('dest-fresh', WS_A, 'fb-fresh', 500, 400, false),
-        ],
+        destinations: [destRow('dest-small', WS_A, 'fb-small', 50, 10)],
+      })
+    );
+    const res = await handleGetAnalytics(
+      request(token),
+      'acme',
+      db as unknown as SupabaseClient
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.pagesIncluded).toBe(1);
+    expect(body.followers).toEqual({ total: 50, gained: 40 });
+    expect(body.hasNoData).toBe(false);
+    expect(body.mediaViews).toBe(28 * 100);
+    expect(body.uniqueViewers).toBe(1200);
+  });
+
+  it('a page with no analytics yet is hasNoData with its followers still counted', async () => {
+    const token = await sessionToken();
+    const db = new FakeSupabase(
+      workspaceTables({
+        destinations: [destRow('dest-fresh', WS_A, 'fb-fresh', 500, 400, false)],
       })
     );
     const res = await handleGetAnalytics(
@@ -363,6 +386,94 @@ describe('GET /api/tenant/[subdomain]/analytics', () => {
     expect(body.mediaViews).toBe(0);
     expect(body.chart).toEqual([]);
     expect(body.dateRangeLabel).toBe('');
+  });
+
+  it('an error-status page with stored analytics is included in the followers and views totals', async () => {
+    const token = await sessionToken();
+    const db = new FakeSupabase(
+      workspaceTables({
+        destinations: [destRow('dest-err', WS_A, 'fb-err', 1200, 1000, true, 'error')],
+      })
+    );
+    const res = await handleGetAnalytics(
+      request(token),
+      'acme',
+      db as unknown as SupabaseClient
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.pagesIncluded).toBe(1);
+    expect(body.followers).toEqual({ total: 1200, gained: 200 });
+    expect(body.mediaViews).toBe(28 * 100);
+    expect(body.uniqueViewers).toBe(1200);
+    expect(body.hasNoData).toBe(false);
+  });
+
+  it('a paused page and a 0-follower page are included, a disconnected page is excluded from both totals', async () => {
+    const token = await sessionToken();
+    const db = new FakeSupabase(
+      workspaceTables({
+        destinations: [
+          destRow('dest-paused', WS_A, 'fb-p', 800, 500, true, 'paused'),
+          destRow('dest-zero', WS_A, 'fb-z', 0, 0),
+          destRow('dest-disc', WS_A, 'fb-d', 5000, 4000, true, 'disconnected'),
+        ],
+      })
+    );
+    const res = await handleGetAnalytics(
+      request(token),
+      'acme',
+      db as unknown as SupabaseClient
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.pagesIncluded).toBe(2); // fb-p and fb-z; fb-d is disconnected
+    expect(body.followers).toEqual({ total: 800, gained: 300 }); // the 0-follower page adds 0
+    expect(body.mediaViews).toBe(2 * 28 * 100);
+    expect(body.pagesConnected).toBe(2);
+  });
+
+  it('a page with unknown (null) followers contributes nothing', async () => {
+    const token = await sessionToken();
+    const nullRow = {
+      ...destRow('dest-null', WS_A, 'fb-null', 500, 400, false),
+      metadata: {
+        starting_followers: null,
+        current_followers: null,
+        analytics_updated_at: '2026-11-10T22:00:00.000Z',
+      },
+    };
+    const db = new FakeSupabase(workspaceTables({ destinations: [nullRow] }));
+    const res = await handleGetAnalytics(
+      request(token),
+      'acme',
+      db as unknown as SupabaseClient
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.pagesIncluded).toBe(0);
+    expect(body.followers).toEqual({ total: 0, gained: 0 });
+    expect(body.hasNoData).toBe(true);
+    expect(body.mediaViews).toBe(0);
+  });
+
+  it('a mirror in an error state is included, a disconnected mirror is excluded', async () => {
+    const token = await sessionToken();
+    const db = new FakeSupabase(
+      workspaceTables({
+        mirrors: [
+          { ...mirrorRow('mirror-err', WS_A, 'fb-merr'), status: 'error' },
+          { ...mirrorRow('mirror-disc', WS_A, 'fb-mdisc'), status: 'disconnected' },
+        ],
+      })
+    );
+    const res = await handleGetAnalytics(
+      request(token),
+      'acme',
+      db as unknown as SupabaseClient
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.pagesIncluded).toBe(1); // fb-merr only
+    expect(body.followers).toEqual({ total: 1200, gained: 200 });
+    expect(body.mediaViews).toBe(28 * 100);
+    expect(body.uniqueViewers).toBe(1200);
   });
 
   it('a single workspace scopes to that workspace only', async () => {
@@ -415,8 +526,8 @@ describe('GET /api/tenant/[subdomain]/analytics', () => {
     );
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.pagesConnected).toBe(3); // fb-a, fb-b, fb-c
-    expect(body.pagesIncluded).toBe(1); // only fb-a is active with 100+ followers
-    expect(body.followers).toEqual({ total: 1200, gained: 200 });
+    expect(body.pagesIncluded).toBe(3); // fb-d (disconnected) is the only one out
+    expect(body.followers).toEqual({ total: 2050, gained: 540 });
   });
 
   it('pagesConnected follows the workspace picker, and does not change with the period', async () => {
@@ -438,7 +549,7 @@ describe('GET /api/tenant/[subdomain]/analytics', () => {
       )
     ).json()) as Record<string, unknown>;
     expect(single.pagesConnected).toBe(2);
-    expect(single.pagesIncluded).toBe(1);
+    expect(single.pagesIncluded).toBe(2); // fb-b active and fb-b2 paused both count now
     const all = (await (
       await handleGetAnalytics(request(token, 'workspace=all&period=28'), 'acme', db as unknown as SupabaseClient)
     ).json()) as Record<string, unknown>;
