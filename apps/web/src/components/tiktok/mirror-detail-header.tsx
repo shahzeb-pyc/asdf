@@ -109,6 +109,32 @@ export function MirrorDetailHeader({
   accountsHref,
 }: Readonly<MirrorDetailHeaderProps>) {
   const [menuOpen, setMenuOpen] = React.useState(false);
+  // Spec 255: synchronous in-flight guard for the Pause/Resume
+  // toggle. The item is disabled while `pausePending`, but that
+  // disabled state only takes effect after the shell re-renders
+  // with the mutation pending — a second click dispatched before
+  // that commit would otherwise fire a second PATCH. The ref
+  // closes that window; it lifts when the mutation settles (the
+  // effect below), so a later toggle works again. This is the
+  // same guard ADU and Schedule already carry on this branch.
+  const pauseToggleInFlightRef = React.useRef(false);
+  // Tracks the previous `pausePending` so the guard and the menu
+  // only reset on the true -> false settle transition — not on
+  // the re-render from opening or closing the menu, which leaves
+  // `pausePending` false throughout.
+  const prevPausePendingRef = React.useRef(pausePending);
+  React.useEffect(() => {
+    if (prevPausePendingRef.current && !pausePending) {
+      // The mutation settled (success or failure): the guard lifts
+      // and the menu closes, like Schedule's header — while it ran
+      // the menu stayed open so the item could show Updating....
+      // On failure the item is back at Pause/Resume and the
+      // shell's existing error feedback shows, unchanged.
+      pauseToggleInFlightRef.current = false;
+      setMenuOpen(false);
+    }
+    prevPausePendingRef.current = pausePending;
+  }, [pausePending]);
   // Spec 155: the header shows the resolved Facebook detail
   // (own fb_status, else the target's detail).
   const mark = mirrorDisplayMark(mirror);
@@ -424,12 +450,18 @@ export function MirrorDetailHeader({
                 data-testid="mirror-detail-menu-pause"
                 disabled={pausePending || resumeLocked}
                 onClick={() => {
-                  setMenuOpen(false);
+                  // Spec 255: the guard drops a second click that
+                  // lands before the shell commits `pausePending`.
+                  // The menu stays open while the mutation runs so
+                  // the item can show its Updating... state; the
+                  // settle effect above closes it.
+                  if (pausePending || pauseToggleInFlightRef.current) return;
+                  pauseToggleInFlightRef.current = true;
                   onPauseResume();
                 }}
                 className="block w-full rounded-sm px-3 py-2.5 text-left text-body text-ink hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
               >
-                {isPaused ? 'Resume' : 'Pause'}
+                {pausePending ? 'Updating...' : isPaused ? 'Resume' : 'Pause'}
               </button>
               <button
                 type="button"
