@@ -9,7 +9,7 @@
  */
 import * as React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AduHubPage } from './adu-hub-page';
 
@@ -20,7 +20,7 @@ vi.mock('next/image', () => ({
 
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(''),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: pushMock, replace: vi.fn() }),
 }));
 
 vi.mock('@/components/billing/entitlement-provider', () => ({
@@ -35,6 +35,12 @@ function renderHub() {
     </QueryClientProvider>,
   );
 }
+
+// The card's navigation target, captured so the link tests can
+// prove a link click never navigates while a card click does.
+// vi.hoisted: the next/navigation mock factory runs before this
+// file's top-level statements.
+const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
 
 function config(overrides: Record<string, unknown> = {}) {
   return {
@@ -106,5 +112,24 @@ describe('AduHubPage followers last-updated (spec 162)', () => {
     renderHub();
     await screen.findByTestId('adu-page-followers-line');
     expect(screen.queryByTestId('adu-page-followers-updated')).toBeNull();
+  });
+
+  it('shows a Facebook link to the page, opening in a new tab', async () => {
+    stubFetch([config()]);
+    renderHub();
+    const link = await screen.findByTestId('adu-page-facebook-link');
+    expect(link).toHaveTextContent('Facebook');
+    expect(link.getAttribute('href')).toBe('https://www.facebook.com/fb-page-101');
+    expect(link.getAttribute('target')).toBe('_blank');
+  });
+
+  it('clicking the Facebook link does not navigate, clicking the card does', async () => {
+    stubFetch([config()]);
+    renderHub();
+    await screen.findByTestId('adu-page-facebook-link');
+    fireEvent.click(screen.getByTestId('adu-page-facebook-link'));
+    expect(pushMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('adu-page-card-cfg-1'));
+    expect(pushMock).toHaveBeenCalledWith('/tenant/testws/auto-download-upload/cfg-1');
   });
 });

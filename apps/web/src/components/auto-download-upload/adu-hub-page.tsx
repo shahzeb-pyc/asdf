@@ -182,6 +182,8 @@ function AduFixedTimeField({
 
 const STATUS_OPTIONS = ADU_STATUS_FILTER_OPTIONS;
 const SORT_OPTIONS = ['Newest First', 'Most Followers', 'Least Followers'] as const;
+const PAGE_SORT_OPTIONS = ['Default order', 'Highest first', 'Lowest first'] as const;
+type PageSort = (typeof PAGE_SORT_OPTIONS)[number];
 const PLATFORMS = ['instagram', 'youtube', 'tiktok', 'facebook'] as const;
 type Platform = (typeof PLATFORMS)[number];
 
@@ -549,6 +551,23 @@ function AduPageCard({ config, subdomain, hubSearch }: { config: AduConfigView; 
             +{netGained.toLocaleString('en-US')} gained
           </span>
         )}
+      </div>
+
+      {/* Facebook page link row, directly under the source link row:
+          same treatment as the source link (new tab, never triggers
+          the card's own navigation). */}
+      <div className="mt-2 flex items-center">
+        <a
+          data-testid="adu-page-facebook-link"
+          href={`https://www.facebook.com/${config.destinationExternalId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="min-w-0 shrink-0 truncate text-metadata text-link hover:underline"
+        >
+          Facebook{' '}
+          <MoveUpRightIcon aria-hidden className="inline size-3 shrink-0" />
+        </a>
       </div>
 
       {/* Divider + footer: status mark left, account right. */}
@@ -1054,6 +1073,8 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   const [accountSearch, setAccountSearch] = React.useState('');
   const [pageSearch, setPageSearch] = React.useState('');
   const [selectedAccountIds, setSelectedAccountIds] = React.useState<string[]>([]);
+  // Sort for the step-2 page list: today's discover order by default.
+  const [pageSort, setPageSort] = React.useState<PageSort>('Default order');
   // Selection is keyed by discovered row (`${accountId}:${fbPageId}`),
   // not by destination id: a page can appear twice (two accounts)
   // and a never-imported page has no destination id yet.
@@ -1171,7 +1192,16 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
       };
     });
   });
-  const visibleRows = discoveredRows.filter((row) => row.pageName.toLowerCase().includes(pageSearch.toLowerCase()));
+  // The search filter still applies on top of the sort; the sort
+  // reorders the listed pages by followers across all selected
+  // accounts together and never drops a row.
+  const filteredRows = discoveredRows.filter((row) => row.pageName.toLowerCase().includes(pageSearch.toLowerCase()));
+  const visibleRows =
+    pageSort === 'Highest first'
+      ? [...filteredRows].sort((a, b) => b.followers - a.followers)
+      : pageSort === 'Lowest first'
+        ? [...filteredRows].sort((a, b) => a.followers - b.followers)
+        : filteredRows;
   const selectableRowKeys = discoveredRows.filter((row) => !row.alreadyAdded).map((row) => row.key);
   const allAccountsChecked = activeAccounts.length > 0 && activeAccounts.every((a) => selectedAccountIds.includes(a.id));
   const allPagesChecked = selectableRowKeys.length > 0 && selectableRowKeys.every((key) => selectedPageKeys.includes(key));
@@ -1580,6 +1610,16 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                     <span className="text-metadata text-ink-sub">
                       {discoveredRows.length} {discoveredRows.length === 1 ? 'page found' : 'pages found'}
                     </span>
+                    <Select value={pageSort} onValueChange={(v) => setPageSort(v as PageSort)}>
+                      <SelectTrigger aria-label="Sort pages by followers" size="sm" data-testid="adu-pages-sort-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PAGE_SORT_OPTIONS.map((o) => (
+                          <SelectItem key={o} value={o}>{o}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     {selectableRowKeys.length > 0 ? (
                       <button
                         type="button"

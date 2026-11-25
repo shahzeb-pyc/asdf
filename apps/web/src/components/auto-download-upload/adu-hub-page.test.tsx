@@ -298,6 +298,76 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect(screen.getByText('UK Videos')).toBeTruthy();
   });
 
+  // Step-2 page order, spec 247: the sort reorders the listed pages
+  // by followers across all selected accounts; default is today's
+  // discover order. Account 1 discovers Ellie Blossom (1),
+  // UK Videos (0), No Category Page (0), Janhvi Kapoor Lovers
+  // (23,099), Shared Page (12), in that order.
+  function pageRowNames() {
+    return screen
+      .getAllByTestId(/^adu-page-row-/)
+      .map((row) => row.querySelector('.font-semibold')?.textContent);
+  }
+
+  async function pickPageSort(user: ReturnType<typeof userEvent.setup>, option: string) {
+    await user.click(screen.getByRole('combobox', { name: 'Sort pages by followers' }));
+    await user.click(await screen.findByRole('option', { name: option }));
+  }
+
+  it('step 2 lists pages in discover order by default', async () => {
+    await openDialog();
+    await goToPagesStep();
+    expect(screen.getByRole('combobox', { name: 'Sort pages by followers' })).toHaveTextContent('Default order');
+    expect(pageRowNames()).toEqual([
+      'Ellie Blossom',
+      'UK Videos',
+      'No Category Page',
+      'Janhvi Kapoor Lovers',
+      'Shared Page',
+    ]);
+  });
+
+  it('step 2 sort Highest first orders rows by followers descending', async () => {
+    const user = userEvent.setup();
+    await openDialog();
+    await goToPagesStep();
+    await pickPageSort(user, 'Highest first');
+    expect(pageRowNames()).toEqual([
+      'Janhvi Kapoor Lovers',
+      'Shared Page',
+      'Ellie Blossom',
+      'UK Videos',
+      'No Category Page',
+    ]);
+  });
+
+  it('step 2 sort Lowest first orders rows by followers ascending', async () => {
+    const user = userEvent.setup();
+    await openDialog();
+    await goToPagesStep();
+    await pickPageSort(user, 'Lowest first');
+    expect(pageRowNames()).toEqual([
+      'UK Videos',
+      'No Category Page',
+      'Ellie Blossom',
+      'Shared Page',
+      'Janhvi Kapoor Lovers',
+    ]);
+  });
+
+  it('Select All still selects every selectable row after sorting', async () => {
+    const user = userEvent.setup();
+    await openDialog();
+    await goToPagesStep();
+    await pickPageSort(user, 'Highest first');
+    fireEvent.click(screen.getByTestId('adu-select-all-pages-btn'));
+    expect(checkboxState('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102')).toBe('checked');
+    expect(checkboxState('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-105')).toBe('checked');
+    expect(checkboxState('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-107')).toBe('checked');
+    expect(checkboxState('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-108')).toBe('checked');
+    expect((screen.getByTestId('adu-pages-next-btn') as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('deselecting an account drops its pages from the selection and gates step-2 Next', async () => {
     await openDialog();
     fireEvent.click(screen.getByText('Shahzeb Malik'));
