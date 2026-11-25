@@ -921,6 +921,77 @@ describe('fetchPageAnalyticsFromGraph', () => {
     expect(lifetimeUrl.searchParams.get('period')).toBe('lifetime');
   });
 
+  it('Calls B/C pass since/until for their windows ending yesterday (spec 252)', async () => {
+    // Facebook's default window (no since/until) ends one day early: the
+    // mock returns the trailing value then, and the correct value only
+    // when the call asks for its window ending yesterday. The stored
+    // values must be the correct ones — this test fails on the pre-fix
+    // code, which sent no since/until on Calls B/C.
+    const { fetchImpl, urls } = mockGraph((url) => {
+      const u = new URL(url);
+      const period = u.searchParams.get('period');
+      if (period === 'week') {
+        const asked =
+          u.searchParams.get('since') === '2026-11-03' &&
+          u.searchParams.get('until') === '2026-11-09';
+        return {
+          status: 200,
+          body: {
+            data: [
+              {
+                name: 'page_total_media_view_unique',
+                period: 'week',
+                values: [
+                  asked
+                    ? { value: 1_026_117, end_time: '2026-11-09T08:00:00+0000' }
+                    : { value: 1_000_000, end_time: '2026-11-08T08:00:00+0000' },
+                ],
+              },
+            ],
+          },
+        };
+      }
+      if (period === 'days_28') {
+        const asked =
+          u.searchParams.get('since') === '2026-10-13' &&
+          u.searchParams.get('until') === '2026-11-09';
+        return {
+          status: 200,
+          body: {
+            data: [
+              {
+                name: 'page_total_media_view_unique',
+                period: 'days_28',
+                values: [
+                  asked
+                    ? { value: 1_173_333, end_time: '2026-11-09T08:00:00+0000' }
+                    : { value: 1_150_000, end_time: '2026-11-08T08:00:00+0000' },
+                ],
+              },
+            ],
+          },
+        };
+      }
+      return standardHandler(url);
+    });
+    const out = await fetchPageAnalyticsFromGraph(
+      'fb-page-a',
+      'token',
+      fetchImpl,
+      15_000,
+      async () => {},
+      NOW_241
+    );
+    const weekUrl = new URL(urls[1]!);
+    expect(weekUrl.searchParams.get('since')).toBe('2026-11-03');
+    expect(weekUrl.searchParams.get('until')).toBe('2026-11-09');
+    const days28Url = new URL(urls[2]!);
+    expect(days28Url.searchParams.get('since')).toBe('2026-10-13');
+    expect(days28Url.searchParams.get('until')).toBe('2026-11-09');
+    expect(out.analytics7d.unique_viewers_7d).toBe(1_026_117);
+    expect(out.analytics28d.unique_viewers_28d).toBe(1_173_333);
+  });
+
   it('a day Facebook does not return is zero, not an error', async () => {
     const { fetchImpl } = mockGraph((url) => {
       const period = new URL(url).searchParams.get('period');

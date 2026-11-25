@@ -351,7 +351,9 @@ function buildDayEntry(date: string, byMetric: Map<string, Map<string, number>>)
  *   (last 7), 28d days (all 28). A day Facebook does not return is zero.
  * - Call B (period=week) / Call C (period=days_28): Facebook's own
  *   deduplicated unique-viewer values, taken at the window ending
- *   yesterday — never the sum of daily values.
+ *   yesterday — never the sum of daily values. Each call passes
+ *   since/until for its own window ending yesterday; without them
+ *   Facebook's default window ends one day early (spec 252).
  * - Call D (period=lifetime): countries + cities. Empty data → locations
  *   null (keep the stored column), the other three columns still update.
  *
@@ -424,6 +426,7 @@ export async function fetchPageAnalyticsFromGraph(
       encToken,
       'week',
       lastDayStr,
+      dates[21]!,
       fetchImpl,
       timeoutMs,
       sleep
@@ -437,6 +440,7 @@ export async function fetchPageAnalyticsFromGraph(
       encToken,
       'days_28',
       lastDayStr,
+      dates[0]!,
       fetchImpl,
       timeoutMs,
       sleep
@@ -461,9 +465,10 @@ export async function fetchPageAnalyticsFromGraph(
 
 /**
  * Calls B/C — one deduplicated unique-viewer value for the window ending
- * `lastDay`. Takes the latest value whose end_time is on or before that
- * date; a missing value is a loud failure (the column cannot be completed
- * without it).
+ * `lastDay`. The call passes since/until for its own window (without them
+ * Facebook's default window ends one day early — spec 252). Takes the
+ * latest value whose end_time is on or before that date; a missing value
+ * is a loud failure (the column cannot be completed without it).
  */
 async function fetchDeduplicatedUniqueViewers(
   fbPageId: string,
@@ -471,6 +476,7 @@ async function fetchDeduplicatedUniqueViewers(
   encToken: string,
   period: 'week' | 'days_28',
   lastDay: string,
+  since: string,
   fetchImpl: FetchFn,
   timeoutMs: number,
   sleep: (ms: number) => Promise<void>
@@ -478,7 +484,7 @@ async function fetchDeduplicatedUniqueViewers(
   const entries = await withGraphBackoff(
     () =>
       fetchInsightsEntries(
-        `${GRAPH_BASE_URL}/${encId}/insights?metric=page_total_media_view_unique&period=${period}&access_token=${encToken}`,
+        `${GRAPH_BASE_URL}/${encId}/insights?metric=page_total_media_view_unique&period=${period}&since=${since}&until=${lastDay}&access_token=${encToken}`,
         fetchImpl,
         timeoutMs
       ),
