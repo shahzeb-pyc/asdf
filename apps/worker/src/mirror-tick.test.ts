@@ -1,12 +1,15 @@
 /**
  * TikTok mirror check (per-mirror, queue consumer unit of work):
  * newer-only oldest-first posting, claim-then-post (overlapping
- * checks never double-post), watermarked-only skipped with
- * error, tikwm failure → mirror error, publish failure → post
- * recorded failed + mirror error, success clears the mirror
- * error, caption verbatim. (Paused/deleted skipping lives in
- * the consumer tests — the consumer fetches the mirror fresh
- * and skips before this runs.)
+ * checks never double-post), watermarked-only skipped (the mirror
+ * stays active — a skip is a per-reel content issue, not a broken
+ * mirror), tikwm failure → counted toward the 5-streak, publish
+ * failure → post recorded failed + counted (a definitive failure
+ * flips at once; anything else needs the same failure 5 times in
+ * a row), success clears the mirror error and resets the streak,
+ * caption verbatim. (Paused/deleted skipping lives in the
+ * consumer tests — the consumer fetches the mirror fresh and
+ * skips before this runs.)
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -39,6 +42,9 @@ function mirror(overrides: Partial<MirrorTickMirror> = {}): MirrorTickMirror {
     // Spec 155: no Facebook detail, target active.
     fbStatus: null,
     fbRateLimitedAt: null,
+    // Spec 254: no failure streak in progress.
+    consecutiveFailureCount: 0,
+    lastFailureSignature: null,
     targetStatus: 'active',
     targetRateLimitedAt: null,
     targetUpdatedAt: null,
@@ -224,7 +230,7 @@ describe('processMirrorCheck', () => {
     expect(state.published).toHaveLength(0);
   });
 
-  it('records a failed post as failed, marks the mirror error, and stops that mirror', async () => {
+  it('spec 254: one transient publish failure records the post failed and keeps the mirror active', async () => {
     const state = newState();
     state.publishFailsFor.add('https://example.com/v1.mp4');
     const feed = [reel('v1', 100), reel('v2', 200)];
@@ -236,12 +242,21 @@ describe('processMirrorCheck', () => {
     expect(state.claimed.map((c) => c.post.sourcePostId)).toEqual(['v1']);
     const postUpdate = state.postUpdates.find((u) => u.id === 'post-v1');
     expect(postUpdate?.patch.status).toBe('failed');
+    // Spec 254: a single transient failure is unconfirmed — the
+    // mirror stays active, the streak starts at 1, and no
+    // last_error is written (the detail header renders last_error
+    // whenever it is set, so writing it would show an error banner
+    // on an active mirror). The failed post's own error stays on
+    // its history row.
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
-    expect(stamp?.patch.status).toBe('error');
-    expect(stamp?.patch.lastError).toContain('Graph exploded');
+    expect(stamp?.patch.status).toBe('active');
+    expect('lastError' in (stamp?.patch ?? {})).toBe(false);
+    expect(stamp?.patch.fbStatus).toBeNull();
+    expect(stamp?.patch.consecutiveFailureCount).toBe(1);
+    expect(stamp?.patch.lastFailureSignature).toBe('transient');
   });
 
-  it('shows the plain restriction message on a restricted publish failure, post failed', async () => {
+  it('spec 254: a restricted publish failure (code 1, unmapped) is repetition-class, not definitive', async () => {
     const state = newState();
     const restrictedError = Object.assign(
       new Error(
@@ -261,12 +276,17 @@ describe('processMirrorCheck', () => {
     const postUpdate = state.postUpdates.find((u) => u.id === 'post-v1');
     expect(postUpdate?.patch.status).toBe('failed');
     expect(postUpdate?.patch.error).toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
+    // Code 1 maps to nothing in evaluateGraphApiError, so the
+    // restriction is unconfirmed on its first occurrence: the
+    // mirror stays active with the (code, subcode) signature.
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
-    expect(stamp?.patch.status).toBe('error');
-    expect(stamp?.patch.lastError).toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
+    expect(stamp?.patch.status).toBe('active');
+    expect('lastError' in (stamp?.patch ?? {})).toBe(false);
+    expect(stamp?.patch.consecutiveFailureCount).toBe(1);
+    expect(stamp?.patch.lastFailureSignature).toBe('graph:1:2424009');
   });
 
-  it('maps a restriction carried only as free text to the plain message', async () => {
+  it('maps a restriction carried only as free text to the plain message on the post row, mirror stays active', async () => {
     const state = newState();
     const deps: MirrorTickDeps = {
       ...fakeDeps(state, [reel('v1', 100)]),
@@ -278,8 +298,16 @@ describe('processMirrorCheck', () => {
     };
     const result = await processMirrorCheck(deps, mirror());
     expect(result.failed).toBe(1);
+    const postUpdate = state.postUpdates.find((u) => u.id === 'post-v1');
+    expect(postUpdate?.patch.error).toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
+    // No Graph facts, so the failure is unclassified ('transient'):
+    // unconfirmed, and the mirror writes no last_error — the
+    // plain message lives on the failed post row only.
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
-    expect(stamp?.patch.lastError).toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
+    expect(stamp?.patch.status).toBe('active');
+    expect('lastError' in (stamp?.patch ?? {})).toBe(false);
+    expect(stamp?.patch.consecutiveFailureCount).toBe(1);
+    expect(stamp?.patch.lastFailureSignature).toBe('transient');
   });
 
   it('falls back to the feed play URL when the resolve fails, and posts both reels', async () => {
@@ -310,7 +338,7 @@ describe('processMirrorCheck', () => {
     expect(stamp?.patch.status).toBe('active');
   });
 
-  it('skips watermarked-only items with a skipped row + mirror error, never posting them', async () => {
+  it('spec 254: skips watermarked-only items with a skipped row, never posting them — and never flipping the mirror', async () => {
     const state = newState();
     const feed = [
       reel('v_wm', 100, { play: '' }),
@@ -323,9 +351,17 @@ describe('processMirrorCheck', () => {
     const skippedClaim = state.claimed.find((c) => c.post.sourcePostId === 'v_wm');
     expect(skippedClaim?.post.status).toBe('skipped');
     expect(skippedClaim?.post.videoUrl).toBeNull();
+    // A skip is a per-reel content issue, not a broken mirror: the
+    // check is clean, so the mirror stays active, last_error
+    // clears, and no streak starts.
+    const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
+    expect(stamp?.patch.status).toBe('active');
+    expect(stamp?.patch.lastError).toBeNull();
+    expect(stamp?.patch.consecutiveFailureCount).toBe(0);
+    expect(stamp?.patch.lastFailureSignature).toBeNull();
   });
 
-  it('marks the mirror error when tikwm fails (other mirrors are independent jobs)', async () => {
+  it('spec 254: a tikwm failure counts toward the streak (other mirrors are independent jobs)', async () => {
     const state = newState();
     const deps = fakeDeps(state, []);
     deps.fetchFeed = async (username: string) => {
@@ -335,7 +371,9 @@ describe('processMirrorCheck', () => {
     await processMirrorCheck(deps, mirror({ id: 'm1' }));
     await processMirrorCheck(deps, mirror({ id: 'm2', sourceUsername: 'bob' }));
     const m1Stamp = state.mirrorUpdates.filter((u) => u.id === 'm1').pop();
-    expect(m1Stamp?.patch.status).toBe('error');
+    expect(m1Stamp?.patch.status).toBe('active');
+    expect(m1Stamp?.patch.consecutiveFailureCount).toBe(1);
+    expect(m1Stamp?.patch.lastFailureSignature).toBe('feed_fetch_failed');
     const m2Stamp = state.mirrorUpdates.filter((u) => u.id === 'm2').pop();
     expect(m2Stamp?.patch.status).toBe('active');
   });
@@ -393,7 +431,7 @@ describe('processMirrorCheck', () => {
     expect(stamp?.patch.catchUpPending).toBe(false);
   });
 
-  it('a feed failure does NOT clear the resume flag and does NOT stamp a check', async () => {
+  it('spec 254: a feed failure does NOT clear the resume flag and does NOT stamp a check — and keeps the mirror active', async () => {
     const state = newState();
     const deps = fakeDeps(state, []);
     deps.fetchFeed = async () => {
@@ -401,9 +439,11 @@ describe('processMirrorCheck', () => {
     };
     await processMirrorCheck(deps, mirror({ catchUpPending: true }));
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
-    expect(stamp?.patch.status).toBe('error');
+    expect(stamp?.patch.status).toBe('active');
     expect(stamp?.patch.catchUpPending).toBeUndefined();
     expect(stamp?.patch.lastCheckedAt).toBeUndefined();
+    expect(stamp?.patch.consecutiveFailureCount).toBe(1);
+    expect(stamp?.patch.lastFailureSignature).toBe('feed_fetch_failed');
   });
 
   it('passes targetPlatform=facebook through to publishReel', async () => {
@@ -972,7 +1012,7 @@ describe('processMirrorCheck Facebook error detail — spec 155', () => {
     expect(stamp.fbRateLimitedAt).toBe(NOW.toISOString());
   });
 
-  it('clears a stale fb_status when the new failure is transient/unmapped', async () => {
+  it('clears a stale fb_status when the new failure is transient/unmapped — mirror stays active', async () => {
     const state = newState();
     state.publishFailsFor.add('https://example.com/v1.mp4');
     state.publishError = graphError('Temporary failure.', 2);
@@ -981,9 +1021,11 @@ describe('processMirrorCheck Facebook error detail — spec 155', () => {
       mirror({ fbStatus: 'missing_permission', fbRateLimitedAt: null }),
     );
     const stamp = finalStamp(state);
-    expect(stamp.status).toBe('error');
+    expect(stamp.status).toBe('active');
     expect(stamp.fbStatus).toBeNull();
     expect(stamp.fbRateLimitedAt).toBeNull();
+    expect(stamp.consecutiveFailureCount).toBe(1);
+    expect(stamp.lastFailureSignature).toBe('graph:2');
   });
 
   it('a clean check clears the fb_status and the anchor once the anchor is stale', async () => {
@@ -1195,6 +1237,226 @@ describe('processMirrorCheck Facebook error detail — spec 155', () => {
       mirror({ status: 'error', fbStatus: 'missing_permission', targetStatus: 'active' }),
     );
     expect(state.fetchFeedCalls).toBe(1);
+  });
+});
+
+describe('processMirrorCheck — spec 254 confirmed errors only', () => {
+  function graphError(message: string, code: number, subcode?: number) {
+    return new FacebookGraphError(message, {
+      code,
+      ...(subcode !== undefined ? { error_subcode: subcode } : {}),
+      type: 'OAuthException',
+    });
+  }
+
+  interface Streak {
+    count: number;
+    signature: string | null;
+  }
+
+  /** Final stamp patch of the last check in this state. */
+  function stampOf(state: FakeState) {
+    const last = state.mirrorUpdates[state.mirrorUpdates.length - 1];
+    expect(last).toBeDefined();
+    return last!.patch;
+  }
+
+  /** One check whose publish fails; threads the stored streak forward. */
+  async function failingPublish(
+    start: Streak,
+    publishError?: unknown,
+  ): Promise<{ stamp: ReturnType<typeof stampOf>; streak: Streak }> {
+    const state = newState();
+    state.publishFailsFor.add('https://example.com/v1.mp4');
+    if (publishError !== undefined) state.publishError = publishError;
+    await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 100)]),
+      mirror({
+        consecutiveFailureCount: start.count,
+        lastFailureSignature: start.signature,
+      }),
+    );
+    const stamp = stampOf(state);
+    return {
+      stamp,
+      streak: {
+        count: stamp.consecutiveFailureCount ?? 0,
+        signature: stamp.lastFailureSignature ?? null,
+      },
+    };
+  }
+
+  /** One check whose feed fetch fails; threads the stored streak forward. */
+  async function failingFeedCheck(
+    start: Streak,
+  ): Promise<{ stamp: ReturnType<typeof stampOf>; streak: Streak }> {
+    const state = newState();
+    const deps = fakeDeps(state, []);
+    deps.fetchFeed = () => Promise.reject(new Error('tikwm down'));
+    await processMirrorCheck(
+      deps,
+      mirror({
+        consecutiveFailureCount: start.count,
+        lastFailureSignature: start.signature,
+      }),
+    );
+    const stamp = stampOf(state);
+    return {
+      stamp,
+      streak: {
+        count: stamp.consecutiveFailureCount ?? 0,
+        signature: stamp.lastFailureSignature ?? null,
+      },
+    };
+  }
+
+  it('4 consecutive same transient failures stay active; the 5th flips to error', async () => {
+    let streak: Streak = { count: 0, signature: null };
+    for (let i = 0; i < 4; i += 1) {
+      const run = await failingPublish(streak);
+      expect(run.stamp.status).toBe('active');
+      expect(run.stamp.consecutiveFailureCount).toBe(i + 1);
+      expect(run.stamp.lastFailureSignature).toBe('transient');
+      expect('lastError' in run.stamp).toBe(false);
+      streak = run.streak;
+    }
+    const fifth = await failingPublish(streak);
+    expect(fifth.stamp.status).toBe('error');
+    expect(fifth.stamp.consecutiveFailureCount).toBe(5);
+    expect(fifth.stamp.lastFailureSignature).toBe('transient');
+    expect(fifth.stamp.lastError).toContain('Graph exploded');
+    // Unmapped, so no Facebook detail is stamped.
+    expect(fifth.stamp.fbStatus).toBeNull();
+    expect(fifth.stamp.fbRateLimitedAt).toBeNull();
+  });
+
+  it('a successful post resets the count — 5 more failures are needed after it', async () => {
+    let streak: Streak = { count: 0, signature: null };
+    for (let i = 0; i < 3; i += 1) {
+      streak = (await failingPublish(streak)).streak;
+    }
+    expect(streak.count).toBe(3);
+    // One successful post: the streak resets.
+    const okState = newState();
+    await processMirrorCheck(
+      fakeDeps(okState, [reel('v1', 100)]),
+      mirror({
+        consecutiveFailureCount: streak.count,
+        lastFailureSignature: streak.signature,
+      }),
+    );
+    const okStamp = stampOf(okState);
+    expect(okStamp.status).toBe('active');
+    expect(okStamp.consecutiveFailureCount).toBe(0);
+    expect(okStamp.lastFailureSignature).toBeNull();
+    expect(okStamp.lastError).toBeNull();
+    // Four more failures after the reset: still active.
+    streak = { count: 0, signature: null };
+    for (let i = 0; i < 4; i += 1) {
+      const run = await failingPublish(streak);
+      expect(run.stamp.status).toBe('active');
+      streak = run.streak;
+    }
+    expect(streak.count).toBe(4);
+  });
+
+  it('a different failure signature restarts the count at 1 for the new failure', async () => {
+    let streak: Streak = { count: 0, signature: null };
+    const code2 = graphError('Temporary failure.', 2);
+    for (let i = 0; i < 2; i += 1) {
+      streak = (await failingPublish(streak, code2)).streak;
+    }
+    expect(streak).toEqual({ count: 2, signature: 'graph:2' });
+    // A plain error has no Graph facts: a different signature, so
+    // the old streak is dropped and the new one starts at 1.
+    const switched = await failingPublish(streak);
+    expect(switched.stamp.status).toBe('active');
+    expect(switched.stamp.consecutiveFailureCount).toBe(1);
+    expect(switched.stamp.lastFailureSignature).toBe('transient');
+  });
+
+  it('no-token flips at once (definitive), with no Facebook detail stamped', async () => {
+    const state = newState();
+    const result = await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 100)]),
+      mirror({ targetToken: null }),
+    );
+    expect(result.failed).toBe(1);
+    const stamp = stampOf(state);
+    expect(stamp.status).toBe('error');
+    expect(stamp.lastError).toContain('no posting token');
+    expect('fbStatus' in stamp).toBe(false);
+    expect(stamp.consecutiveFailureCount).toBe(0);
+    expect(stamp.lastFailureSignature).toBeNull();
+  });
+
+  it('target-gone flips at once (definitive), with no Facebook detail stamped', async () => {
+    const state = newState();
+    const result = await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 100)]),
+      mirror({ targetFound: false, targetToken: null }),
+    );
+    expect(result.failed).toBe(1);
+    const stamp = stampOf(state);
+    expect(stamp.status).toBe('error');
+    expect(stamp.lastError).toContain('no longer connected');
+    expect('fbStatus' in stamp).toBe(false);
+  });
+
+  it('5 consecutive failed feed checks flip to error; a successful check resets the streak', async () => {
+    let streak: Streak = { count: 0, signature: null };
+    for (let i = 0; i < 4; i += 1) {
+      const run = await failingFeedCheck(streak);
+      expect(run.stamp.status).toBe('active');
+      expect(run.stamp.consecutiveFailureCount).toBe(i + 1);
+      expect(run.stamp.lastFailureSignature).toBe('feed_fetch_failed');
+      streak = run.streak;
+    }
+    const fifth = await failingFeedCheck(streak);
+    expect(fifth.stamp.status).toBe('error');
+    expect(fifth.stamp.lastError).toContain('tikwm down');
+    expect(fifth.stamp.consecutiveFailureCount).toBe(5);
+    expect(fifth.stamp.lastFailureSignature).toBe('feed_fetch_failed');
+    // A feed failure says nothing about the target: no detail.
+    expect('fbStatus' in fifth.stamp).toBe(false);
+  });
+
+  it('a successful check resets a feed-failure streak', async () => {
+    let streak: Streak = { count: 0, signature: null };
+    for (let i = 0; i < 2; i += 1) {
+      streak = (await failingFeedCheck(streak)).streak;
+    }
+    expect(streak).toEqual({ count: 2, signature: 'feed_fetch_failed' });
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, []),
+      mirror({
+        consecutiveFailureCount: streak.count,
+        lastFailureSignature: streak.signature,
+      }),
+    );
+    const stamp = stampOf(state);
+    expect(stamp.status).toBe('active');
+    expect(stamp.consecutiveFailureCount).toBe(0);
+    expect(stamp.lastFailureSignature).toBeNull();
+  });
+
+  it('a clean check with nothing new preserves a stored publish streak (no spurious reset)', async () => {
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, []),
+      mirror({
+        consecutiveFailureCount: 3,
+        lastFailureSignature: 'graph:2',
+      }),
+    );
+    const stamp = stampOf(state);
+    expect(stamp.status).toBe('active');
+    expect(stamp.lastError).toBeNull();
+    // Only a successful post (or a different signature) resets a
+    // publish streak — a quiet check with no posts leaves it.
+    expect(stamp.consecutiveFailureCount).toBe(3);
+    expect(stamp.lastFailureSignature).toBe('graph:2');
   });
 });
 
