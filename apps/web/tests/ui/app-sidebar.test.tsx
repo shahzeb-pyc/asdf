@@ -147,8 +147,9 @@ describe('sidebar section configs (structural)', () => {
     const sections = getUserSections('acme', false);
     const labels = allLabels(sections);
     // Spec 237: Instagram and Threads keep only the Accounts leaf —
-    // their Schedule / Publish Now / Auto Repost / Auto Download
-    // Upload sections are deleted. This list fails on the old code.
+    // their Schedule / Auto Repost / Auto Download Upload sections
+    // are deleted. Spec 251 restores Publish Now for Instagram
+    // only. This list fails on the old code.
     expect(labels).toEqual([
       'Home',
       'Muse Assistant',
@@ -164,6 +165,7 @@ describe('sidebar section configs (structural)', () => {
       'Bulk Delete Posts',
       'Analytics',
       'Accounts',
+      'Publish Now',
       'Accounts',
       'My Plan',
       'Purchase',

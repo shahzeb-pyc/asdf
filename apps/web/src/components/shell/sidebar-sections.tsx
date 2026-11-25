@@ -241,10 +241,21 @@ export function getUserSections(
       };
     }
     // Spec 237: Instagram and Threads keep Accounts only — the
-    // Schedule / Publish Now / Auto Repost / Auto Download-Upload
-    // sections were deleted, so no leaves are pushed here.
+    // Schedule / Auto Repost / Auto Download-Upload sections were
+    // deleted, so no leaves are pushed here. Spec 251 restores
+    // Publish Now for Instagram only (Threads keeps Accounts
+    // only): the account IS the target, so it needs no pages step.
     const leaves: Omit<SidebarLeaf, 'kind'>[] = [
       { label: 'Accounts', href: platformAccountsHref, match: 'prefix' },
+      ...(platform.key === 'instagram'
+        ? [
+            {
+              label: 'Publish Now',
+              href: href(`/${platform.routeSlug}/publish-now`),
+              match: 'prefix' as const,
+            },
+          ]
+        : []),
     ];
     return {
       kind: 'group',
