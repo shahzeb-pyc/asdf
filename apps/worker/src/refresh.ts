@@ -513,7 +513,7 @@ async function refreshOneAccount(
     // below: lease released, counted transient-deferred, publisher
     // never called.
     if (row.encrypted_access_token === null) {
-      throw new Error(`Social account ${row.id} has no access token to refresh`);
+      throw new InternalError(`Social account ${row.id} has no access token to refresh`);
     }
     tokens = {
       accessToken: await decryptToken(row.encrypted_access_token, masterKey),
