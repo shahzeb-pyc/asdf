@@ -415,6 +415,83 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       ).toBeNull();
     });
 
+    it('Spec 255: double-clicking Pause/Resume while the toggle is in flight fires exactly one onStatusToggle call', async () => {
+      const user = userEvent.setup();
+      let resolveToggle!: (value: undefined) => void;
+      const togglePromise = new Promise<undefined>((resolve) => {
+        resolveToggle = resolve;
+      });
+      const onStatusToggle = vi.fn().mockImplementation(() => togglePromise);
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={onStatusToggle}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      const pauseItem = document.querySelector(
+        '[data-testid="header-menu-pause-resume-btn"]'
+      ) as Element;
+      // Two rapid activations while the first is still in flight.
+      fireEvent.click(pauseItem);
+      fireEvent.click(pauseItem);
+      expect(onStatusToggle).toHaveBeenCalledTimes(1);
+      expect(onStatusToggle).toHaveBeenCalledWith('paused');
+      // The item shows Updating... and stays disabled while pending.
+      expect(pauseItem.textContent).toContain('Updating...');
+      expect(pauseItem.getAttribute('aria-disabled')).toBe('true');
+
+      resolveToggle(undefined);
+      await waitFor(() => {
+        expect(
+          document.querySelector('[data-testid="header-menu-pause-resume-btn"]')
+        ).toBeNull();
+      });
+    });
+
+    it('Spec 255: double-clicking Mark Verified & Reactivate while it is in flight fires exactly one call', async () => {
+      const user = userEvent.setup();
+      let resolveVerify!: (value: undefined) => void;
+      const verifyPromise = new Promise<undefined>((resolve) => {
+        resolveVerify = resolve;
+      });
+      const onMarkVerified = vi.fn().mockImplementation(() => verifyPromise);
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'page_checkpoint' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onMarkVerified={onMarkVerified}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      const reactivateBtn = container.querySelector(
+        '[data-testid="reactivate-page-btn"]'
+      ) as Element;
+      expect(reactivateBtn.textContent).toContain('Mark Verified');
+      // Two rapid activations while the first is still in flight.
+      fireEvent.click(reactivateBtn);
+      fireEvent.click(reactivateBtn);
+      expect(onMarkVerified).toHaveBeenCalledTimes(1);
+      expect(reactivateBtn.textContent).toContain('Reactivating...');
+      expect(reactivateBtn.getAttribute('disabled')).not.toBeNull();
+
+      resolveVerify(undefined);
+      await waitFor(() => {
+        expect(
+          container.querySelector('[data-testid="reactivate-page-btn"]')?.textContent
+        ).toContain('Mark Verified');
+      });
+    });
+
     it('renders Create Posts button that calls onCreatePosts when provided and does nothing when absent', () => {
       const onCreatePosts = vi.fn();
 

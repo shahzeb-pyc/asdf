@@ -328,6 +328,14 @@ describe('TikTok dedicated view', () => {
   it('pauses from the header menu and opens the delete confirmation', async () => {
     const user = userEvent.setup();
     apiGetMock.mockResolvedValue(detailResponse());
+    // The PATCH mock must return what the real API returns
+    // (UpdateMirrorResponseSchema: { ok, status }) — the shell's
+    // onSuccess reads data.status, and an undefined return throws
+    // there, so the mutation ends in error and pausePending is never
+    // observed true: the spec 255 settle effect then never fires
+    // and the menu never closes. With a real response the mutation
+    // succeeds and the menu closes on settle, as in the app.
+    apiPatchMock.mockResolvedValue({ ok: true, status: 'paused' });
     renderWithQuery(
       <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
     );
@@ -338,6 +346,13 @@ describe('TikTok dedicated view', () => {
     const patchCall = apiPatchMock.mock.calls[0] ?? [];
     expect(String(patchCall[0])).toContain('/tiktok-mirrors/44444444-4444-4444-a444-444444444444');
     expect(patchCall[1]).toEqual({ status: 'paused' });
+    // Spec 255: the menu stays open while the pause runs and closes
+    // when the mutation settles — a real user can only re-open it
+    // after that, because the menu button is disabled while pending.
+    // Wait for the settle close before re-opening; without the wait
+    // the re-open click lands before the pending state commits and
+    // toggles the still-open menu shut instead of opening it.
+    await waitFor(() => expect(screen.queryByTestId('mirror-detail-menu')).toBeNull());
     await user.click(screen.getByTestId('mirror-detail-menu-btn'));
     await user.click(screen.getByTestId('mirror-detail-menu-delete'));
     expect(await screen.findByTestId('tiktok-delete-confirm')).toBeTruthy();

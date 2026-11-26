@@ -109,6 +109,39 @@ export function MirrorDetailHeader({
   accountsHref,
 }: Readonly<MirrorDetailHeaderProps>) {
   const [menuOpen, setMenuOpen] = React.useState(false);
+  // Spec 255: synchronous in-flight guard for the Pause/Resume
+  // toggle. The item is disabled while `pausePending`, but that
+  // disabled state only takes effect after the shell re-renders
+  // with the mutation pending — a second click dispatched before
+  // that commit would otherwise fire a second PATCH. The ref
+  // closes that window; it lifts when the mutation settles (the
+  // effect below), so a later toggle works again. This is the
+  // same guard ADU and Schedule already carry on this branch.
+  const pauseToggleInFlightRef = React.useRef(false);
+  // Spec 255: the guard and the menu reset when the toggle settles.
+  // This effect deliberately has no dependency array: it must run
+  // after every render, not only when `pausePending` changes. A
+  // mutation that resolves before React commits a render (an
+  // instantly-resolving mock, or a very fast response) never shows
+  // `pausePending` as true in any committed render, so a true ->
+  // false transition never happens — keying the reset off that
+  // transition left the menu open forever in that case. Keying it
+  // off the in-flight ref instead fires on the first render after
+  // the click where the mutation is no longer pending: the settle
+  // render in the app, and the only render in the instant-resolve
+  // case. While the mutation is genuinely pending the effect does
+  // nothing, so the menu stays open showing Updating....
+  React.useEffect(() => {
+    if (!pausePending && pauseToggleInFlightRef.current) {
+      // The mutation settled (success or failure): the guard lifts
+      // and the menu closes, like Schedule's header — while it ran
+      // the menu stayed open so the item could show Updating....
+      // On failure the item is back at Pause/Resume and the
+      // shell's existing error feedback shows, unchanged.
+      pauseToggleInFlightRef.current = false;
+      setMenuOpen(false);
+    }
+  });
   // Spec 155: the header shows the resolved Facebook detail
   // (own fb_status, else the target's detail).
   const mark = mirrorDisplayMark(mirror);
@@ -424,12 +457,18 @@ export function MirrorDetailHeader({
                 data-testid="mirror-detail-menu-pause"
                 disabled={pausePending || resumeLocked}
                 onClick={() => {
-                  setMenuOpen(false);
+                  // Spec 255: the guard drops a second click that
+                  // lands before the shell commits `pausePending`.
+                  // The menu stays open while the mutation runs so
+                  // the item can show its Updating... state; the
+                  // settle effect above closes it.
+                  if (pausePending || pauseToggleInFlightRef.current) return;
+                  pauseToggleInFlightRef.current = true;
                   onPauseResume();
                 }}
                 className="block w-full rounded-sm px-3 py-2.5 text-left text-body text-ink hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
               >
-                {isPaused ? 'Resume' : 'Pause'}
+                {pausePending ? 'Updating...' : isPaused ? 'Resume' : 'Pause'}
               </button>
               <button
                 type="button"

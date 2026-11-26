@@ -9,7 +9,7 @@
  * @vitest-environment jsdom
  */
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 import { MirrorDetailHeader } from './mirror-detail-header';
@@ -50,17 +50,22 @@ function mirror(overrides: Partial<MirrorView> = {}): MirrorView {
   };
 }
 
-function renderHeader(m: MirrorView) {
-  render(
+function renderHeader(
+  m: MirrorView,
+  opts: { onPauseResume?: Mock<() => void>; pausePending?: boolean } = {}
+) {
+  const onPauseResume = opts.onPauseResume ?? vi.fn();
+  const utils = render(
     <MirrorDetailHeader
       mirror={m}
       backHref="/tiktok-mirrors"
-      onPauseResume={vi.fn()}
-      pausePending={false}
+      onPauseResume={onPauseResume}
+      pausePending={opts.pausePending ?? false}
       onDeleteRequest={vi.fn()}
       accountsHref="/accounts"
     />
   );
+  return { ...utils, onPauseResume };
 }
 
 /** Opens the ••• menu and returns the Pause/Resume item. */
@@ -196,5 +201,64 @@ describe('MirrorDetailHeader followers last-updated (spec 162)', () => {
     );
     expect(screen.getByTestId('mirror-detail-followers')).toBeDefined();
     expect(screen.queryByTestId('mirror-detail-followers-updated')).toBeNull();
+  });
+});
+
+describe('MirrorDetailHeader automation toggle (spec 255)', () => {
+  /** Re-renders the header with the same props but a new pending state. */
+  function rerenderWithPending(
+    rerender: (ui: React.ReactElement) => void,
+    m: MirrorView,
+    onPauseResume: Mock<() => void>,
+    pausePending: boolean
+  ) {
+    rerender(
+      <MirrorDetailHeader
+        mirror={m}
+        backHref="/tiktok-mirrors"
+        onPauseResume={onPauseResume}
+        pausePending={pausePending}
+        onDeleteRequest={vi.fn()}
+        accountsHref="/accounts"
+      />
+    );
+  }
+
+  it('double-clicking Pause while the toggle is in flight fires exactly one onPauseResume call', () => {
+    const onPauseResume = vi.fn<() => void>();
+    renderHeader(mirror({ status: 'active' }), { onPauseResume });
+    const item = openMenuResumeItem();
+    expect(item.textContent).toContain('Pause');
+    // Two rapid clicks while the first mutation is still in flight.
+    fireEvent.click(item);
+    fireEvent.click(item);
+    expect(onPauseResume).toHaveBeenCalledTimes(1);
+    // The menu stays open while the toggle runs, so the working
+    // state is visible instead of the menu vanishing on click.
+    expect(screen.getByTestId('mirror-detail-menu')).toBeDefined();
+  });
+
+  it('shows Updating... and disables the toggle while pending, then returns to Pause on settle', () => {
+    const onPauseResume = vi.fn<() => void>();
+    const m = mirror({ status: 'active' });
+    const { rerender } = renderHeader(m, { onPauseResume });
+    const item = openMenuResumeItem();
+    fireEvent.click(item);
+    expect(onPauseResume).toHaveBeenCalledTimes(1);
+    // The shell re-renders with the mutation pending.
+    rerenderWithPending(rerender, m, onPauseResume, true);
+    const pendingItem = screen.getByTestId('mirror-detail-menu-pause');
+    expect(pendingItem.textContent).toContain('Updating...');
+    expect(pendingItem.hasAttribute('disabled')).toBe(true);
+    expect(screen.getByTestId('mirror-detail-menu-btn').hasAttribute('disabled')).toBe(true);
+    // Settle (success or failure): the menu closes and the toggle
+    // is back at Pause, live again.
+    rerenderWithPending(rerender, m, onPauseResume, false);
+    expect(screen.queryByTestId('mirror-detail-menu')).toBeNull();
+    const itemAgain = openMenuResumeItem();
+    expect(itemAgain.textContent).toContain('Pause');
+    expect(itemAgain.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(itemAgain);
+    expect(onPauseResume).toHaveBeenCalledTimes(2);
   });
 });
