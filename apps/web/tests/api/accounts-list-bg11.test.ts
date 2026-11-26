@@ -589,7 +589,11 @@ function supabaseFixture(): Record<string, FakeRow[]> {
       display_name: 'Starlight Hub',
       avatar_url: null,
       metadata: {},
-      status: 'disconnected',
+      // Stored 'revoked', not 'disconnected': this row exercises the
+      // wire-disconnected / error bucket, and stored-disconnected
+      // rows are hidden from the list (spec 249) — same convention
+      // as the spec-249 fixture's 'Revoked Rosa'.
+      status: 'revoked',
       token_expires_at: FUTURE,
       created_at: '2026-01-03T00:00:00.000Z',
       updated_at: '2026-01-03T00:00:00.000Z',
@@ -954,19 +958,27 @@ describe('Spec 249 — disconnected accounts hidden from the list', () => {
     type Row = Record<string, unknown>;
 
     // Minimal chain double for the exact query-builder surface the
-    // route uses: select/eq/neq/lt/order/range/update/maybeSingle,
-    // awaited via `then`. It records every neq call so the test
-    // proves the exclusion happens at the query, not in memory.
+    // route uses: select/eq/neq/gt/lte/lt/ilike/in/or/order/range/
+    // update/maybeSingle, awaited via `then`. It records every neq
+    // call so the test proves the exclusion happens at the query,
+    // not in memory. The or/ilike/compare logic is the F3 fake's
+    // (parseOrClause / ilikeMatches / compareValues), shared so the
+    // two doubles never disagree on what a pushed-down filter means.
     class FakeFbQuery {
       private filters: Array<(row: Row) => boolean> = [];
       private from = 0;
       private to: number | null = null;
+      private head = false;
       private updateValues: Row | null = null;
       constructor(
         private rows: Row[],
         private neqCalls: Array<[string, unknown]>
       ) {}
-      select(): this {
+      select(
+        _columns?: string,
+        options?: { count?: string; head?: boolean }
+      ): this {
+        this.head = options?.head === true && options.count === 'exact';
         return this;
       }
       eq(col: string, val: unknown): this {
@@ -982,6 +994,34 @@ describe('Spec 249 — disconnected accounts hidden from the list', () => {
         this.filters.push(
           (row) => row[col] != null && String(row[col]) < String(val)
         );
+        return this;
+      }
+      gt(col: string, val: unknown): this {
+        this.filters.push((row) =>
+          compareValues(fakeValue(row, col), 'gt', String(val))
+        );
+        return this;
+      }
+      lte(col: string, val: unknown): this {
+        this.filters.push((row) =>
+          compareValues(fakeValue(row, col), 'lte', String(val))
+        );
+        return this;
+      }
+      ilike(col: string, pattern: string): this {
+        this.filters.push((row) => {
+          const v = fakeValue(row, col);
+          return typeof v === 'string' && ilikeMatches(v, pattern);
+        });
+        return this;
+      }
+      in(col: string, values: unknown[]): this {
+        this.filters.push((row) => values.includes(fakeValue(row, col)));
+        return this;
+      }
+      or(clause: string): this {
+        const clauses = clause.split(',').map(parseOrClause);
+        this.filters.push((row) => clauses.some((fn) => fn(row)));
         return this;
       }
       order(): this {
@@ -1000,14 +1040,24 @@ describe('Spec 249 — disconnected accounts hidden from the list', () => {
         const found = this.apply();
         return { data: found[0] ?? null, error: null };
       }
-      then(resolve: (v: { data: Row[] | null; error: null }) => void): void {
+      then(
+        resolve: (v: {
+          data: Row[] | null;
+          error: null;
+          count: number | null;
+        }) => void
+      ): void {
         const rows = this.apply();
         if (this.updateValues) {
           for (const row of rows) Object.assign(row, this.updateValues);
         }
         const sliced =
           this.to === null ? rows : rows.slice(this.from, this.to + 1);
-        resolve({ data: sliced, error: null });
+        resolve({
+          data: this.head ? [] : sliced,
+          error: null,
+          count: this.head ? rows.length : null,
+        });
       }
       private apply(): Row[] {
         return this.rows.filter((row) =>
