@@ -1,8 +1,7 @@
 /**
  * Instagram Publish Now (spec 251): the section renders end to end
- * in a real browser — sidebar leaf, account selector with the
- * no-pages note, and the composer with Image / Video / Reel — at
- * desktop and phone widths.
+ * in a real browser — sidebar leaf, account selector, and the
+ * composer with Image / Video / Reel — at desktop and phone widths.
  *
  * Hermetic, per the spec 137-A3 pattern: the shared fixture boundary
  * serves the layout, and the Instagram accounts route registered
@@ -72,7 +71,7 @@ for (const viewport of [
       await installInstagramAccountsFixture(page);
     });
 
-    test('selector lists the accounts with the no-pages note, then Continue opens the composer', async ({
+    test('selector lists the accounts, then Continue opens the composer', async ({
       page,
     }) => {
       await page.goto(`/tenant/${TENANT.subdomain}/instagram/publish-now`);
@@ -90,21 +89,24 @@ for (const viewport of [
         ).toBeVisible();
       }
 
-      // Step 1: the wizard heading, the account, the counts, and
-      // the note where the pages step would be.
+      // Step 1: the heading, the account, and the counts.
       await expect(
         page.getByRole('heading', { name: 'Publish Now' })
+      ).toBeVisible();
+      await expect(
+        page.getByText('Select Instagram accounts to publish to.')
       ).toBeVisible();
       await expect(
         page.getByRole('heading', { name: 'Select accounts' })
       ).toBeVisible();
       await expect(page.getByText('shahzeb.pxp', { exact: true })).toBeVisible();
       await expect(page.getByText('Expired Creator')).toBeVisible();
-      await expect(page.getByText(/No pages to pick/)).toBeVisible();
-      await expect(page.getByText(/0 of 1 accounts selected/)).toBeVisible();
+      // Instagram has no pages: no "pages" wording is shown.
+      await expect(page.getByText(/No pages to pick/)).toHaveCount(0);
+      await expect(page.getByText(/0 of 2 accounts selected/)).toBeVisible();
 
       await page.getByText('shahzeb.pxp', { exact: true }).click();
-      await expect(page.getByText(/1 of 1 accounts selected/)).toBeVisible();
+      await expect(page.getByText(/1 of 2 accounts selected/)).toBeVisible();
       await page.getByRole('button', { name: 'Continue (1 account)' }).click();
 
       // Composer: header names the account, three post types,
@@ -113,7 +115,6 @@ for (const viewport of [
       await expect(
         page.getByRole('heading', { name: 'shahzeb.pxp' })
       ).toBeVisible();
-      await expect(page.getByText('Instagram account')).toBeVisible();
       await expect(
         page.getByRole('button', { name: 'Image', exact: true })
       ).toBeVisible();
@@ -124,7 +125,7 @@ for (const viewport of [
         page.getByRole('button', { name: 'Reel', exact: true })
       ).toBeVisible();
       await expect(
-        page.getByPlaceholder("What's on your mind?")
+        page.getByPlaceholder('Write a caption...')
       ).toBeVisible();
       await expect(
         page.getByPlaceholder('Write a comment...')
@@ -158,7 +159,7 @@ for (const viewport of [
       ).toBeVisible();
       await page.getByRole('button', { name: 'Reel', exact: true }).click();
       await expect(
-        page.getByText(/published as a Reel and shared to feed/)
+        page.getByText(/Videos publish as Reels and appear in feed/)
       ).toBeVisible();
     });
   });

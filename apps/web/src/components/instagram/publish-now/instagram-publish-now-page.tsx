@@ -14,11 +14,10 @@
  *     page auto-opens its account selector.
  *   Composer — Post Type buttons Image / Video / Reel only.
  *     Instagram has no text-only feed post (no Text button),
- *     Stories need a Business account while the target is Creator
- *     accounts (no Story button), and Carousel needs a multi-media
- *     composer Facebook Publish Now does not have (no Carousel
- *     button in v1 — see the spec). Switching type clears attached
- *     media.
+ *     Stories are out of scope in v1 (no Story button), and
+ *     Carousel needs a multi-media composer Facebook Publish
+ *     Now does not have (no Carousel button in v1 — see the
+ *     spec). Switching type clears attached media.
  *   Media — Media Library picker in single mode, or device upload
  *     through the shared temp-media route. Picker media is always
  *     post-owned bytes (media/posting separation): staged device
@@ -44,8 +43,8 @@
  *     failures, never successes; disabled when all failed are
  *     restricted). A second Publish click sends only accounts not
  *     yet published in this run and merges results, never replaces
- *     them — the Facebook second-click bug, fixed here from the
- *     start.
+ *     them — the same exclusion Facebook Publish Now applies to
+ *     its pages.
  *
  * Nothing in this flow writes to the database except the
  * idempotency record itself (Publish Now is unlimited and writes
@@ -177,38 +176,27 @@ function postTypeLabel(postType: InstagramPublishNowPostType): string {
 function Avatar({
   name,
   pictureUrl,
-  size = 'md',
 }: Readonly<{
   name: string;
   pictureUrl?: string | null | undefined;
-  size?: 'md' | 'lg' | undefined;
 }>) {
   const [failedUrl, setFailedUrl] = React.useState<string | null>(null);
   const showImg = Boolean(pictureUrl) && failedUrl !== pictureUrl;
   const initials = getUserInitials(name) || 'IG';
-  const sizeClass = size === 'lg' ? 'size-12' : 'size-9';
   if (showImg) {
     return (
       <Image
         src={pictureUrl!}
         alt={name}
-        width={size === 'lg' ? 48 : 36}
-        height={size === 'lg' ? 48 : 36}
+        width={36}
+        height={36}
         onError={() => setFailedUrl(pictureUrl || '__error__')}
-        className={cn(
-          sizeClass,
-          'shrink-0 rounded-full border border-line object-cover'
-        )}
+        className="size-9 shrink-0 rounded-xs border border-line object-cover"
       />
     );
   }
   return (
-    <div
-      className={cn(
-        sizeClass,
-        'flex shrink-0 items-center justify-center rounded-full border border-line bg-subtle text-body font-bold text-ink'
-      )}
-    >
+    <div className="flex size-9 shrink-0 items-center justify-center rounded-xs border border-line bg-subtle text-body font-bold text-ink">
       {initials}
     </div>
   );
@@ -783,28 +771,21 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
   ) : null;
 
   return (
-    <div className="mx-auto w-full max-w-300 px-4 py-6 pb-32 sm:px-6">
+    <div className="mx-auto w-full max-w-300 px-4 py-6 pb-6 sm:px-6">
       {view !== 'composer' && (
-        <div className="mx-auto flex w-full max-w-2xl flex-col items-center py-6 sm:py-10">
-          <div className="w-full space-y-8">
-            <div className="space-y-3 text-center">
-              <div className="mx-auto mb-6 flex size-16 items-center justify-center rounded-2xl bg-link/10 text-link ring-1 ring-link/20">
-                <SendIcon size={32} aria-hidden />
-              </div>
-              <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">
-                Publish Now
-              </h1>
-              <p className="text-base text-ink-sub sm:text-lg">
-                Choose the Instagram account you want to publish to.
-              </p>
-              <p className="mx-auto max-w-160 text-body leading-body text-ink-sub">
-                Publish one post directly to your Instagram account.
-              </p>
-            </div>
+        <div>
+          <header className="mb-6">
+            <h1 className="text-xxl font-bold tracking-tight text-ink">
+              Publish Now
+            </h1>
+            <p className="mt-1 text-body text-ink-sub">
+              Select Instagram accounts to publish to.
+            </p>
+          </header>
 
-            {errorBanner}
+          {errorBanner}
 
-            <div className="rounded-2xl border border-line bg-subtle p-4 sm:p-6">
+          <div className="rounded-md border border-line bg-subtle p-6">
               <div className="mb-6 flex items-center gap-3">
                 <h2 className="text-xl font-semibold text-ink">Select accounts</h2>
               </div>
@@ -856,12 +837,11 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                       className="border-line bg-canvas pl-11 shadow-none"
                     />
                   </div>
-                  <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
                     <span className="text-metadata text-ink-sub">
-                      {accounts.length}{' '}
-                      {accounts.length === 1 ? 'account' : 'accounts'} ·{' '}
-                      {selectedAccountIds.length} of{' '}
-                      {activeAccounts.length} accounts selected
+                      {selectedAccountIds.length} of {accounts.length}{' '}
+                      {accounts.length === 1 ? 'account' : 'accounts'}{' '}
+                      selected
                     </span>
                     <button
                       type="button"
@@ -869,7 +849,7 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                         selectedAccountIds.includes(account.id)
                       )}
                       onClick={toggleSelectAllAccounts}
-                      className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
+                      className="inline-flex items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
                     >
                       {activeAccounts.every((account) =>
                         selectedAccountIds.includes(account.id)
@@ -890,7 +870,7 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                         <label
                           key={account.id}
                           className={cn(
-                            'flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-sm px-row py-row outline-none transition-colors hover:bg-hover sm:gap-4',
+                            'flex min-h-9 w-full cursor-pointer items-center gap-3 rounded-sm px-row py-row outline-none transition-colors hover:bg-hover sm:gap-4',
                             checked && 'bg-hover'
                           )}
                         >
@@ -901,9 +881,8 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                           <Avatar
                             name={account.displayName}
                             pictureUrl={account.profilePictureUrl}
-                            size="lg"
                           />
-                          <span className="min-w-0 truncate text-lg font-semibold text-ink">
+                          <span className="min-w-0 truncate text-body font-semibold text-ink">
                             {account.displayName}
                           </span>
                         </label>
@@ -925,13 +904,12 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                     return (
                       <div
                         key={account.id}
-                        className="flex items-center justify-between gap-3 rounded-sm px-row py-row opacity-55 sm:gap-4"
+                        className="flex items-center justify-between gap-3 rounded-sm px-row py-row sm:gap-4"
                       >
                         <div className="flex min-w-0 items-center gap-4">
                           <Avatar
                             name={account.displayName}
                             pictureUrl={account.profilePictureUrl}
-                            size="lg"
                           />
                           <div className="min-w-0">
                             <div className="truncate text-body font-semibold text-ink">
@@ -966,77 +944,61 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                 </Button>
               </div>
             </div>
-
-            <div className="w-full rounded-sm border border-link/25 bg-link/10 px-3 py-2 text-body leading-body text-ink">
-              <span className="font-bold">No pages to pick.</span> Instagram
-              has no pages — the account you select is where your post
-              goes, so Continue takes you straight to the composer.
-            </div>
-          </div>
         </div>
       )}
 
       {view === 'composer' && (
-        <div className="flex flex-col gap-8">
-          <div className="sticky top-0 z-40 -mx-4 border-b border-line bg-canvas/80 px-4 pb-3 pt-4 shadow-sm backdrop-blur-xl sm:-mx-6 sm:px-6 sm:pb-4 sm:pt-6">
-            <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-0">
-              <div className="flex min-w-0 items-center gap-4">
-                <div className="flex shrink-0 items-center">
-                  {selectedAccounts.slice(0, 3).map((account, index) => (
-                    <div
-                      key={account.accountId}
-                      className={cn(index > 0 && '-ml-3')}
-                    >
-                      <Avatar
-                        name={account.accountName}
-                        pictureUrl={account.profilePictureUrl}
-                      />
-                    </div>
-                  ))}
-                  {selectedAccounts.length > 3 && (
-                    <div className="-ml-3 flex size-9 shrink-0 items-center justify-center rounded-full border border-line bg-subtle text-metadata font-bold text-ink">
-                      +{selectedAccounts.length - 3}
-                    </div>
-                  )}
-                </div>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="truncate text-lg font-semibold leading-tight text-ink">
-                      {selectedAccounts[0]?.accountName}
-                      {selectedAccounts.length > 1 &&
-                        ` + ${selectedAccounts.length - 1} more`}
-                    </h2>
-                    <span className="shrink-0 rounded-full border border-link/35 px-2 py-0.5 text-metadata font-semibold uppercase tracking-body text-link">
-                      Selected
-                    </span>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+            <div className="flex min-w-0 items-center gap-4">
+              <div className="flex shrink-0 items-center">
+                {selectedAccounts.slice(0, 3).map((account, index) => (
+                  <div
+                    key={account.accountId}
+                    className={cn(index > 0 && '-ml-3')}
+                  >
+                    <Avatar
+                      name={account.accountName}
+                      pictureUrl={account.profilePictureUrl}
+                    />
                   </div>
-                  <p className="mt-0.5 truncate text-body text-ink-sub">
-                    {selectedAccounts.length === 1
-                      ? 'Instagram account'
-                      : `${selectedAccounts.length} Instagram accounts`}
-                  </p>
+                ))}
+                {selectedAccounts.length > 3 && (
+                  <div className="-ml-3 flex size-9 shrink-0 items-center justify-center rounded-xs border border-line bg-subtle text-metadata font-bold text-ink">
+                    +{selectedAccounts.length - 3}
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="truncate text-lg font-semibold leading-tight text-ink">
+                    {selectedAccounts[0]?.accountName}
+                    {selectedAccounts.length > 1 &&
+                      ` + ${selectedAccounts.length - 1} more`}
+                  </h2>
+                  <span className="shrink-0 rounded-full border border-link/35 px-2 py-0.5 text-metadata font-semibold uppercase tracking-body text-link">
+                    Selected
+                  </span>
                 </div>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isPublishing || isRetrying}
-                onClick={() => setView('accounts')}
-                className="w-full shrink-0 rounded-full sm:w-auto"
-              >
-                Change selection
-              </Button>
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isPublishing || isRetrying}
+              onClick={() => setView('accounts')}
+              className="w-full shrink-0 rounded-full sm:w-auto"
+            >
+              Change selection
+            </Button>
           </div>
 
           {errorBanner}
 
-          <div className="grid items-start gap-6 sm:gap-8 lg:grid-cols-3">
-            <section className="rounded-3xl border border-line bg-subtle p-4 sm:p-8 lg:col-span-2">
-              <div className="mb-6 flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-ink">Composer</h2>
-              </div>
+          <div className="grid items-start gap-4 lg:grid-cols-3">
+            <section className="rounded-md border border-line bg-subtle p-6 lg:col-span-2">
+              <h2 className="mb-6 text-xl font-semibold text-ink">Composer</h2>
 
               <div className="space-y-6">
                 <div className="space-y-3">
@@ -1051,7 +1013,7 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                           variant="outline"
                           disabled={isPublishing || isUploadingTemp}
                           className={cn(
-                            'h-11 min-w-0 flex-1',
+                            'min-w-0 flex-1',
                             isActive &&
                               'border-link/50 bg-link/10 text-link hover:bg-link/10 hover:text-link'
                           )}
@@ -1067,7 +1029,7 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                       ? 'Instagram photos must be JPEG files, at most 8 MB, between 4:5 and 1.91:1 in shape.'
                       : postType === 'video'
                         ? 'Videos publish as a regular video post on the profile grid.'
-                        : 'Every Instagram video is published as a Reel and shared to feed.'}
+                        : 'Videos publish as Reels and appear in feed.'}
                   </p>
                 </div>
 
@@ -1088,8 +1050,8 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                     onChange={(event) => setText(event.target.value)}
                     rows={5}
                     disabled={isPublishing || isUploadingTemp}
-                    className="resize-none rounded-xl bg-canvas"
-                    placeholder="What's on your mind?"
+                    className="resize-none bg-canvas"
+                    placeholder="Write a caption..."
                   />
                   {isOverLimit && (
                     <p className="text-metadata text-signal-critical">
@@ -1144,10 +1106,10 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                       )}
                     </div>
                   ) : (
-                    <div className="flex items-center gap-3 rounded-2xl border border-line bg-canvas p-3 sm:gap-4 sm:p-4">
+                    <div className="flex items-center gap-3 rounded-md border border-line bg-canvas p-3 sm:gap-4 sm:p-4">
                       {attached.mediaType === 'image' &&
                       (attached.thumbnailUrl || attached.url) ? (
-                        <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-line sm:h-16 sm:w-16">
+                        <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md border border-line sm:h-16 sm:w-16">
                           <Image
                             src={attached.thumbnailUrl ?? attached.url}
                             alt={attached.name}
@@ -1157,7 +1119,7 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                           />
                         </div>
                       ) : (
-                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-line bg-subtle text-metadata text-ink-sub sm:h-16 sm:w-16">
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-line bg-subtle text-metadata text-ink-sub sm:h-16 sm:w-16">
                           Video
                         </div>
                       )}
@@ -1207,13 +1169,12 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                     value={firstComment}
                     onChange={(event) => setFirstComment(event.target.value)}
                     disabled={isPublishing || isUploadingTemp}
-                    className="h-11 rounded-xl bg-canvas"
+                    className="bg-canvas"
                     placeholder="Write a comment..."
                     aria-label="First comment (optional)"
                   />
                   <p className="text-metadata leading-body text-ink-sub">
-                    The same comment will appear on every account this post
-                    publishes to.
+                    The first comment is added to every selected account.
                   </p>
                 </div>
 
@@ -1222,14 +1183,13 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                     data-testid="instagram-publish-now-already-published-note"
                     className="text-metadata leading-body text-ink-sub"
                   >
-                    {alreadyPublishedSelectedAccounts.length === 1
-                      ? 'Account already published in this run will not be published again.'
-                      : 'Accounts already published in this run will not be published again.'}
+                    Accounts already published in this run are skipped.
                   </p>
                 )}
                 <Button
                   type="button"
-                  className="h-12 w-full rounded-xl text-base font-semibold"
+                  size="lg"
+                  className="w-full text-body font-semibold"
                   disabled={
                     isPostEmpty ||
                     isOverLimit ||
@@ -1255,8 +1215,8 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
               </div>
             </section>
 
-            <section className="flex max-h-200 flex-col overflow-hidden rounded-3xl border border-line bg-subtle lg:col-span-1">
-              <div className="border-b border-line p-4 sm:p-5">
+            <section className="flex max-h-200 flex-col overflow-hidden rounded-md border border-line bg-subtle lg:col-span-1">
+              <div className="border-b border-line px-5 py-4">
                 <h2 className="text-lg font-semibold text-ink">
                   Publish results
                 </h2>
@@ -1320,7 +1280,7 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                       return (
                         <div
                           key={result.accountId}
-                          className="rounded-xl border border-line bg-canvas p-3 sm:p-4"
+                          className="rounded-sm border border-line bg-canvas px-4 py-3"
                         >
                           <div className="flex items-start gap-3 sm:gap-4">
                             <span
@@ -1340,7 +1300,7 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                                 className={cn(
                                   'mt-0.5',
                                   published
-                                    ? 'text-metadata text-brand-emerald'
+                                    ? 'text-metadata text-signal-operational'
                                     : restricted
                                       ? 'text-body font-semibold text-signal-critical'
                                       : 'text-metadata text-signal-critical'
@@ -1412,6 +1372,7 @@ export function InstagramPublishNowPage({ subdomain }: Readonly<{ subdomain: str
                   {failedResults.length > 0 && (
                     <Button
                       type="button"
+                      variant="outline"
                       disabled={isRetrying || retryableFailedCount === 0}
                       onClick={() => void handleRetryFailedOnly()}
                     >
