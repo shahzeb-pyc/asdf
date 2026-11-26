@@ -15,8 +15,7 @@ beforeEach(() => {
 
 /**
  * Instagram Publish Now page — selector counts and selection
- * controls, the no-pages note, post-type switching, per-account
- * results, Retry failed only sending only the failed account, and
+ * controls, post-type switching, per-account results, Retry failed only sending only the failed account, and
  * the second-Publish exclusion (already published accounts are
  * never sent again in the same run). Library picks are copied to
  * post-owned storage at pick time; the publish payload carries
@@ -159,20 +158,23 @@ describe('InstagramPublishNowPage', () => {
       () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
       { timeout: 5000 }
     );
-    expect(screen.getByText(/0 of 2 accounts selected/)).toBeTruthy();
+    expect(screen.getByText(/0 of 3 accounts selected/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
-    expect(screen.getByText(/2 of 2 accounts selected/)).toBeTruthy();
+    expect(screen.getByText(/2 of 3 accounts selected/)).toBeTruthy();
     expect(
       screen.getByRole('button', { name: 'Deselect All' })
     ).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Deselect All' }));
-    expect(screen.getByText(/0 of 2 accounts selected/)).toBeTruthy();
+    expect(screen.getByText(/0 of 3 accounts selected/)).toBeTruthy();
     // Expired accounts are shown but never selectable: no checkbox
     // label for them, and the Reconnect link is present instead.
     expect(screen.getByText('Expired Creator')).toBeTruthy();
     expect(screen.getByText('Session expired')).toBeTruthy();
-    // Instagram has no pages step: the note says so.
-    expect(screen.getByText(/No pages to pick/)).toBeTruthy();
+    // Instagram has no pages: the old "No pages to pick" note is gone.
+    expect(screen.queryByText(/No pages to pick/)).toBeNull();
+    expect(
+      screen.getByText('Select Instagram accounts to publish to.')
+    ).toBeTruthy();
   });
 
   it('publishes, shows per-account results, and retries only the failed account', { timeout: 15000 }, async () => {
@@ -250,8 +252,23 @@ describe('InstagramPublishNowPage', () => {
         ).toBeTruthy(),
       { timeout: 5000 }
     );
-    // The composer header names the account kind (mockup).
-    expect(screen.getByText('2 Instagram accounts')).toBeTruthy();
+    // The composer header names the account; the old "N Instagram
+    // accounts" subline is gone.
+    expect(screen.queryByText('2 Instagram accounts')).toBeNull();
+    // Polish: Publish Now is the single gold primary (lg, default
+    // variant) and the caption/first-comment copy is the tightened
+    // professional wording.
+    expect(screen.getByRole('button', { name: 'Publish Now' })).toHaveAttribute(
+      'data-size',
+      'lg'
+    );
+    expect(screen.getByRole('button', { name: 'Publish Now' })).toHaveAttribute(
+      'data-variant',
+      'default'
+    );
+    expect(
+      screen.getByText('The first comment is added to every selected account.')
+    ).toBeTruthy();
 
     fireEvent.click(
       screen.getByRole('button', { name: 'Attach from Media Library' })
@@ -264,7 +281,7 @@ describe('InstagramPublishNowPage', () => {
     // The library pick was copied to post-owned storage: the
     // publish payload carries the post-owned key, never a
     // library id.
-    fireEvent.change(screen.getByPlaceholderText("What's on your mind?"), {
+    fireEvent.change(screen.getByPlaceholderText('Write a caption...'), {
       target: { value: 'Hello' },
     });
     fireEvent.change(screen.getByPlaceholderText('Write a comment...'), {
@@ -283,6 +300,11 @@ describe('InstagramPublishNowPage', () => {
     expect(
       screen.getByRole('button', { name: 'Retry failed only' })
     ).toBeTruthy();
+    // Retry failed only is an outline button, so Publish Now stays
+    // the single gold primary on the view.
+    expect(
+      screen.getByRole('button', { name: 'Retry failed only' })
+    ).toHaveAttribute('data-variant', 'outline');
     const firstBody = publishCalls[0]?.body as {
       postType: string;
       media: { source: string; mediaId: unknown; postOwnedKey: string };
@@ -369,6 +391,9 @@ describe('InstagramPublishNowPage', () => {
     // the already-published account is never sent again.
     expect(
       screen.getByTestId('instagram-publish-now-already-published-note')
+    ).toBeTruthy();
+    expect(
+      screen.getByText('Accounts already published in this run are skipped.')
     ).toBeTruthy();
     expect(
       screen.getByRole('button', { name: 'Publish Now' })
@@ -461,6 +486,9 @@ describe('InstagramPublishNowPage', () => {
     // Switch to Reel: the video attaches, and the publish sends
     // postType reel.
     fireEvent.click(screen.getByRole('button', { name: 'Reel' }));
+    expect(
+      screen.getByText('Videos publish as Reels and appear in feed.')
+    ).toBeTruthy();
     fireEvent.click(
       screen.getByRole('button', { name: 'Attach from Media Library' })
     );
