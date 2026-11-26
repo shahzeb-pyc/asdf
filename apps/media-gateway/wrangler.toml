@@ -1,0 +1,25 @@
+name = "fbuploadpro-media-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# Routes (spec 259): the zone vinsmokemedia.online is active in this
+# Cloudflare account, so the routes attach on deploy. The bucket is
+# chosen by hostname in src/index.ts (media → media bucket,
+# adu → ADU buffer bucket). No nodejs_compat flag: this Worker is pure
+# edge (fetch/Response only, no Node APIs, no TCP sockets).
+
+routes = [
+  { pattern = "media.vinsmokemedia.online/*", zone_name = "vinsmokemedia.online" },
+  { pattern = "adu.vinsmokemedia.online/*", zone_name = "vinsmokemedia.online" },
+]
+
+# Non-secret deploy-time variables. The B2 friendly host and the bucket
+# names are public — they appear in every public media URL. The R2
+# fallback origins (R2_MEDIA_DEV_URL / R2_BUFFER_DEV_URL) are NOT
+# declared here: they are passed by the deploy workflow via
+# `wrangler deploy --var` from GitHub Secrets, only once set in phase
+# 2b. No keys anywhere in the gateway — both origins are public reads.
+[vars]
+B2_FRIENDLY_HOST = "f003.backblazeb2.com"
+B2_MEDIA_BUCKET = "fbuploadpro-media-prod"
+B2_BUFFER_BUCKET = "fbuploadpro-adu-buffer"
