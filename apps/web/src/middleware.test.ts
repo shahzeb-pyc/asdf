@@ -74,20 +74,20 @@ describe('middleware bounced-session fix (login-cookie-loop)', () => {
   it('does NOT purge on a preview host with a production root env: the preview host-only cookie IS the session', async () => {
     // SECOND SEND BACK fix: previews are built with the production
     // config (NEXT_PUBLIC_ROOT_DOMAIN=fbuploadpro.com) while serving
-    // on a *.vercel.app host. Gating the purge on the configured root
+    // on a *.workers.dev host. Gating the purge on the configured root
     // alone let it fire here and delete the preview user's ONLY
     // session cookie. The bounced preview user must still get the 307
     // to their same-host tenant path, with zero purges.
     const token = await validSessionToken();
     const response = await middleware(
       requestWithCookie(
-        'https://fbuploadpro-git-fix-login-cookie-loop-velocta.vercel.app/login?returnUrl=https%3A%2F%2Ffbuploadpro-git-fix-login-cookie-loop-velocta.vercel.app%2Ftenant%2Facme',
+        'https://fbuploadpro-web-abc123.workers.dev/login?returnUrl=https%3A%2F%2Ffbuploadpro-web-abc123.workers.dev%2Ftenant%2Facme',
         token
       )
     );
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toBe(
-      'https://fbuploadpro-git-fix-login-cookie-loop-velocta.vercel.app/tenant/acme'
+      'https://fbuploadpro-web-abc123.workers.dev/tenant/acme'
     );
     const setCookies =
       typeof response.headers.getSetCookie === 'function'

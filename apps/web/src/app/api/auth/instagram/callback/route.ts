@@ -53,7 +53,7 @@ import { getRouteSupabase, isLegacyClient } from '@/lib/route-auth';
  * error, catch-all), not just the success path.
  *
  * Local / preview behaviour mirrors Facebook's: on localhost (or
- * with no/local root domain) and on Vercel preview hosts the request
+ * with no/local root domain) and on Cloudflare preview hosts the request
  * origin already is the app host, so it is used as-is.
  *
  * Differences from Facebook, all deliberate: the token exchange runs
@@ -80,8 +80,8 @@ export function buildInstagramMagicConnectUrl(
     !cleanRoot ||
     cleanRoot.includes('localhost') ||
     cleanRoot.includes('127.0.0.1');
-  const isVercelPreview = host.endsWith('.vercel.app');
-  if (isLocalHost || isLocalRoot || isVercelPreview) {
+  const isCloudflarePreview = host.endsWith('.workers.dev');
+  if (isLocalHost || isLocalRoot || isCloudflarePreview) {
     return new URL(pathname, requestOrigin.origin);
   }
   let appOrigin: string | null = null;

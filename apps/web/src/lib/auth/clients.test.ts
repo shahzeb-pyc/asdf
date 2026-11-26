@@ -4,7 +4,7 @@ import { getCookieDomain } from './clients';
 // Login-cookie-loop fix: getCookieDomain must never silently fall back
 // to a host-only cookie when a production custom-domain login cannot
 // cover tenant subdomains — that silent cookie is what fed the
-// login ↔ home loop. Localhost and *.vercel.app flows keep the old
+// login ↔ home loop. Localhost and *.workers.dev flows keep the old
 // host-only behaviour (tenant paths live on the same host there).
 describe('getCookieDomain (login-cookie-loop fix)', () => {
   beforeEach(() => {
@@ -72,10 +72,10 @@ describe('getCookieDomain (login-cookie-loop fix)', () => {
     expect(getCookieDomain('app.fbuploadpro.com')).toBeUndefined();
   });
 
-  it('keeps host-only cookies for localhost and vercel hosts even in production', () => {
+  it('keeps host-only cookies for localhost and workers.dev hosts even in production', () => {
     vi.stubEnv('NODE_ENV', 'production');
     expect(getCookieDomain('localhost:3000')).toBeUndefined();
-    expect(getCookieDomain('fbuploadpro-git-branch-velocta.vercel.app')).toBeUndefined();
+    expect(getCookieDomain('fbuploadpro-web-abc123.workers.dev')).toBeUndefined();
   });
 });
 
