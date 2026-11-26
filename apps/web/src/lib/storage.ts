@@ -474,42 +474,50 @@ export class DualStorageProvider implements IStorageServiceWithCopy {
 }
 
 /**
- * The active WRITE backend's client + bucket + public base, or null
- * when no backend is configured. B2 wins when configured; otherwise
- * R2. Used by the multipart routes and the confirm verifier, which
- * talk to S3 directly instead of going through `getStorageService()`.
+ * The active WRITE backend's config, or null when no backend is
+ * configured. B2 wins when configured; otherwise R2.
+ *
+ * Deliberately a CONFIG, not a built client: the multipart routes and
+ * the confirm verifier build their S3 client from the config with the
+ * imported `createR2S3Client` / `createB2S3Client` factories, and
+ * tests fake the client at that factory seam. Building the client
+ * inside storage.ts would bypass those fakes and hit the real network.
  */
-export interface WriteBackendClient {
-  client: S3Client;
-  bucketName: string;
-  publicUrl: string;
-}
+export type WriteBackendConfig =
+  | { kind: 'r2'; config: R2Config }
+  | { kind: 'b2'; config: B2Config; publicUrl: string };
 
-export function getWriteBackendClient(): WriteBackendClient | null {
+export function getWriteBackendConfig(): WriteBackendConfig | null {
   const b2Config = getB2Config();
-  const publicBase = getPublicBaseUrl();
   if (b2Config) {
+    const publicBase = getPublicBaseUrl();
     if (!publicBase) {
       // B2 without the shared public base is a misconfiguration, not
       // a reason to silently write to R2 instead: fail the lookup and
       // let getStorageService() throw in production.
       return null;
     }
-    return {
-      client: createB2S3Client(b2Config),
-      bucketName: b2Config.bucketName,
-      publicUrl: publicBase,
-    };
+    return { kind: 'b2', config: b2Config, publicUrl: publicBase };
   }
   const r2Config = getR2Config();
   if (r2Config) {
-    return {
-      client: createR2S3Client(r2Config),
-      bucketName: r2Config.bucketName,
-      publicUrl: r2Config.publicUrl,
-    };
+    return { kind: 'r2', config: r2Config };
   }
   return null;
+}
+
+/** Bucket + public base for a write-backend config, whichever backend it is. */
+export function writeBackendBucket(backend: WriteBackendConfig): SingleBackendConfig {
+  return backend.kind === 'b2'
+    ? { bucketName: backend.config.bucketName, publicUrl: backend.publicUrl }
+    : { bucketName: backend.config.bucketName, publicUrl: backend.config.publicUrl };
+}
+
+/** Build the S3 client for a write-backend config (B2 or R2 factory). */
+export function createWriteBackendClient(backend: WriteBackendConfig): S3Client {
+  return backend.kind === 'b2'
+    ? createB2S3Client(backend.config)
+    : createR2S3Client(backend.config);
 }
 
 /**

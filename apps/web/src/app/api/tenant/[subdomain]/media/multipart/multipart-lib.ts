@@ -1,6 +1,9 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
-  getWriteBackendClient,
+  createB2S3Client,
+  createR2S3Client,
+  getWriteBackendConfig,
+  writeBackendBucket,
   type SingleBackendConfig,
 } from '@/lib/storage';
 import { resolveTenantSession } from '@/lib/agent-auth';
@@ -61,17 +64,20 @@ export function getMultipartClient(): {
   client: S3Client;
   config: SingleBackendConfig;
 } | NextResponse {
-  const backend = getWriteBackendClient();
+  const backend = getWriteBackendConfig();
   if (!backend) {
     return NextResponse.json(
       { error: 'Storage is not configured for multipart uploads' },
       { status: 503 }
     );
   }
-  return {
-    client: backend.client,
-    config: { bucketName: backend.bucketName, publicUrl: backend.publicUrl },
-  };
+  // The client is built here from the imported factory (not inside
+  // storage.ts) so tests can fake the client at the factory seam.
+  const client =
+    backend.kind === 'b2'
+      ? createB2S3Client(backend.config)
+      : createR2S3Client(backend.config);
+  return { client, config: writeBackendBucket(backend) };
 }
 
 function trimTrailingSlashes(str: string): string {

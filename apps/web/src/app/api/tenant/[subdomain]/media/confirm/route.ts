@@ -16,9 +16,12 @@ import {
   type StorageQuotaState,
 } from '@/lib/billing/storage-quota';
 import {
+  createB2S3Client,
+  createR2S3Client,
   getStorageService,
-  getWriteBackendClient,
+  getWriteBackendConfig,
   S3StorageProvider,
+  writeBackendBucket,
 } from '../../../../../../lib/storage';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -72,9 +75,15 @@ function isStorageNotFoundError(err: unknown): boolean {
 }
 
 export function createDefaultMediaStorageVerifier(): MediaStorageVerifier {
-  const backend = getWriteBackendClient();
+  const backend = getWriteBackendConfig();
   if (backend) {
-    const { client, bucketName, publicUrl } = backend;
+    // The client is built here from the imported factory (not inside
+    // storage.ts) so tests can fake the client at the factory seam.
+    const client =
+      backend.kind === 'b2'
+        ? createB2S3Client(backend.config)
+        : createR2S3Client(backend.config);
+    const { bucketName, publicUrl } = writeBackendBucket(backend);
     const provider = new S3StorageProvider({ bucketName, publicUrl }, client);
     return {
       async headObject(key: string) {

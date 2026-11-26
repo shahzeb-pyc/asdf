@@ -1,10 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { S3Client } from '@aws-sdk/client-s3';
 import {
   R2StorageProvider,
   B2StorageProvider,
   DualStorageProvider,
-  getWriteBackendClient,
+  createB2S3Client,
+  createR2S3Client,
+  createWriteBackendClient,
+  getWriteBackendConfig,
   isStorageNotFoundError,
+  writeBackendBucket,
   type B2Config,
   type R2Config,
 } from '../../src/lib/storage';
@@ -118,7 +123,7 @@ class FakeS3Client {
         return {};
       }
       case 'ListObjectsV2Command': {
-        const prefix = (input.Prefix as string) ?? '';
+        const prefix = (input.Prefix as string | undefined) ?? '';
         const contents = [...this.store.entries()]
           .filter(([key]) => key.startsWith(prefix))
           .map(([Key, value]) => ({ Key, LastModified: value.lastModified }));
@@ -147,8 +152,9 @@ function buildDual(): {
   return { dual: new DualStorageProvider(write, read), b2Client, r2Client };
 }
 
-async function clientHostname(client: { config: { endpoint: () => Promise<unknown> } }): Promise<string> {
-  const endpoint = (await client.config.endpoint()) as { hostname: string };
+async function clientHostname(client: S3Client): Promise<string> {
+  const endpoint = (await client.config.endpoint?.()) as { hostname: string } | undefined;
+  if (!endpoint) throw new Error('S3 client has no endpoint resolver');
   return endpoint.hostname;
 }
 
@@ -346,39 +352,66 @@ describe('Write-backend client selection (spec 259)', () => {
     delete process.env.B2_REGION;
   };
 
-  it('getWriteBackendClient returns the B2 client when both backends are configured', async () => {
+  it('getWriteBackendConfig returns the B2 config when both backends are configured', async () => {
     clearStorageEnv();
     setR2Env();
     setB2Env();
 
-    const backend = getWriteBackendClient();
+    const backend = getWriteBackendConfig();
     expect(backend).not.toBeNull();
-    expect(backend?.bucketName).toBe('fbuploadpro-media-prod');
-    expect(backend?.publicUrl).toBe(PUBLIC_BASE);
-    expect(await clientHostname(backend!.client)).toBe('s3.eu-central-003.backblazeb2.com');
+    expect(backend?.kind).toBe('b2');
+    if (backend?.kind !== 'b2') return;
+    expect(backend.config.bucketName).toBe('fbuploadpro-media-prod');
+    expect(backend.publicUrl).toBe(PUBLIC_BASE);
+    expect(writeBackendBucket(backend)).toEqual({
+      bucketName: 'fbuploadpro-media-prod',
+      publicUrl: PUBLIC_BASE,
+    });
+    const client = createWriteBackendClient(backend);
+    expect(await clientHostname(client)).toBe('s3.eu-central-003.backblazeb2.com');
+    client.destroy();
   });
 
-  it('getWriteBackendClient returns the B2 client when only B2 is configured', async () => {
+  it('getWriteBackendConfig returns the B2 config when only B2 is configured', async () => {
     clearStorageEnv();
     setB2Env();
 
-    const backend = getWriteBackendClient();
-    expect(backend?.bucketName).toBe('fbuploadpro-media-prod');
-    expect(await clientHostname(backend!.client)).toBe('s3.eu-central-003.backblazeb2.com');
+    const backend = getWriteBackendConfig();
+    expect(backend?.kind).toBe('b2');
+    if (backend?.kind !== 'b2') return;
+    expect(backend.config.bucketName).toBe('fbuploadpro-media-prod');
+    const client = createB2S3Client(backend.config);
+    expect(await clientHostname(client)).toBe('s3.eu-central-003.backblazeb2.com');
+    client.destroy();
   });
 
-  it('getWriteBackendClient returns the R2 client when only R2 is configured', async () => {
+  it('getWriteBackendConfig returns the R2 config when only R2 is configured', async () => {
     clearStorageEnv();
     setR2Env();
 
-    const backend = getWriteBackendClient();
-    expect(backend?.bucketName).toBe('prod_bucket');
-    expect(await clientHostname(backend!.client)).toBe('prod_acc.r2.cloudflarestorage.com');
+    const backend = getWriteBackendConfig();
+    expect(backend?.kind).toBe('r2');
+    if (backend?.kind !== 'r2') return;
+    expect(backend.config.bucketName).toBe('prod_bucket');
+    expect(writeBackendBucket(backend)).toEqual({
+      bucketName: 'prod_bucket',
+      publicUrl: PUBLIC_BASE,
+    });
+    const client = createR2S3Client(backend.config);
+    expect(await clientHostname(client)).toBe('prod_acc.r2.cloudflarestorage.com');
+    client.destroy();
   });
 
-  it('getWriteBackendClient returns null when neither backend is configured', () => {
+  it('getWriteBackendConfig returns null when neither backend is configured', () => {
     clearStorageEnv();
-    expect(getWriteBackendClient()).toBeNull();
+    expect(getWriteBackendConfig()).toBeNull();
+  });
+
+  it('getWriteBackendConfig returns null when B2 is configured but the public base is missing', () => {
+    clearStorageEnv();
+    setB2Env();
+    delete process.env.R2_PUBLIC_URL;
+    expect(getWriteBackendConfig()).toBeNull();
   });
 
   it('multipart client uses the write backend (B2 when configured)', async () => {

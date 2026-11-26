@@ -191,7 +191,7 @@ describe('Backblaze B2 Storage Configuration (spec 259)', () => {
         : resolvedRegion;
     expect(region).toBe(B2_REGION);
 
-    const endpoint = await client.config.endpoint();
+    const endpoint = await client.config.endpoint!();
     expect((endpoint as unknown as { hostname: string }).hostname).toBe(
       's3.eu-central-003.backblazeb2.com'
     );
