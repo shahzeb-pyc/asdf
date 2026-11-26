@@ -22,6 +22,22 @@
  */
 import { z } from 'zod';
 
+/**
+ * Optional environment variable names: recognised by the app but not
+ * required at boot. The Backblaze B2 storage vars (spec 259) are
+ * optional — the app runs R2-only until they are supplied in phase 2,
+ * and B2-only once R2 is retired. Presence-only: no format validation
+ * here; the owning module (lib/storage.ts) validates shape.
+ */
+export const OPTIONAL_ENV_VARS = [
+  'B2_APPLICATION_KEY_ID',
+  'B2_APPLICATION_KEY',
+  'B2_BUCKET_NAME',
+  'B2_REGION',
+] as const;
+
+export type OptionalEnvVar = (typeof OPTIONAL_ENV_VARS)[number];
+
 /** Required environment variable names, in documentation order. */
 export const REQUIRED_ENV_VARS = [
   'NEXT_PUBLIC_SUPABASE_URL',

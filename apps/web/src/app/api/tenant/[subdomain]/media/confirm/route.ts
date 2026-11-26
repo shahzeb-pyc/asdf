@@ -16,10 +16,12 @@ import {
   type StorageQuotaState,
 } from '@/lib/billing/storage-quota';
 import {
+  createB2S3Client,
   createR2S3Client,
-  getR2Config,
   getStorageService,
-  R2StorageProvider,
+  getWriteBackendConfig,
+  S3StorageProvider,
+  writeBackendBucket,
 } from '../../../../../../lib/storage';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -37,7 +39,8 @@ type MediaItemRow = Omit<DatabaseMediaItemRow, 'workspace_id'> & {
  * The shared storage service (`IStorageService`) has no head-object
  * operation, so confirmation verifies existence through this narrow
  * interface instead: the production implementation below issues a raw
- * HeadObject call with the existing R2 client/config helpers from
+ * HeadObject call against the ACTIVE WRITE backend (spec 259: B2 when
+ * configured, else R2) using the client/config helpers from
  * `lib/storage`, and tests inject a fake. Only the metadata the confirm
  * step is allowed to trust is exposed.
  */
@@ -72,15 +75,21 @@ function isStorageNotFoundError(err: unknown): boolean {
 }
 
 export function createDefaultMediaStorageVerifier(): MediaStorageVerifier {
-  const config = getR2Config();
-  if (config) {
-    const client = createR2S3Client(config);
-    const provider = new R2StorageProvider(config, client);
+  const backend = getWriteBackendConfig();
+  if (backend) {
+    // The client is built here from the imported factory (not inside
+    // storage.ts) so tests can fake the client at the factory seam.
+    const client =
+      backend.kind === 'b2'
+        ? createB2S3Client(backend.config)
+        : createR2S3Client(backend.config);
+    const { bucketName, publicUrl } = writeBackendBucket(backend);
+    const provider = new S3StorageProvider({ bucketName, publicUrl }, client);
     return {
       async headObject(key: string) {
         try {
           const result = await client.send(
-            new HeadObjectCommand({ Bucket: config.bucketName, Key: key })
+            new HeadObjectCommand({ Bucket: bucketName, Key: key })
           );
           if (typeof result.ContentLength !== 'number') {
             return null;
@@ -100,7 +109,7 @@ export function createDefaultMediaStorageVerifier(): MediaStorageVerifier {
     };
   }
 
-  // No R2 configuration: outside production this resolves to the shared
+  // No storage backend configured: outside production this resolves to the shared
   // mock storage provider, whose uploaded-object registry is the record
   // of what was actually uploaded. In production getStorageService()
   // throws, which the caller turns into a generic failure — an upload

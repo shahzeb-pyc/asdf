@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MockStorageProvider, getMockStorageProvider } from '../helpers/mock-storage';
 import {
   R2StorageProvider,
+  B2StorageProvider,
+  DualStorageProvider,
   getStorageService,
+  type B2Config,
   type R2Config,
 } from '../../src/lib/storage';
 
@@ -216,35 +219,88 @@ describe('Storage Service Providers', () => {
   });
 
   describe('getStorageService Factory', () => {
-    it('returns MockStorageProvider when R2 environment is unconfigured in development/test', () => {
+    const setR2Env = () => {
+      process.env.R2_ACCOUNT_ID = 'prod_acc';
+      process.env.R2_ACCESS_KEY_ID = 'prod_key';
+      process.env.R2_SECRET_ACCESS_KEY = 'prod_secret';
+      process.env.R2_BUCKET_NAME = 'prod_bucket';
+      process.env.R2_PUBLIC_URL = 'https://cdn.example.com';
+    };
+
+    const setB2Env = () => {
+      process.env.B2_APPLICATION_KEY_ID = 'b2_key_id';
+      process.env.B2_APPLICATION_KEY = 'b2_application_key';
+      process.env.B2_BUCKET_NAME = 'fbuploadpro-media-prod';
+      process.env.B2_REGION = 'eu-central-003';
+      process.env.R2_PUBLIC_URL = 'https://media.vinsmokemedia.online';
+    };
+
+    const clearStorageEnv = () => {
       delete process.env.R2_ACCOUNT_ID;
       delete process.env.R2_ACCESS_KEY_ID;
+      delete process.env.R2_SECRET_ACCESS_KEY;
+      delete process.env.R2_BUCKET_NAME;
+      delete process.env.R2_PUBLIC_URL;
+      delete process.env.B2_APPLICATION_KEY_ID;
+      delete process.env.B2_APPLICATION_KEY;
+      delete process.env.B2_BUCKET_NAME;
+      delete process.env.B2_REGION;
+    };
+
+    it('returns MockStorageProvider when no backend is configured in development/test', () => {
+      clearStorageEnv();
       (process.env as any).NODE_ENV = 'test';
 
       const service = getStorageService();
       expect(service).toBeInstanceOf(MockStorageProvider);
     });
 
-    it('throws in production when R2 environment is unconfigured', () => {
-      delete process.env.R2_ACCOUNT_ID;
-      delete process.env.R2_ACCESS_KEY_ID;
+    it('throws in production when neither backend is configured, naming both backends', () => {
+      clearStorageEnv();
       (process.env as any).NODE_ENV = 'production';
 
       expect(() => getStorageService()).toThrow(
-        /Cloudflare R2 storage credentials .* are strictly required in production/
+        /No storage backend is configured in production.*Cloudflare R2.*Backblaze B2/
       );
     });
 
     it('returns R2StorageProvider when valid R2 environment is configured', () => {
+      clearStorageEnv();
       (process.env as any).NODE_ENV = 'production';
-      process.env.R2_ACCOUNT_ID = 'prod_acc';
-      process.env.R2_ACCESS_KEY_ID = 'prod_key';
-      process.env.R2_SECRET_ACCESS_KEY = 'prod_secret';
-      process.env.R2_BUCKET_NAME = 'prod_bucket';
-      process.env.R2_PUBLIC_URL = 'https://cdn.example.com';
+      setR2Env();
 
       const service = getStorageService();
       expect(service).toBeInstanceOf(R2StorageProvider);
+    });
+
+    it('returns B2StorageProvider when only B2 is configured (spec 259)', () => {
+      clearStorageEnv();
+      (process.env as any).NODE_ENV = 'production';
+      setB2Env();
+
+      const service = getStorageService();
+      expect(service).toBeInstanceOf(B2StorageProvider);
+      expect(service).not.toBeInstanceOf(DualStorageProvider);
+    });
+
+    it('returns DualStorageProvider when both B2 and R2 are configured (spec 259)', () => {
+      clearStorageEnv();
+      (process.env as any).NODE_ENV = 'production';
+      setR2Env();
+      setB2Env();
+
+      const service = getStorageService();
+      expect(service).toBeInstanceOf(DualStorageProvider);
+    });
+
+    it('returns the R2 provider in development when B2 is absent (byte-identical to today)', () => {
+      clearStorageEnv();
+      (process.env as any).NODE_ENV = 'test';
+      setR2Env();
+
+      const service = getStorageService();
+      expect(service).toBeInstanceOf(R2StorageProvider);
+      expect(service).not.toBeInstanceOf(DualStorageProvider);
     });
   });
 });
