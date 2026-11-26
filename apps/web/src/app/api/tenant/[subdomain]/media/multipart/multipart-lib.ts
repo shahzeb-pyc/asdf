@@ -1,5 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { createR2S3Client, getR2Config, type R2Config } from '@/lib/storage';
+import {
+  getWriteBackendClient,
+  type SingleBackendConfig,
+} from '@/lib/storage';
 import { resolveTenantSession } from '@/lib/agent-auth';
 import type { S3Client } from '@aws-sdk/client-s3';
 
@@ -9,10 +12,11 @@ import type { S3Client } from '@aws-sdk/client-s3';
  * The multipart API deliberately bypasses the IStorageService
  * interface: that interface only knows single PUTs, and widening
  * it would ripple into the worker and the mock provider. These
- * routes talk to the same R2 bucket through the same S3 client
- * instead (R2 implements the S3 multipart calls), with the same
+ * routes talk to the same bucket through the same S3 client
+ * instead (both backends implement the S3 multipart calls), with the same
  * session + tenant + key-ownership checks as the single-PUT
- * upload-url route.
+ * upload-url route. The client is built from the ACTIVE WRITE
+ * backend (spec 259): B2 when configured, else R2.
  */
 
 export interface MultipartSession {
@@ -52,19 +56,22 @@ export function assertKeyOwnedBySession(
   return null;
 }
 
-/** R2 client + config, or a 503 when R2 is not configured (dev mock). */
+/** Write-backend client + config, or a 503 when no backend is configured (dev mock). */
 export function getMultipartClient(): {
   client: S3Client;
-  config: R2Config;
+  config: SingleBackendConfig;
 } | NextResponse {
-  const config = getR2Config();
-  if (!config) {
+  const backend = getWriteBackendClient();
+  if (!backend) {
     return NextResponse.json(
       { error: 'Storage is not configured for multipart uploads' },
       { status: 503 }
     );
   }
-  return { client: createR2S3Client(config), config };
+  return {
+    client: backend.client,
+    config: { bucketName: backend.bucketName, publicUrl: backend.publicUrl },
+  };
 }
 
 function trimTrailingSlashes(str: string): string {
@@ -75,8 +82,8 @@ function trimTrailingSlashes(str: string): string {
   return str.slice(0, end);
 }
 
-/** Public URL for a key — same construction as R2StorageProvider. */
-export function getMultipartPublicUrl(config: R2Config, key: string): string {
+/** Public URL for a key — same construction as the storage providers. */
+export function getMultipartPublicUrl(config: SingleBackendConfig, key: string): string {
   const trimmedBase = trimTrailingSlashes(config.publicUrl);
   const trimmedKey = key.replace(/^\/+/, '');
   return `${trimmedBase}/${trimmedKey}`;

@@ -5,7 +5,7 @@ import {
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
-import { getR2Config } from '@/lib/storage';
+import { getB2Config, getR2Config } from '@/lib/storage';
 
 export type HealthStatus = 'ok' | 'degraded' | 'unhealthy';
 
@@ -86,18 +86,24 @@ function defaultCheckConfig(env: Record<string, string | undefined>): boolean {
     sessionOk = false;
   }
   const tokenOk = isTokenKeyConfigured(env);
-  const r2Ok =
+  // Storage is healthy when the ACTIVE backend is configured: R2, B2,
+  // or both (spec 259). Either backend alone is enough.
+  const storageOk =
     env === (process.env as Record<string, string | undefined>)
-      ? getR2Config() !== null
+      ? getR2Config() !== null || getB2Config() !== null
       : Boolean(
-          env.R2_ACCOUNT_ID &&
+          (env.R2_ACCOUNT_ID &&
             env.R2_ACCESS_KEY_ID &&
             env.R2_SECRET_ACCESS_KEY &&
             env.R2_BUCKET_NAME &&
             env.R2_PUBLIC_URL &&
-            isValidUrl(env.R2_PUBLIC_URL)
+            isValidUrl(env.R2_PUBLIC_URL)) ||
+            (env.B2_APPLICATION_KEY_ID &&
+              env.B2_APPLICATION_KEY &&
+              env.B2_BUCKET_NAME &&
+              env.B2_REGION)
         );
-  return sessionOk && tokenOk && r2Ok;
+  return sessionOk && tokenOk && storageOk;
 }
 
 /**
