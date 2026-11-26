@@ -208,7 +208,7 @@ function AppSidebarContent({
       );
     }
     // Spec 170 F2: top-level leaves do NOT viewport-prefetch either.
-    // Same move as perf round 1 (PR #181) for the collapsible-section
+    // Same move as perf round 1 (PR 181) for the collapsible-section
     // leaves above: the sidebar was firing one RSC prefetch per leaf
     // on every cold load (HAR: 14 RSC requests = 7 routes x 2 waves).
     // These links navigate on click like any other; the collapsible
