@@ -42,6 +42,225 @@ describe('Security Audit: Zero Token & Credential Leakage (T075)', () => {
   });
 
   it('GET /accounts never leaks raw or encrypted access tokens in JSON body or headers', async () => {
+    // Evaluating PostgREST double for the accounts Supabase path.
+    // The F3 route pushes the counts, the status/rank predicates
+    // (or/ilike/in) and the page range down to PostgREST, so the old
+    // chain stub cannot answer it. Predicate shapes mirror the F3
+    // fake in accounts-list-bg11.test.ts.
+    type LeakRow = Record<string, unknown>;
+    const fakeValue = (row: LeakRow, column: string): unknown => {
+      const arrow = column.indexOf('->>');
+      if (arrow >= 0) {
+        const holder = row[column.slice(0, arrow)];
+        if (holder !== null && typeof holder === 'object' && !Array.isArray(holder)) {
+          return (holder as Record<string, unknown>)[column.slice(arrow + 3)];
+        }
+        return undefined;
+      }
+      return row[column];
+    };
+    const compareValues = (
+      actual: unknown,
+      operator: string,
+      expected: string
+    ): boolean => {
+      if (operator === 'is') {
+        return expected === 'null'
+          ? actual === null || actual === undefined
+          : false;
+      }
+      if (actual === null || actual === undefined) return false;
+      const a = String(actual);
+      switch (operator) {
+        case 'eq':
+          return a === expected;
+        case 'neq':
+          return a !== expected;
+        case 'lt':
+          return a < expected;
+        case 'lte':
+          return a <= expected;
+        case 'gt':
+          return a > expected;
+        case 'gte':
+          return a >= expected;
+        default:
+          throw new Error(`mock: unsupported operator ${operator}`);
+      }
+    };
+    const parseOrClause = (clause: string): ((row: LeakRow) => boolean) => {
+      const trimmed = clause.trim();
+      if (trimmed.startsWith('and(') || trimmed.startsWith('or(')) {
+        throw new Error(`mock: nested or() clause not supported: ${trimmed}`);
+      }
+      const firstDot = trimmed.indexOf('.');
+      const secondDot = trimmed.indexOf('.', firstDot + 1);
+      if (firstDot < 0 || secondDot < 0) {
+        throw new Error(`mock: cannot parse or() clause ${clause}`);
+      }
+      const column = trimmed.slice(0, firstDot);
+      const operator = trimmed.slice(firstDot + 1, secondDot);
+      const value = trimmed.slice(secondDot + 1);
+      return (row) => compareValues(fakeValue(row, column), operator, value);
+    };
+    const ilikeMatches = (value: string, pattern: string): boolean => {
+      let re = '^';
+      for (let i = 0; i < pattern.length; i++) {
+        const ch = pattern.charAt(i);
+        if (ch === '\\' && i + 1 < pattern.length) {
+          re += pattern.charAt(i + 1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          i++;
+        } else if (ch === '%') {
+          re += '.*';
+        } else if (ch === '_') {
+          re += '.';
+        } else {
+          re += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+      }
+      re += '$';
+      return new RegExp(re, 'i').test(value);
+    };
+    const accountRows: LeakRow[] = [
+      {
+        id: accountId,
+        external_account_id: 'fb_123',
+        display_name: 'Marketing Lead',
+        avatar_url: null,
+        metadata: {},
+        status: 'active',
+        token_expires_at: new Date(Date.now() + 86400000).toISOString(),
+        encrypted_access_token: sampleCiphertext,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        workspace_id: 'ws_123',
+        platform: 'facebook',
+        destinations: [
+          {
+            id: pageId,
+            name: 'Brand Main Page',
+            avatar_url: null,
+            status: 'active',
+            workspace_id: 'ws_123',
+            metadata: {},
+          },
+        ],
+      },
+    ];
+    class FakeAccountsQuery {
+      private filters: Array<(row: LeakRow) => boolean> = [];
+      private orders: Array<{ column: string; ascending: boolean }> = [];
+      private rangeFrom: number | null = null;
+      private rangeTo: number | null = null;
+      private head = false;
+      private patch: LeakRow | null = null;
+      constructor(private rows: LeakRow[]) {}
+      select(
+        _columns?: string,
+        options?: { count?: string; head?: boolean }
+      ): this {
+        this.head = options?.head === true && options.count === 'exact';
+        return this;
+      }
+      eq(col: string, val: unknown): this {
+        this.filters.push((row) => fakeValue(row, col) === val);
+        return this;
+      }
+      neq(col: string, val: unknown): this {
+        this.filters.push((row) => fakeValue(row, col) !== val);
+        return this;
+      }
+      gt(col: string, val: unknown): this {
+        this.filters.push((row) =>
+          compareValues(fakeValue(row, col), 'gt', String(val))
+        );
+        return this;
+      }
+      gte(col: string, val: unknown): this {
+        this.filters.push((row) =>
+          compareValues(fakeValue(row, col), 'gte', String(val))
+        );
+        return this;
+      }
+      lt(col: string, val: unknown): this {
+        this.filters.push((row) =>
+          compareValues(fakeValue(row, col), 'lt', String(val))
+        );
+        return this;
+      }
+      lte(col: string, val: unknown): this {
+        this.filters.push((row) =>
+          compareValues(fakeValue(row, col), 'lte', String(val))
+        );
+        return this;
+      }
+      ilike(col: string, pattern: string): this {
+        this.filters.push((row) => {
+          const v = fakeValue(row, col);
+          return typeof v === 'string' && ilikeMatches(v, pattern);
+        });
+        return this;
+      }
+      in(col: string, values: unknown[]): this {
+        this.filters.push((row) => values.includes(fakeValue(row, col)));
+        return this;
+      }
+      or(clause: string): this {
+        const clauses = clause.split(',').map(parseOrClause);
+        this.filters.push((row) => clauses.some((fn) => fn(row)));
+        return this;
+      }
+      order(col: string, options?: { ascending?: boolean }): this {
+        this.orders.push({ column: col, ascending: options?.ascending !== false });
+        return this;
+      }
+      range(from: number, to: number): this {
+        this.rangeFrom = from;
+        this.rangeTo = to;
+        return this;
+      }
+      update(patch: LeakRow): this {
+        this.patch = patch;
+        return this;
+      }
+      then(
+        resolve: (v: {
+          data: LeakRow[] | null;
+          error: null;
+          count: number | null;
+        }) => void
+      ): void {
+        let rows = this.rows.filter((row) =>
+          this.filters.every((fn) => fn(row))
+        );
+        if (this.patch) {
+          for (const row of rows) Object.assign(row, this.patch);
+        }
+        if (this.head) {
+          resolve({ data: [], error: null, count: rows.length });
+          return;
+        }
+        for (let i = this.orders.length - 1; i >= 0; i--) {
+          const { column, ascending } = this.orders[i] as {
+            column: string;
+            ascending: boolean;
+          };
+          rows = [...rows].sort((a, b) => {
+            const av = fakeValue(a, column);
+            const bv = fakeValue(b, column);
+            if (av === bv) return 0;
+            if (av === null || av === undefined) return 1;
+            if (bv === null || bv === undefined) return -1;
+            const cmp = String(av) < String(bv) ? -1 : 1;
+            return ascending ? cmp : -cmp;
+          });
+        }
+        if (this.rangeFrom !== null && this.rangeTo !== null) {
+          rows = rows.slice(this.rangeFrom, this.rangeTo + 1);
+        }
+        resolve({ data: rows, error: null, count: null });
+      }
+    }
     const mockSupabase = {
       from: vi.fn().mockImplementation((table: string) => {
         if (table === 'workspaces') {
@@ -59,46 +278,9 @@ describe('Security Audit: Zero Token & Credential Leakage (T075)', () => {
           };
         }
         if (table === 'social_accounts') {
-          const builder: any = {
-            // Audit N1: the list route now pages with chained
-            // .order().order().range(), so order must return the
-            // builder and range must resolve the page.
-            order: vi.fn(() => builder),
-            range: vi.fn().mockResolvedValue({
-              data: [
-                {
-                  id: accountId,
-                  external_account_id: 'fb_123',
-                  display_name: 'Marketing Lead',
-                  avatar_url: null,
-                  metadata: {},
-                  status: 'active',
-                  token_expires_at: new Date(Date.now() + 86400000).toISOString(),
-                  encrypted_access_token: sampleCiphertext,
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
-                  destinations: [
-                    {
-                      id: pageId,
-                      name: 'Brand Main Page',
-                      avatar_url: null,
-                      status: 'active',
-                      workspace_id: 'ws_123',
-                      metadata: {},
-                    },
-                  ],
-                },
-              ],
-              error: null,
-            }),
-          };
-          builder.eq = vi.fn(() => builder);
-          builder.neq = vi.fn(() => builder);
-          return {
-            select: vi.fn().mockReturnValue(builder),
-          };
+          return new FakeAccountsQuery(accountRows);
         }
-        return {};
+        return new FakeAccountsQuery([]);
       }),
     } as unknown as SupabaseClient<Database>;
 

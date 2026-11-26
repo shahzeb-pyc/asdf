@@ -700,7 +700,200 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
   });
 
   describe('GET accounts (Supabase path)', () => {
+    // Evaluating PostgREST double for the accounts Supabase path.
+    // The F3 route pushes the counts, the status/rank predicates
+    // (or/ilike/in) and the page range down to PostgREST, so the old
+    // chain stub (range resolves the whole list, no counts) cannot
+    // answer it. Predicate shapes mirror the F3 fake in
+    // accounts-list-bg11.test.ts.
+    type AccountTestRow = Record<string, unknown>;
+    function fakeValue(row: AccountTestRow, column: string): unknown {
+      const arrow = column.indexOf('->>');
+      if (arrow >= 0) {
+        const holder = row[column.slice(0, arrow)];
+        if (holder !== null && typeof holder === 'object' && !Array.isArray(holder)) {
+          return (holder as Record<string, unknown>)[column.slice(arrow + 3)];
+        }
+        return undefined;
+      }
+      return row[column];
+    }
+    function compareValues(
+      actual: unknown,
+      operator: string,
+      expected: string
+    ): boolean {
+      if (operator === 'is') {
+        return expected === 'null'
+          ? actual === null || actual === undefined
+          : false;
+      }
+      if (actual === null || actual === undefined) return false;
+      const a = String(actual);
+      switch (operator) {
+        case 'eq':
+          return a === expected;
+        case 'neq':
+          return a !== expected;
+        case 'lt':
+          return a < expected;
+        case 'lte':
+          return a <= expected;
+        case 'gt':
+          return a > expected;
+        case 'gte':
+          return a >= expected;
+        default:
+          throw new Error(`mock: unsupported operator ${operator}`);
+      }
+    }
+    function parseOrClause(clause: string): (row: AccountTestRow) => boolean {
+      const trimmed = clause.trim();
+      if (trimmed.startsWith('and(') || trimmed.startsWith('or(')) {
+        throw new Error(`mock: nested or() clause not supported: ${trimmed}`);
+      }
+      const firstDot = trimmed.indexOf('.');
+      const secondDot = trimmed.indexOf('.', firstDot + 1);
+      if (firstDot < 0 || secondDot < 0) {
+        throw new Error(`mock: cannot parse or() clause ${clause}`);
+      }
+      const column = trimmed.slice(0, firstDot);
+      const operator = trimmed.slice(firstDot + 1, secondDot);
+      const value = trimmed.slice(secondDot + 1);
+      return (row) => compareValues(fakeValue(row, column), operator, value);
+    }
+    function ilikeMatches(value: string, pattern: string): boolean {
+      let re = '^';
+      for (let i = 0; i < pattern.length; i++) {
+        const ch = pattern.charAt(i);
+        if (ch === '\\' && i + 1 < pattern.length) {
+          re += pattern.charAt(i + 1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          i++;
+        } else if (ch === '%') {
+          re += '.*';
+        } else if (ch === '_') {
+          re += '.';
+        } else {
+          re += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+      }
+      re += '$';
+      return new RegExp(re, 'i').test(value);
+    }
+    class FakeAccountsQuery {
+      private filters: Array<(row: AccountTestRow) => boolean> = [];
+      private orders: Array<{ column: string; ascending: boolean }> = [];
+      private rangeFrom: number | null = null;
+      private rangeTo: number | null = null;
+      private head = false;
+      constructor(private rows: AccountTestRow[]) {}
+      select(
+        _columns?: string,
+        options?: { count?: string; head?: boolean }
+      ): this {
+        this.head = options?.head === true && options.count === 'exact';
+        return this;
+      }
+      eq(col: string, val: unknown): this {
+        this.filters.push((row) => fakeValue(row, col) === val);
+        return this;
+      }
+      neq(col: string, val: unknown): this {
+        this.filters.push((row) => fakeValue(row, col) !== val);
+        return this;
+      }
+      gt(col: string, val: unknown): this {
+        this.filters.push((row) =>
+          compareValues(fakeValue(row, col), 'gt', String(val))
+        );
+        return this;
+      }
+      gte(col: string, val: unknown): this {
+        this.filters.push((row) =>
+          compareValues(fakeValue(row, col), 'gte', String(val))
+        );
+        return this;
+      }
+      lt(col: string, val: unknown): this {
+        this.filters.push((row) =>
+          compareValues(fakeValue(row, col), 'lt', String(val))
+        );
+        return this;
+      }
+      lte(col: string, val: unknown): this {
+        this.filters.push((row) =>
+          compareValues(fakeValue(row, col), 'lte', String(val))
+        );
+        return this;
+      }
+      ilike(col: string, pattern: string): this {
+        this.filters.push((row) => {
+          const v = fakeValue(row, col);
+          return typeof v === 'string' && ilikeMatches(v, pattern);
+        });
+        return this;
+      }
+      in(col: string, values: unknown[]): this {
+        this.filters.push((row) => values.includes(fakeValue(row, col)));
+        return this;
+      }
+      or(clause: string): this {
+        const clauses = clause.split(',').map(parseOrClause);
+        this.filters.push((row) => clauses.some((fn) => fn(row)));
+        return this;
+      }
+      order(col: string, options?: { ascending?: boolean }): this {
+        this.orders.push({ column: col, ascending: options?.ascending !== false });
+        return this;
+      }
+      range(from: number, to: number): this {
+        this.rangeFrom = from;
+        this.rangeTo = to;
+        return this;
+      }
+      update(): this {
+        return this;
+      }
+      then(
+        resolve: (v: {
+          data: AccountTestRow[] | null;
+          error: null;
+          count: number | null;
+        }) => void
+      ): void {
+        let rows = this.rows.filter((row) =>
+          this.filters.every((fn) => fn(row))
+        );
+        if (this.head) {
+          resolve({ data: [], error: null, count: rows.length });
+          return;
+        }
+        for (let i = this.orders.length - 1; i >= 0; i--) {
+          const { column, ascending } = this.orders[i] as {
+            column: string;
+            ascending: boolean;
+          };
+          rows = [...rows].sort((a, b) => {
+            const av = fakeValue(a, column);
+            const bv = fakeValue(b, column);
+            if (av === bv) return 0;
+            if (av === null || av === undefined) return 1;
+            if (bv === null || bv === undefined) return -1;
+            const cmp = String(av) < String(bv) ? -1 : 1;
+            return ascending ? cmp : -cmp;
+          });
+        }
+        if (this.rangeFrom !== null && this.rangeTo !== null) {
+          rows = rows.slice(this.rangeFrom, this.rangeTo + 1);
+        }
+        resolve({ data: rows, error: null, count: null });
+      }
+    }
     function supabaseAccountsDb(rows: unknown[]) {
+      const tables: Record<string, AccountTestRow[]> = {
+        social_accounts: rows as AccountTestRow[],
+        destinations: [],
+      };
       return {
         from: vi.fn((table: string) => {
           if (table === 'workspaces') {
@@ -713,20 +906,7 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
               }),
             };
           }
-          const chain: Record<string, unknown> = {};
-          chain.select = vi.fn(() => chain);
-          chain.eq = vi.fn(() => chain);
-          // Audit N1/N3: the list now pages with .range() and runs
-          // a workspace-wide lapse sync (.update/.lt/.select) first.
-          // Order returns the chain (as in supabase-js); the range
-          // call resolves, since it ends the query chain.
-          // Spec 249: the list excludes disconnected rows via .neq().
-          chain.neq = vi.fn(() => chain);
-          chain.order = vi.fn(() => chain);
-          chain.range = vi.fn(() => Promise.resolve({ data: rows, error: null }));
-          chain.update = vi.fn(() => chain);
-          chain.lt = vi.fn(() => chain);
-          return chain;
+          return new FakeAccountsQuery(tables[table] ?? []);
         }),
       };
     }
@@ -745,36 +925,11 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
         token_expires_at: null,
         created_at: new Date(Date.UTC(2026, 0, 1)).toISOString(),
         updated_at: new Date(Date.UTC(2026, 0, 1)).toISOString(),
+        workspace_id: 'ws_123',
+        platform: 'facebook',
         destinations: [],
       }));
-      const db = {
-        from: vi.fn((table: string) => {
-          if (table === 'workspaces') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: { id: 'ws_123' },
-                error: null,
-              }),
-            };
-          }
-          const chain: Record<string, unknown> = {};
-          chain.select = vi.fn(() => chain);
-          chain.eq = vi.fn(() => chain);
-          chain.neq = vi.fn(() => chain);
-          chain.update = vi.fn(() => chain);
-          chain.lt = vi.fn(() => chain);
-          chain.order = vi.fn(() => chain);
-          chain.range = vi.fn((from: number, to: number) =>
-            Promise.resolve({
-              data: rows.slice(from, to + 1),
-              error: null,
-            })
-          );
-          return chain;
-        }),
-      };
+      const db = supabaseAccountsDb(rows);
       const res = await handleListAccounts(
         req('http://localhost:3000/api/tenant/acme/accounts?page=1&limit=50'),
         'acme',
@@ -804,6 +959,8 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
         token_expires_at: null,
         created_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
         updated_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+        workspace_id: 'ws_123',
+        platform: 'facebook',
         destinations: [],
       }));
       const res = await handleListAccounts(
