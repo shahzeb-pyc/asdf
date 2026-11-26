@@ -6,7 +6,9 @@
  * the returned rows, the flipped rows' state, and the deferred rows'
  * exact scheduled_time. Expected values are computed from the documented
  * current semantics (spec 138 parity contract §1–§8), NOT captured from
- * the implementation under test.
+ * the implementation under test. Case 13 (spec 224) pins the claimed
+ * set across mixed destinations, duplicate-override first-wins, and
+ * the marked/unmarked gate split on one destination.
  *
  * The suite asserts the CURRENT claim semantics. Cases S2-1..S2-17
  * (appended for S2, can_publish_for count enforcement) assert the
@@ -954,6 +956,99 @@ async function caseS2Explain(ctx: Ctx): Promise<void> {
   check(!Number.isNaN(ms) && ms < 5000, 's2 explain: claim call completes in under 5 s', `execution=${ms} ms`);
 }
 
+// ---------------------------------------------------------------------------
+// Case 13 (spec 224): claim-set pin — one call's exact claimed set across
+// mixed destinations, duplicate-override first-wins, and the marked /
+// unmarked gate split on one destination. Expected values derive from
+// the spec 121 semantics (deferral/release formulas, headroom, rank
+// order, first matching override) and the S2 count contract — never
+// from the implementation under test. This pins what the spec 224
+// slimming must not change: the gate factored by destination (two
+// booleans, one per branch) and the overrides computed once per
+// destination (first match in array order).
+// ---------------------------------------------------------------------------
+async function case13(ctx: Ctx): Promise<void> {
+  // Instagram, one call, lane set NULL (all kinds).
+  // A: under cap, 3 due items -> claims all 3, earliest first.
+  const dA = await dest(ctx, 'instagram', 1);
+  const a1 = await item(ctx, dA, 'instagram', 1, { scheduled: at(ctx, -5 * MIN) });
+  const a2 = await item(ctx, dA, 'instagram', 2, { scheduled: at(ctx, -4 * MIN) });
+  const a3 = await item(ctx, dA, 'instagram', 3, { scheduled: at(ctx, -3 * MIN) });
+  // B: at the published cap (100 successes at -2h) -> deferred, nothing claimed.
+  const dB = await dest(ctx, 'instagram', 2);
+  const aB = await anchor(ctx, dB, 'instagram');
+  await logs(ctx, dB, 'instagram', aB, 'success', 100, at(ctx, -2 * HOUR));
+  await item(ctx, dB, 'instagram', 1);
+  // C: future item -> not due, untouched.
+  const dC = await dest(ctx, 'instagram', 3);
+  await item(ctx, dC, 'instagram', 1, { scheduled: at(ctx, 1 * HOUR) });
+  // D: disconnected destination -> not claimed, untouched.
+  const dD = await dest(ctx, 'instagram', 4, { status: 'disconnected' });
+  await item(ctx, dD, 'instagram', 1);
+  // E: duplicate overrides, FIRST is cap 1 -> at cap with 1 log -> deferred.
+  const dE = await dest(ctx, 'instagram', 5, {
+    metadata: {
+      claim_limits: [
+        { metric: 'published', window_seconds: 86400, cap: 1 },
+        { metric: 'published', window_seconds: 86400, cap: 200 },
+      ],
+    },
+  });
+  const aE = await anchor(ctx, dE, 'instagram');
+  await logs(ctx, dE, 'instagram', aE, 'success', 1, at(ctx, -2 * HOUR));
+  await item(ctx, dE, 'instagram', 1);
+  // F: duplicate overrides, FIRST is cap 200 -> 100 logs under cap -> claims.
+  const dF = await dest(ctx, 'instagram', 6, {
+    metadata: {
+      claim_limits: [
+        { metric: 'published', window_seconds: 86400, cap: 200 },
+        { metric: 'published', window_seconds: 86400, cap: 1 },
+      ],
+    },
+  });
+  const aF = await anchor(ctx, dF, 'instagram');
+  await logs(ctx, dF, 'instagram', aF, 'success', 100, at(ctx, -2 * HOUR));
+  const f1 = await item(ctx, dF, 'instagram', 1, { scheduled: at(ctx, -2 * MIN) });
+
+  const claimed = await callRpc(ctx, 'instagram', null, 500, 3);
+  check(
+    claimed.map((r) => r.id).join(',') === [a1, a2, a3, f1].join(','),
+    'c13: exact claimed set in (scheduled_time, id) order',
+    `claimed=${claimed.map((r) => r.id).join(',')}`
+  );
+  await expectDeferred(ctx, dB, 1, at(ctx, 22 * HOUR), 'c13 at-cap destination deferred');
+  await expectDeferred(ctx, dE, 1, at(ctx, 22 * HOUR), 'c13 first-wins override cap 1 deferred');
+  await expectUntouched(ctx, dC, 1, at(ctx, 1 * HOUR), 'c13 future item');
+  await expectUntouched(ctx, dD, 1, at(ctx, -1 * MIN), 'c13 disconnected destination');
+
+  // Facebook, same case: the marked/unmarked gate split on ONE destination.
+  // Owner at cap (count 1, one unregistered usage row): the unmarked item
+  // is blocked by the count half, the marked publish-now item is exempt
+  // from the count half (period still active) — so exactly the marked
+  // item claims. A second destination registered under the same cap
+  // claims both its items. This pins the spec 224 gate factoring: one
+  // boolean per branch, not one boolean per destination.
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'other-key');
+  const dG1 = await dest(ctx, 'facebook', 1);
+  await item(ctx, dG1, 'facebook', 1, { scheduled: at(ctx, -4 * MIN) });
+  const g1Marked = await item(ctx, dG1, 'facebook', 2, { scheduled: at(ctx, -3 * MIN) });
+  await markPublishNow(ctx, g1Marked);
+  await usage(ctx, 'facebook', 'ext-dest-facebook-2');
+  const dG2 = await dest(ctx, 'facebook', 2);
+  const g2Unmarked = await item(ctx, dG2, 'facebook', 1, { scheduled: at(ctx, -2 * MIN) });
+  const g2Marked = await item(ctx, dG2, 'facebook', 2, { scheduled: at(ctx, -1 * MIN) });
+  await markPublishNow(ctx, g2Marked);
+
+  const claimedFb = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimedFb.map((r) => r.id).join(',') === [g1Marked, g2Unmarked, g2Marked].join(','),
+    'c13 gate split: unregistered destination claims only its marked item; registered claims both',
+    `claimed=${claimedFb.map((r) => r.id).join(',')}`
+  );
+  await expectUntouched(ctx, dG1, 1, at(ctx, -4 * MIN), 'c13 unregistered unmarked item stays queued');
+}
+
 const CASES: Array<[string, (ctx: Ctx) => Promise<void>]> = [
   ['1 at-cap deferral to exact window end', case1],
   ['2 one-minute floor', case2],
@@ -984,6 +1079,7 @@ const CASES: Array<[string, (ctx: Ctx) => Promise<void>]> = [
   ['S2-15 publish-now at cap', caseS2PublishNow],
   ['S2-16 planner evidence (usage indexes)', caseS2Explain],
   ['S2-17 due marked publish-now row, expired period', caseS2DueMarkedExpired],
+  ['13 claim-set pin (spec 224)', case13],
 ];
 
 /** S2 race (criterion 11): two concurrent claim calls against the
