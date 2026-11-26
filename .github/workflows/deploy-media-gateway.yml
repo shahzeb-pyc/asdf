@@ -89,3 +89,29 @@ jobs:
         env:
           R2_MEDIA_DEV_URL: ${{ secrets.R2_MEDIA_DEV_URL }}
           R2_BUFFER_DEV_URL: ${{ secrets.R2_BUFFER_DEV_URL }}
+
+      # Post-deploy smoke check (spec 259): the gateway has no /health
+      # endpoint — on its workers.dev URL the hostname is unknown to the
+      # router, so a healthy deploy answers 404 "Unknown host". That
+      # exact body proves the deployed code IS this gateway and is
+      # executing (a missing worker answers Cloudflare's own error page
+      # instead). Retries mirror deploy-worker.yml's smoke check.
+      - name: Smoke check media gateway (spec 259)
+        if: steps.check-credentials.outputs.has_token == 'true'
+        env:
+          GATEWAY_URL: https://fbuploadpro-media-gateway.fbuploadpro.workers.dev/
+        run: |
+          echo "Probing $GATEWAY_URL"
+          for attempt in 1 2 3 4 5; do
+            output="$(curl --silent --show-error --max-time 10 -w '\n%{http_code}' "$GATEWAY_URL" || true)"
+            code="$(printf '%s' "$output" | tail -n 1)"
+            body="$(printf '%s' "$output" | head -n -1)"
+            if [ "$code" = "404" ] && [ "$body" = "Unknown host" ]; then
+              echo "Media gateway smoke check passed (deployed gateway answers 404 Unknown host)."
+              exit 0
+            fi
+            echo "Attempt $attempt: unexpected response (HTTP $code, body: $body); retrying in 10s..."
+            sleep 10
+          done
+          echo "Media gateway smoke check failed after 5 attempts."
+          exit 1

@@ -2,16 +2,18 @@ name = "fbuploadpro-media-gateway"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
 
-# Routes (spec 259): the zone vinsmokemedia.online is active in this
-# Cloudflare account, so the routes attach on deploy. The bucket is
-# chosen by hostname in src/index.ts (media → media bucket,
-# adu → ADU buffer bucket). No nodejs_compat flag: this Worker is pure
-# edge (fetch/Response only, no Node APIs, no TCP sockets).
-
-routes = [
-  { pattern = "media.vinsmokemedia.online/*", zone_name = "vinsmokemedia.online" },
-  { pattern = "adu.vinsmokemedia.online/*", zone_name = "vinsmokemedia.online" },
-]
+# Routes (spec 259): DELIBERATELY ABSENT in phase 1. The zone
+# vinsmokemedia.online is active in this Cloudflare account, so routes
+# added here would attach on deploy — and the merge deploy has no R2
+# fallback vars yet (the R2 dev-URL secrets land in phase 2b), so
+# attaching the routes on merge would 500 every media read until 2b.
+# The Worker therefore deploys on merge but serves no traffic; phase 2b
+# adds the routes back (media.vinsmokemedia.online/* and
+# adu.vinsmokemedia.online/*, zone vinsmokemedia.online) once the
+# fallback secrets exist. The bucket is chosen by hostname in
+# src/index.ts (media → media bucket, adu → ADU buffer bucket). No
+# nodejs_compat flag: this Worker is pure edge (fetch/Response only, no
+# Node APIs, no TCP sockets).
 
 # Non-secret deploy-time variables. The B2 friendly host and the bucket
 # names are public — they appear in every public media URL. The R2
