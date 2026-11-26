@@ -29,4 +29,12 @@ describe("Progress (Radix, token track + fill, no inline width)", () => {
     expect(fill).not.toBeNull();
     expect(fill?.className).toContain("bg-primary");
   });
+
+  it("lets the caller override the fill colour", () => {
+    render(<Progress value={50} aria-label="Half" indicatorClassName="bg-brand-emerald" />);
+    const bar = screen.getByRole("progressbar", { name: "Half" });
+    const fill = bar.querySelector('[data-slot="progress-indicator"]');
+    expect(fill).not.toBeNull();
+    expect(fill?.className).toContain("bg-brand-emerald");
+  });
 });
