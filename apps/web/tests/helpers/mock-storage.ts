@@ -82,7 +82,15 @@ export class MockStorageProvider implements IStorageServiceWithCopy {
   getPublicUrl(key: string): string {
     const trimmedBase = trimTrailingSlashes(this.publicUrlBase);
     const trimmedKey = key.replace(/^\/+/, '');
-    return `${trimmedBase}/${trimmedKey}`;
+    // Mirrors R2StorageProvider.getPublicUrl (spec 257): encode each
+    // path segment so a non-ASCII filename reaches Meta encoded.
+    // Kept inline here because storage.ts imports this mock for its
+    // dev fallback — importing the helper back would be circular.
+    const encodedKey = trimmedKey
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+    return `${trimmedBase}/${encodedKey}`;
   }
 
   reset(): void {

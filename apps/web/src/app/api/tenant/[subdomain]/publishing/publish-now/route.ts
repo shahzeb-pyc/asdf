@@ -28,7 +28,7 @@ import {
   LARGE_JSON_BODY_LIMIT_BYTES,
   readJsonBody,
 } from '@/lib/request-body';
-import { getR2Config, getStorageService } from '@/lib/storage';
+import { getR2Config, getStorageService, encodeStorageKey } from '@/lib/storage';
 import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import {
   deletePostOwnedBytesBestEffort,
@@ -775,9 +775,18 @@ export async function POST(
       publicBase && media.url.startsWith(`${publicBase}/`)
         ? media.url.slice(publicBase.length + 1)
         : null;
+    // The URL the client sends back is the public URL getPublicUrl
+    // built at upload time, so its key arrives percent-encoded
+    // (spec 257) — compare against the encoded form of the claimed
+    // key, and also the raw form for an upload whose URL predates
+    // the encoding fix. Either form denotes the same key.
+    const keyMatchesUrl =
+      keyFromUrl !== null &&
+      (keyFromUrl === media.tempKey ||
+        keyFromUrl === encodeStorageKey(media.tempKey));
     if (
       !publicBase ||
-      keyFromUrl !== media.tempKey ||
+      !keyMatchesUrl ||
       !media.tempKey.startsWith(expectedPrefix) ||
       media.tempKey.includes('..')
     ) {

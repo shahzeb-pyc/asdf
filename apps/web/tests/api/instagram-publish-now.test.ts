@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 import { POST } from '@/app/api/tenant/[subdomain]/instagram/publish-now/route';
+import { logServerError } from '@/lib/server-analytics';
+
+const mockLogServerError = vi.mocked(logServerError);
 
 /**
  * Instagram Publish Now direct-publish route, tested with mocked
@@ -36,10 +39,22 @@ let postOwnedMissing = false;
 
 vi.mock('@/lib/storage', () => ({
   getR2Config: () => ({ publicUrl: 'https://r2.example.com' }),
+  // Mirrors the real helper in storage.ts (spec 257).
+  encodeStorageKey: (key: string) =>
+    key
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/'),
   getStorageService: () => ({
     listObjects: async ({ prefix }: { prefix: string }) =>
       postOwnedMissing ? [] : [{ key: prefix }],
-    getPublicUrl: (key: string) => `https://r2.example.com/${key}`,
+    // Mirrors the real provider (spec 257): each path segment is
+    // percent-encoded, so a non-ASCII filename reaches Meta encoded.
+    getPublicUrl: (key: string) =>
+      `https://r2.example.com/${key
+        .split('/')
+        .map((segment) => encodeURIComponent(segment))
+        .join('/')}`,
     deleteObject: async () => undefined,
   }),
 }));
@@ -216,6 +231,7 @@ beforeEach(() => {
   createBodies = [];
   postOwnedMissing = false;
   idempotencyStore.clear();
+  mockLogServerError.mockClear();
   periodRow = {
     id: 'period-1',
     user_id: 'user-1',
@@ -440,6 +456,90 @@ describe('POST instagram/publish-now', () => {
     });
     expect(status).toBe(200);
     expect(body.results[0]).toMatchObject({ status: 'published', postId: 'media-1' });
+  });
+
+  it('publishes temp device media with a non-ASCII filename — the URL stays encoded (spec 257)', async () => {
+    // The real failure: a Devanagari filename whose public URL the
+    // old builder left raw, so Instagram could not fetch the media
+    // and the container came back ERROR.
+    const tempKey =
+      'users/user-1/publish-now-temp/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/कलयुग_का_महासंग्राम.mp4';
+    const encodedUrl = `https://r2.example.com/${tempKey
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/')}`;
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'video',
+      targets: [{ accountId: ACCOUNT_1, accountName: 'Creator One' }],
+      media: {
+        source: 'temp',
+        mediaId: null,
+        tempKey,
+        postOwnedKey: null,
+        url: encodedUrl,
+        mediaType: 'video',
+        aspectRatio: null,
+        width: null,
+        height: null,
+        name: 'कलयुग_का_महासंग्राम.mp4',
+      },
+    });
+    expect(status).toBe(200);
+    expect(body.results[0]).toMatchObject({ status: 'published', postId: 'media-1' });
+    expect(createBodies[0]).toMatchObject({
+      media_type: 'VIDEO',
+      video_url: encodedUrl,
+    });
+  });
+
+  it('sends an encoded video_url for a post-owned file with a non-ASCII filename (spec 257)', async () => {
+    const key =
+      'users/user-1/post-media/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/कलयुग_का_महासंग्राम.mp4';
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'video',
+      targets: [{ accountId: ACCOUNT_1, accountName: 'Creator One' }],
+      media: postOwnedMedia({
+        postOwnedKey: key,
+        url: `https://r2.example.com/${key}`,
+        mediaType: 'video',
+        aspectRatio: null,
+        width: null,
+        height: null,
+        name: 'कलयुग_का_महासंग्राम.mp4',
+      }),
+    });
+    expect(status).toBe(200);
+    expect(body.results[0]).toMatchObject({ status: 'published', postId: 'media-1' });
+    expect(createBodies[0]).toMatchObject({
+      media_type: 'VIDEO',
+      video_url: `https://r2.example.com/${key
+        .split('/')
+        .map((segment) => encodeURIComponent(segment))
+        .join('/')}`,
+    });
+  });
+
+  it('logs the container id when the container poll reports ERROR (spec 257)', async () => {
+    containerStatus = 'ERROR';
+    const { status, body } = await callPost(
+      videoBody('video', [{ accountId: ACCOUNT_1, accountName: 'Creator One' }])
+    );
+    expect(status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      status: 'failed',
+      step: 'container-poll',
+    });
+    expect(mockLogServerError).toHaveBeenCalledWith(
+      '[instagram-publish-now] Container failed during poll',
+      expect.any(Error),
+      expect.objectContaining({
+        containerId: 'container-1',
+        statusCode: 'ERROR',
+        mediaUrl: `https://r2.example.com/${POST_OWNED_VIDEO_KEY}`,
+      })
+    );
   });
 
   it('rejects a temp key outside the caller’s own temp prefix', async () => {

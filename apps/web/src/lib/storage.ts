@@ -91,6 +91,20 @@ function trimTrailingSlashes(str: string): string {
 }
 
 /**
+ * Percent-encode each path segment of a storage key, preserving `/`
+ * separators (spec 257). R2 keys are raw strings — a Devanagari or
+ * space-containing filename must reach Meta as a percent-encoded URL
+ * or its fetcher cannot fetch the media — but encoding the slashes
+ * would break the key. ASCII keys are byte-identical through this.
+ */
+export function encodeStorageKey(key: string): string {
+  return key
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+/**
  * The web app's storage service: the shared base interface plus
  * the server-side copy/list operations the media/posting
  * separation needs (post-owned copies, staged-upload sweep).
@@ -163,10 +177,7 @@ export class R2StorageProvider implements IStorageServiceWithCopy {
    * literal — encoding them breaks the copy).
    */
   async copyObject(params: CopyObjectParams): Promise<void> {
-    const encodedKey = params.sourceKey
-      .split('/')
-      .map((segment) => encodeURIComponent(segment))
-      .join('/');
+    const encodedKey = encodeStorageKey(params.sourceKey);
     const command = new CopyObjectCommand({
       Bucket: this.config.bucketName,
       CopySource: `${this.config.bucketName}/${encodedKey}`,
@@ -193,7 +204,7 @@ export class R2StorageProvider implements IStorageServiceWithCopy {
   getPublicUrl(key: string): string {
     const trimmedBase = trimTrailingSlashes(this.config.publicUrl);
     const trimmedKey = key.replace(/^\/+/, '');
-    return `${trimmedBase}/${trimmedKey}`;
+    return `${trimmedBase}/${encodeStorageKey(trimmedKey)}`;
   }
 }
 

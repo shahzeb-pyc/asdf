@@ -33,6 +33,19 @@ describe('Storage Service Providers', () => {
       expect(mock.requestedUploadKeys.has('users/123/media/abc/video.mp4')).toBe(true);
     });
 
+    it('encodes non-ASCII keys in public URLs like the real provider (spec 257)', async () => {
+      const mock = new MockStorageProvider();
+      const result = await mock.getPresignedUploadUrl({
+        key: 'users/123/media/abc/कलयुग_का_महासंग्राम.mp4',
+        contentType: 'video/mp4',
+        expiresInSeconds: 600,
+      });
+
+      expect(result.publicUrl).toBe(
+        'https://media.fbuploadpro.com/users/123/media/abc/%E0%A4%95%E0%A4%B2%E0%A4%AF%E0%A5%81%E0%A4%97_%E0%A4%95%E0%A4%BE_%E0%A4%AE%E0%A4%B9%E0%A4%BE%E0%A4%B8%E0%A4%82%E0%A4%97%E0%A5%8D%E0%A4%B0%E0%A4%BE%E0%A4%AE.mp4'
+      );
+    });
+
     it('uploads objects via putObject and tracks uploadedObjects', async () => {
       const mock = new MockStorageProvider();
       const key = 'users/123/media/abc/downloaded.mp4';
@@ -89,6 +102,26 @@ describe('Storage Service Providers', () => {
       const provider = new R2StorageProvider(fakeConfig);
       const url = provider.getPublicUrl('users/tenant-1/media/file.mp4');
       expect(url).toBe('https://media.customdomain.com/users/tenant-1/media/file.mp4');
+    });
+
+    it('percent-encodes non-ASCII path segments and preserves slashes (spec 257)', () => {
+      const provider = new R2StorageProvider(fakeConfig);
+      const url = provider.getPublicUrl(
+        'users/tenant-1/publish-now-temp/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/कलयुग_का_महासंग्राम.mp4'
+      );
+      expect(url).toBe(
+        'https://media.customdomain.com/users/tenant-1/publish-now-temp/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/%E0%A4%95%E0%A4%B2%E0%A4%AF%E0%A5%81%E0%A4%97_%E0%A4%95%E0%A4%BE_%E0%A4%AE%E0%A4%B9%E0%A4%BE%E0%A4%B8%E0%A4%82%E0%A4%97%E0%A5%8D%E0%A4%B0%E0%A4%BE%E0%A4%AE.mp4'
+      );
+    });
+
+    it('percent-encodes spaces while leaving ASCII keys byte-identical', () => {
+      const provider = new R2StorageProvider(fakeConfig);
+      expect(provider.getPublicUrl('users/tenant-1/media/My Photo (1).jpg')).toBe(
+        'https://media.customdomain.com/users/tenant-1/media/My%20Photo%20(1).jpg'
+      );
+      expect(provider.getPublicUrl('users/tenant-1/media/file.mp4')).toBe(
+        'https://media.customdomain.com/users/tenant-1/media/file.mp4'
+      );
     });
 
     it('invokes client PutObjectCommand upon putObject', async () => {
