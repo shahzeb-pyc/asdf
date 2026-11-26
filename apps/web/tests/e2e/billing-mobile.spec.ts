@@ -226,9 +226,12 @@ test.describe('billing at phone widths', () => {
 
     // The split My Plan keeps the Free card and adds a submitted
     // card below it (it no longer replaces the Free card).
-    // Scoped to the content area: the sidebar branding also renders
-    // the plan word 'Free', which strict-mode would otherwise match.
-    await expect(page.locator('#tenant-content').getByText('Free', { exact: true })).toBeVisible();
+    // Spec 260: the KPI band also names the plan 'Free', so the
+    // bare text matches twice in the content area — target the
+    // plan card's title instead.
+    await expect(
+      page.locator('#tenant-content [data-slot="card-title"]', { hasText: /^Free$/ })
+    ).toBeVisible();
     await expect(page.getByText('Submitted for approval')).toBeVisible();
     await expect(
       page.getByText(
@@ -419,7 +422,15 @@ test.describe('billing at phone widths', () => {
 
     await gotoBilling(page, 'my-plan');
     await expect(page.getByText('Monthly plan', { exact: true })).toBeVisible();
-    await expect(page.getByText('7 included, 0 in use')).toBeVisible();
+    // Spec 260: the old single counts line ('7 included, 0 in use')
+    // is gone — the plan card now renders one row per platform
+    // (2 Facebook pages, 1 of each other account in this fixture).
+    await expect(
+      page.locator('#tenant-content').getByText('Facebook', { exact: true })
+    ).toBeVisible();
+    await expect(
+      page.locator('#tenant-content').getByText('/ 2 pages in use', { exact: true })
+    ).toBeVisible();
     await expectNoDocumentOverflow(page);
 
     await gotoBilling(page, 'payments');
