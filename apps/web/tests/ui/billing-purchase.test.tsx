@@ -733,10 +733,11 @@ describe('Billing Purchase', () => {
     expect(screen.getByText('Bulk publishing')).toBeInTheDocument();
   });
 
-  it('My Plan shows all six platforms in the paid counts line', async () => {
-    // Free users get a deliberately shorter My Plan (no per-platform
-    // list — all zeros, useless for Free), so this needs a paid
-    // entitlement: the Purchase platform filter must not leak here.
+  it('My Plan shows all six platforms in the per-platform rows', async () => {
+    // The paid plan card renders one row per platform with counts
+    // (spec 260); Free gets the shorter Free card instead, so this
+    // needs a paid entitlement: the Purchase platform filter must
+    // not leak here.
     mockBillingApi({
       entitlement: {
         plan: 'paid',
@@ -753,18 +754,23 @@ describe('Billing Purchase', () => {
     });
     renderBilling('my-plan');
     await screen.findByText('Monthly plan');
-    expect(screen.getByText(/2 Facebook pages/)).toBeInTheDocument();
-    expect(screen.getByText(/1 Instagram account/)).toBeInTheDocument();
-    expect(screen.getByText(/1 Threads account/)).toBeInTheDocument();
-    expect(screen.getByText(/1 X account/)).toBeInTheDocument();
-    expect(screen.getByText(/1 TikTok account/)).toBeInTheDocument();
-    expect(screen.getByText(/1 YouTube account/)).toBeInTheDocument();
+    expect(screen.getByText('Facebook', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Instagram', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Threads', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('X', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('TikTok', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('YouTube', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('/ 2 pages in use')).toBeInTheDocument();
+    expect(screen.getAllByText('/ 1 accounts in use')).toHaveLength(5);
+    expect(screen.getByText('pages left', { exact: true })).toBeInTheDocument();
+    expect(screen.getAllByText('accounts left', { exact: true })).toHaveLength(5);
   });
 
   it('My Plan shows Free for a never-paid user and Expired for a lapsed user', async () => {
     mockBillingApi(statusFixture());
     const { unmount } = renderBilling('my-plan');
-    expect(await screen.findByText('Free')).toBeInTheDocument();
+    // "Free" names the plan twice: KPI band value and card title.
+    expect((await screen.findAllByText('Free', { exact: true })).length).toBe(2);
     unmount();
 
     mockBillingApi({
@@ -772,7 +778,9 @@ describe('Billing Purchase', () => {
       payments: [],
     });
     renderBilling('my-plan');
-    expect(await screen.findByText('Expired')).toBeInTheDocument();
+    // "Expired" names the plan three times: KPI band value, card
+    // title, and the Expired status pill.
+    expect((await screen.findAllByText('Expired', { exact: true })).length).toBe(3);
   });
 
   it('My Plan shows Free plus a submitted-for-approval card when a payment is pending', async () => {
@@ -789,7 +797,8 @@ describe('Billing Purchase', () => {
     expect(screen.getByRole('button', { name: 'View payments' })).toBeInTheDocument();
     // Separate-sections state flow: the Free card stays, and the
     // pending card is added — the payment is never hidden.
-    expect(screen.getByText('Free')).toBeInTheDocument();
+    // "Free" names the plan twice: KPI band value and card title.
+    expect(screen.getAllByText('Free', { exact: true }).length).toBe(2);
   });
 
   it('My Plan keeps Expired for a lapsed user even with a payment pending', async () => {
@@ -798,7 +807,9 @@ describe('Billing Purchase', () => {
       payments: [paymentItem()],
     });
     renderBilling('my-plan');
-    expect(await screen.findByText('Expired')).toBeInTheDocument();
+    // "Expired" names the plan three times: KPI band value, card
+    // title, and the Expired status pill.
+    expect((await screen.findAllByText('Expired', { exact: true })).length).toBe(3);
     expect(await screen.findByText('Renewal waiting for approval')).toBeInTheDocument();
     expect(screen.queryByText('Payment in progress')).toBeNull();
   });
@@ -1454,20 +1465,28 @@ describe('My Plan view', () => {
 
   it('Free shows the Free card and a buy button', async () => {
     renderBilling('my-plan');
-    expect(await screen.findByText('Free', { exact: true })).toBeInTheDocument();
-    expect(
-      screen.getByText('You are on the Free plan. Posting needs a monthly plan.')
-    ).toBeInTheDocument();
+    // "Free" names the plan twice: KPI band value and card title.
+    expect((await screen.findAllByText('Free', { exact: true })).length).toBe(2);
+    // Spec 260 Free card (Option A): hero numbers plus the
+    // included / not-included list; the old subtitle is gone.
+    expect(screen.getAllByText('Prompt Library only').length).toBe(2);
+    expect(screen.getByText('Prompt Library', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Posting', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Scheduling', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Creator Finder', { exact: true })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Buy a monthly plan' })).toBeInTheDocument();
   });
 
-  it('Paid shows counts, monthly price, and included vs in-use', async () => {
+  it('Paid shows counts, monthly price, and per-platform usage', async () => {
     mockBillingApi({ entitlement: paidEntitlement(), payments: [] });
     renderBilling('my-plan');
     expect(await screen.findByText('Monthly plan')).toBeInTheDocument();
-    expect(screen.getByText(/490 PKR \/ month/)).toBeInTheDocument();
-    expect(screen.getByText(/7 included, 0 in use/)).toBeInTheDocument();
-    expect(screen.getByText(/70 PKR per page or account, paid monthly/)).toBeInTheDocument();
+    // The monthly price (490 PKR) is a hero number and a KPI value.
+    expect(screen.getAllByText('490').length).toBe(2);
+    // Per-platform rows (spec 260) replace the old single counts line.
+    expect(screen.getByText('/ 2 pages in use')).toBeInTheDocument();
+    expect(screen.getAllByText('/ 1 accounts in use')).toHaveLength(5);
+    expect(screen.getByText('70 PKR per page or account')).toBeInTheDocument();
   });
 
   it('Expired shows the previous plan counts and a renew button', async () => {
@@ -1476,7 +1495,9 @@ describe('My Plan view', () => {
       payments: [paymentItem({ status: 'approved', counts: { ...ZERO_COUNTS, facebook: 2 } })],
     });
     renderBilling('my-plan');
-    expect(await screen.findByText('Expired')).toBeInTheDocument();
+    // "Expired" names the plan three times: KPI band value, card
+    // title, and the Expired status pill.
+    expect((await screen.findAllByText('Expired', { exact: true })).length).toBe(3);
     expect(screen.getByText(/Your previous monthly plan was/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Renew your plan' })).toBeInTheDocument();
   });
@@ -1566,7 +1587,12 @@ describe('My Plan view', () => {
       storage: { quotaBytes: 5 * GB, usedBytes: 4.5 * GB, state: 'near' },
     });
     const { unmount } = renderBilling('my-plan');
-    expect(await screen.findByText(/4\.5 GB used of 5\.0 GB — nearly full/)).toBeInTheDocument();
+    // Spec 260 storage card: big used number plus "5 GB per page or
+    // account" — the old "used of total — nearly full" line is gone.
+    // "4.5" is the card hero (the Free KPI band has no storage
+    // cell); "4.5 GB" is the used-line below the bar.
+    expect(await screen.findByText('4.5')).toBeInTheDocument();
+    expect(screen.getByText('4.5 GB')).toBeInTheDocument();
     expect(screen.getByText(/You are close to your limit/)).toBeInTheDocument();
     unmount();
 
@@ -1574,7 +1600,8 @@ describe('My Plan view', () => {
       storage: { quotaBytes: 5 * GB, usedBytes: 6 * GB, state: 'over' },
     });
     renderBilling('my-plan');
-    expect(await screen.findByText(/6\.0 GB used of 5\.0 GB — over quota/)).toBeInTheDocument();
+    expect(await screen.findByText('6.0')).toBeInTheDocument();
+    expect(screen.getByText('6.0 GB')).toBeInTheDocument();
     expect(screen.getByText(/You are out of space/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add pages or accounts' })).toBeInTheDocument();
   });

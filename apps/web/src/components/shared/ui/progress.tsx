@@ -8,7 +8,8 @@
  * inline width, so no surface adds to the inline-style count (spec 129
  * inline-style ratchet). Adapted: token track (bg-line) and fill
  * (bg-primary), the named rounded-full geometry, and no entry animation
- * classes from outside the token motion scale.
+ * classes from outside the token motion scale. Callers may override the
+ * fill with `indicatorClassName` (a token class); the default stays gold.
  */
 import * as React from "react";
 import { Progress as ProgressPrimitive } from "radix-ui";
@@ -18,8 +19,12 @@ import { cn } from "@/lib/utils";
 function Progress({
   className,
   value,
+  indicatorClassName,
   ...props
-}: React.ComponentProps<typeof ProgressPrimitive.Root>) {
+}: React.ComponentProps<typeof ProgressPrimitive.Root> & {
+  /** Fill colour override (token class). Default keeps the gold fill. */
+  indicatorClassName?: string;
+}) {
   return (
     <ProgressPrimitive.Root
       data-slot="progress"
@@ -32,7 +37,10 @@ function Progress({
     >
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
-        className="h-full w-full flex-1 rounded-full bg-primary transition-transform"
+        className={cn(
+          "h-full w-full flex-1 rounded-full bg-primary transition-transform",
+          indicatorClassName
+        )}
       />
     </ProgressPrimitive.Root>
   );
